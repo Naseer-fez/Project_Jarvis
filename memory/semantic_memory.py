@@ -22,11 +22,10 @@ Author: Jarvis Session 4
 import uuid
 import logging
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
 import chromadb
 from chromadb.config import Settings
-from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +60,10 @@ class SemanticMemory:
     ):
         self.chroma_path = chroma_path
         self.model_name  = model_name
-        self._model: Optional[SentenceTransformer] = None
+        # typed as Any because SentenceTransformer is imported lazily
+        self._model: Any = None
         self._client: Optional[chromadb.ClientAPI] = None
-        self._collections: dict = {}
+        self._collections: Dict[str, Any] = {}
         self._initialized = False
 
     # ── Init ──────────────────────────────────────────────────────────────────
@@ -75,8 +75,10 @@ class SemanticMemory:
         """
         if self._initialized:
             return True
+            
         try:
             logger.info(f"Loading embedding model: {self.model_name}")
+            from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self.model_name)
 
             logger.info(f"Connecting to ChromaDB at: {self.chroma_path}")
@@ -105,7 +107,7 @@ class SemanticMemory:
             if not self.initialize():
                 raise RuntimeError("SemanticMemory is not initialized.")
 
-    def _embed(self, text: str) -> list[float]:
+    def _embed(self, text: str) -> List[float]:
         """Generate a normalized embedding vector for the given text."""
         return self._model.encode(text, normalize_embeddings=True).tolist()
 
@@ -196,7 +198,7 @@ class SemanticMemory:
         query: str,
         top_k: int = DEFAULT_TOP_K,
         threshold: float = DEFAULT_THRESHOLD,
-    ) -> list[dict]:
+    ) -> List[Dict]:
         """
         Retrieve the most semantically similar preferences to the query.
         Returns a list of result dicts sorted by relevance score (descending).
@@ -208,7 +210,7 @@ class SemanticMemory:
         query: str,
         top_k: int = DEFAULT_TOP_K,
         threshold: float = DEFAULT_THRESHOLD,
-    ) -> list[dict]:
+    ) -> List[Dict]:
         """Retrieve the most relevant episodic memories for the query."""
         return self._query_collection(COLLECTION_EPISODES, query, top_k, threshold)
 
@@ -217,7 +219,7 @@ class SemanticMemory:
         query: str,
         top_k: int = DEFAULT_TOP_K,
         threshold: float = DEFAULT_THRESHOLD,
-    ) -> list[dict]:
+    ) -> List[Dict]:
         """Retrieve the most relevant past conversation turns for the query."""
         return self._query_collection(COLLECTION_CONVOS, query, top_k, threshold)
 
@@ -226,7 +228,7 @@ class SemanticMemory:
         query: str,
         top_k: int = DEFAULT_TOP_K,
         threshold: float = DEFAULT_THRESHOLD,
-    ) -> dict[str, list[dict]]:
+    ) -> Dict[str, List[Dict]]:
         """
         Recall across ALL collections simultaneously.
         Returns a dict with keys: 'preferences', 'episodes', 'conversations'.
@@ -246,7 +248,7 @@ class SemanticMemory:
         query: str,
         top_k: int,
         threshold: float,
-    ) -> list[dict]:
+    ) -> List[Dict]:
         """
         Internal: query a ChromaDB collection, filter by threshold, return results.
         ChromaDB returns cosine *distance* (0=identical, 2=opposite).
@@ -270,6 +272,9 @@ class SemanticMemory:
         )
 
         hits = []
+        if not results["ids"]:
+            return hits
+
         ids       = results["ids"][0]
         documents = results["documents"][0]
         metadatas = results["metadatas"][0]
@@ -322,7 +327,7 @@ class SemanticMemory:
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
-    def stats(self) -> dict:
+    def stats(self) -> Dict[str, Any]:
         """Return counts for all collections."""
         if not self._initialized:
             return {"initialized": False}
