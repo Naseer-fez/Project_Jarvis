@@ -92,7 +92,7 @@ class JarvisControllerV5:
         # 2. Adaptive Confidence Gate
         # Session 7: Lower threshold if we have high profile confidence
         base_threshold = 0.6
-        if self.profile_engine.get_confidence_score() > 0.8::
+        if self.profile_engine.get_confidence_score() > 0.8:
             base_threshold = 0.4 # We know the user better, trust the AI more
             
         if confidence < base_threshold:

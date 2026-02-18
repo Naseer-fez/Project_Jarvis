@@ -240,3 +240,4 @@ class ContextCompressor:
                 lines.append(f"    {status} | score={score:.3f} | src={source} | {preview}")
 
         return "\n".join(lines)
+

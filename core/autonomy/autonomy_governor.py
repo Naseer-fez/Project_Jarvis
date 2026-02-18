@@ -72,3 +72,4 @@ class AutonomyGovernor:
             3: "Write with confirmation — can modify files/memory after your approval.",
         }
         return f"LEVEL_{self.level}: {descriptions[self.level]}"
+

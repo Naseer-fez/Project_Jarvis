@@ -92,3 +92,4 @@ class OllamaLLM:
                     return False
         except Exception:
             return False
+

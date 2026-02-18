@@ -82,3 +82,4 @@ class StateMachine:
 
     def __repr__(self):
         return f"<StateMachine state={self._state.name}>"
+

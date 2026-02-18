@@ -91,3 +91,4 @@ class MemoryEngine:
             "total_entries": len(self._entries),
             "entries": [asdict(e) for e in self._entries[-50:]],  # last 50
         }
+

@@ -128,3 +128,4 @@ if __name__ == "__main__":
         print(f"  {key}: {value}")
     
     print("\n✓ Short-term memory test complete")
+

@@ -309,3 +309,4 @@ class HybridMemory:
     @property
     def semantic_available(self) -> bool:
         return self._semantic_available
+

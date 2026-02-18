@@ -267,3 +267,4 @@ def get_embedding_manager(model_name: str = DEFAULT_MODEL) -> EmbeddingManager:
         _default_manager = EmbeddingManager(model_name=model_name)
         _default_manager.initialize()
     return _default_manager
+

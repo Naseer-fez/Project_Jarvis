@@ -252,3 +252,4 @@ Autonomy levels:
         logger.info("Shutting down Jarvis...")
         self.audit.log_memory_snapshot(self.memory.snapshot())
         print("\n[Jarvis] Session ended. Artifacts saved to ./outputs/Jarvis-Session/\n")
+

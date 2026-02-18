@@ -152,3 +152,4 @@ class TaskPlanner:
         except (KeyError, TypeError) as e:
             logger.error(f"Plan schema error: {e}")
             return None
+
