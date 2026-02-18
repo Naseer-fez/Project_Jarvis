@@ -1,2 +1,16 @@
+# 1. Handle all files automatically
 * text=auto
+
+# 2. Force Python and C files to use LF (best for cross-platform)
 *.py text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+
+# 3. Handle data files
+*.json text eol=lf
+*.sql text eol=lf
+
+# 4. Denote binary files (don't touch line endings for these)
+*.pyc binary
+*.png binary
+*.jpg binary

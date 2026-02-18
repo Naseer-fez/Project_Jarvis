@@ -1,59 +1,53 @@
 """
-JARVIS SESSION 5 ENTRY POINT
-Updates: Uses ControllerV3, handles Memory Intelligence output.
+JARVIS SESSION 6 ENTRY POINT
+Updates: Uses ControllerV4 (Safety & Discipline).
 """
-import sys
 import logging
-from core.controller import JarvisControllerV3
+from core.controller import JarvisControllerV4
 
-# Configure logging to file only, keep console clean for UI
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.FileHandler("jarvis_session5.log")]
+    handlers=[logging.FileHandler("jarvis_session6.log")]
 )
 
 def main():
     print("╔════════════════════════════════════════════╗")
-    print("║     JARVIS SESSION 5 - INTELLIGENT         ║")
-    print("║   (Memory Gate & Self-Reflection Active)   ║")
+    print("║     JARVIS SESSION 6 - DISCIPLINED         ║")
+    print("║   (Safety Gate & Intent Router Active)     ║")
     print("╚════════════════════════════════════════════╝")
     
-    try:
-        jarvis = JarvisControllerV3()
-        status = jarvis.initialize()
-    except Exception as e:
-        print(f"\nCRITICAL INIT FAILURE: {e}")
-        return
+    jarvis = JarvisControllerV4()
+    status = jarvis.initialize()
 
     print(f"• Session ID: {status.get('session_id')}")
-    print(f"• Memory Mode: {status.get('memory_mode')}")
-    print(f"• System: Online\n")
+    print(f"• Safety Gate: {status.get('safety_gate')}")
+    print("• System: Online\n")
 
     while True:
         try:
             user_input = input("You: ").strip()
             if not user_input: continue
             
-            # Special handling for exit to ensure shutdown hook runs
-            if user_input.lower() in ("exit", "quit"):
-                jarvis.shutdown()
-                print("Goodbye.")
-                break
-
+            # Controller handles exit commands internally now via routing
+            
             print("Jarvis: ", end="", flush=True)
             
-            response_generator = jarvis.process(user_input, stream=True)
+            response = jarvis.process(user_input, stream=True)
             
-            # Handle both string (commands) and generators (LLM)
-            if isinstance(response_generator, str):
-                print(response_generator)
+            if response == "__EXIT__":
+                print("Shutting down...")
+                break
+            
+            # Handle string response (Blockers/Commands) vs Generator (Chat)
+            if isinstance(response, str):
+                print(response)
             else:
                 full_resp = ""
-                for chunk in response_generator:
+                for chunk in response:
                     print(chunk, end="", flush=True)
                     full_resp += chunk
-                print() # Newline after stream
+                print() 
                 
         except KeyboardInterrupt:
             jarvis.shutdown()
