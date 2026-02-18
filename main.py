@@ -1,65 +1,67 @@
 """
-JARVIS ENTRY POINT
-Session 4 compatible
+JARVIS SESSION 5 ENTRY POINT
+Updates: Uses ControllerV3, handles Memory Intelligence output.
 """
 import sys
 import logging
-from core.controller import JarvisControllerV2
+from core.controller import JarvisControllerV3
 
-# Configure logging
+# Configure logging to file only, keep console clean for UI
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.FileHandler("jarvis.log"), logging.StreamHandler(sys.stdout)]
+    handlers=[logging.FileHandler("jarvis_session5.log")]
 )
-# Silence loud libraries
-logging.getLogger("chromadb").setLevel(logging.WARNING)
-logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 def main():
-    print("╔══════════════════════════════════════╗")
-    print("║      JARVIS SESSION 4 (HYBRID)       ║")
-    print("╚══════════════════════════════════════╝")
+    print("╔════════════════════════════════════════════╗")
+    print("║     JARVIS SESSION 5 - INTELLIGENT         ║")
+    print("║   (Memory Gate & Self-Reflection Active)   ║")
+    print("╚════════════════════════════════════════════╝")
     
-    # 1. Initialize Controller
-    print("• Initializing core systems...")
     try:
-        jarvis = JarvisControllerV2()
+        jarvis = JarvisControllerV3()
         status = jarvis.initialize()
     except Exception as e:
         print(f"\nCRITICAL INIT FAILURE: {e}")
-        print("Check your imports and file structure.")
         return
 
     print(f"• Session ID: {status.get('session_id')}")
     print(f"• Memory Mode: {status.get('memory_mode')}")
-    print(f"• LLM Status: {'ONLINE' if status.get('ollama') else 'OFFLINE (Check Ollama)'}")
-    print("\nReady. Type 'exit' to quit.\n")
+    print(f"• System: Online\n")
 
-    # 2. Main Loop
     while True:
         try:
             user_input = input("You: ").strip()
-            if not user_input:
-                continue
+            if not user_input: continue
             
-            # Use streaming for better UX
-            response = jarvis.process(user_input, stream=True)
-            
-            if response == "__EXIT__":
-                print("Jarvis: Goodbye!")
+            # Special handling for exit to ensure shutdown hook runs
+            if user_input.lower() in ("exit", "quit"):
+                jarvis.shutdown()
+                print("Goodbye.")
                 break
-                
-            if not response:
-                print("Jarvis: ...")
+
+            print("Jarvis: ", end="", flush=True)
+            
+            response_generator = jarvis.process(user_input, stream=True)
+            
+            # Handle both string (commands) and generators (LLM)
+            if isinstance(response_generator, str):
+                print(response_generator)
+            else:
+                full_resp = ""
+                for chunk in response_generator:
+                    print(chunk, end="", flush=True)
+                    full_resp += chunk
+                print() # Newline after stream
                 
         except KeyboardInterrupt:
+            jarvis.shutdown()
             print("\nForce Exit.")
             break
         except Exception as e:
             logging.error(f"Runtime error: {e}")
-            print(f"Error: {e}")
+            print(f"\n[System Error]: {e}")
 
 if __name__ == "__main__":
     main()
