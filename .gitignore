@@ -1,0 +1,90 @@
+# ===============================
+# Python bytecode / cache
+# ===============================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ===============================
+# Virtual environments
+# ===============================
+jarvis_env/
+venv/
+.env/
+.venv/
+
+# ===============================
+# IDE / Editor files
+# ===============================
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===============================
+# OS generated files
+# ===============================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===============================
+# Logs & runtime artifacts
+# ===============================
+*.log
+logs/
+*.out
+
+# ===============================
+# Local databases / memory stores
+# ===============================
+data/
+memory/*.db
+memory/*.sqlite
+memory/*.sqlite3
+
+# ===============================
+# Model files / embeddings / caches
+# ===============================
+models/
+embeddings/
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# ===============================
+# Audio / large binary test files
+# ===============================
+*.wav
+*.mp3
+*.m4a
+*.flac
+
+# ===============================
+# Archives
+# ===============================
+*.zip
+*.tar
+*.tar.gz
+*.7z
+
+# ===============================
+# Test artifacts
+# ===============================
+coverage/
+htmlcov/
+.pytest_cache/
+
+# ===============================
+# Jupyter / experiments
+# ===============================
+.ipynb_checkpoints/
+
+# ===============================
+# Secrets (JUST IN CASE)
+# ===============================
+.env.*
+*.key
+*.pem
+secrets/
