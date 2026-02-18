@@ -1,8 +1,8 @@
 """
 core/controller.py
 ──────────────────
-Jarvis Controller V4 (Session 6).
-Implements Routing Discipline, Confidence Gates, and Safety Checks.
+Jarvis Controller V5 (Session 7).
+Implements Self-Model, Adaptive Profiling, and Session Synthesis.
 """
 
 import logging
@@ -15,17 +15,19 @@ from collections import Counter
 from core.llm import LLMClientV2
 from memory.hybrid_memory import HybridMemory
 from memory.short_term import ShortTermMemory
-# Import Session 5 Intelligence
 from core.intelligence import MemoryIntelligence 
-# Import Session 6 Components
 from core.intents import IntentClassifierV2, Intent
 from core.safety import CommandSafetyGate
+
+# Session 7 Imports
+from core.profile import UserProfileEngine
+from core.synthesis import ProfileSynthesizer
 
 logger = logging.getLogger(__name__)
 
 SESSION_OUTPUT_DIR = Path("outputs")
 
-class JarvisControllerV4:
+class JarvisControllerV5:
     def __init__(
         self,
         db_path: str = "memory/memory.db",
@@ -33,46 +35,49 @@ class JarvisControllerV4:
         model_name: str = "deepseek-r1:8b",
         embedding_model: str = "all-MiniLM-L6-v2",
     ):
-        self.session_id = f"Jarvis-Session-6-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        self.session_id = f"Jarvis-Session-7-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         
-        # Core Components
+        # 1. Base Layers
         self.hybrid_memory = HybridMemory(db_path, chroma_path, embedding_model)
         self.short_term = ShortTermMemory()
         self.llm = LLMClientV2(self.hybrid_memory, model_name)
         
-        # Intelligence Layers
+        # 2. Intelligence Layers
         self.memory_intelligence = MemoryIntelligence(self.llm)
         self.intent_classifier = IntentClassifierV2(self.llm)
         self.safety_gate = CommandSafetyGate()
-
-        # Session Artifacts
-        self.intent_stats = Counter()
-        self.refused_commands = []
-        self.clarification_events = []
         
-        # State
-        self._pending_clarification = None  # To handle multi-turn clarification
-        self._initialized = False
+        # 3. Identity & Profile Layer (Session 7)
+        self.profile_engine = UserProfileEngine()
+        self.synthesizer = ProfileSynthesizer(self.llm)
+
+        # 4. Session State
+        self.intent_stats = Counter()
+        self._pending_clarification = None
+        self._new_memories_count = 0  # Trigger synthesis after X updates
 
     def initialize(self) -> dict:
-        logger.info(f"Initializing Jarvis V4 ({self.session_id})")
+        logger.info(f"Initializing Jarvis V5 ({self.session_id})")
         
-        # Ensure output directories
+        # Ensure directories
         (SESSION_OUTPUT_DIR / self.session_id).mkdir(parents=True, exist_ok=True)
         
         mem_status = self.hybrid_memory.initialize()
-        self._initialized = True
         
+        # Log profile status
+        profile_summary = self.profile_engine.get_profile_summary()
+        logger.info(f"Loaded User Profile:\n{profile_summary}")
+
         return {
             "session_id": self.session_id,
-            "system_status": "SECURE",
-            "safety_gate": "ACTIVE"
+            "memory_mode": mem_status.get("mode", "unknown"),
+            "profile_loaded": True
         }
 
-    def process(self, user_input: str, stream: bool = False) -> str:
+    def process(self, user_input: str, stream: bool = False):
         if not user_input.strip(): return ""
         
-        # 0. Handle Pending Clarification (Multi-turn logic)
+        # 0. Handle Pending Clarification
         if self._pending_clarification:
             return self._resolve_clarification(user_input)
 
@@ -82,120 +87,145 @@ class JarvisControllerV4:
         confidence = classification.get("confidence", 0.0)
         
         self.intent_stats[intent_str] += 1
-        logger.info(f"Input: '{user_input}' | Intent: {intent_str} ({confidence})")
+        self.profile_engine.log_interaction(intent_str)  # Update behavioral stats
 
-        # 2. Confidence Gate (Min 0.6)
-        if confidence < 0.6:
-            self.clarification_events.append({
-                "timestamp": str(datetime.now()),
-                "input": user_input,
-                "classified_as": intent_str,
-                "confidence": confidence
-            })
+        # 2. Adaptive Confidence Gate
+        # Session 7: Lower threshold if we have high profile confidence
+        base_threshold = 0.6
+        if self.profile_engine.get_confidence_score() > 0.8::
+            base_threshold = 0.4 # We know the user better, trust the AI more
+            
+        if confidence < base_threshold:
             self._pending_clarification = {"original_input": user_input, "guess": intent_str}
-            return f"I'm not 100% sure what you mean. Did you mean to {intent_str}? (yes/no/correction)"
+            return f"I'm not sure. Did you mean to {intent_str}? (yes/no)"
 
-        # 3. Routing Discipline
+        # 3. Routing
         if intent_str == Intent.COMMAND.value:
             return self._handle_command_flow(user_input)
-            
-        elif intent_str == Intent.STORE_MEMORY.value:
-            return self._handle_memory_store(user_input)
-            
-        elif intent_str == Intent.QUERY_MEMORY.value:
-            return self._handle_memory_query(user_input)
-            
-        elif intent_str == Intent.META.value:
-            return self._handle_meta(user_input)
-            
         elif intent_str == Intent.CHAT.value:
             return self._handle_chat(user_input, stream)
-            
+        elif intent_str == Intent.STORE_MEMORY.value:
+            return self._handle_memory_store(user_input)
+        elif intent_str == Intent.QUERY_MEMORY.value:
+            return self._handle_memory_query(user_input)
+        elif intent_str == Intent.META.value:
+            return f"I am Jarvis (Session 7). Identity-Aware."
         else:
-            return "I couldn't process that request safely."
+            return "I couldn't process that request."
+
+    def _handle_chat(self, user_input: str, stream: bool = False):
+        # Passive memory evaluation
+        decision = self.memory_intelligence.evaluate_input(user_input)
+        if decision and decision.get("decision") == "store":
+            self._handle_implicit_storage(decision)
+
+        # Get Profile Context for Adaptation
+        profile_ctx = self.profile_engine.get_profile_summary()
+        
+        messages = [{"role": "user", "content": user_input}]
+        
+        if stream:
+            return self.llm.chat_stream(messages, query_for_memory=user_input, profile_summary=profile_ctx)
+        return self.llm.chat(messages, query_for_memory=user_input, profile_summary=profile_ctx)
+
+    def _handle_memory_store(self, user_input: str) -> str:
+        # Pass to intelligence logic
+        decision = self.memory_intelligence.evaluate_input(user_input)
+        if decision and decision.get("decision") == "store":
+            return self._handle_implicit_storage(decision)
+        return "I processed that, but didn't find a permanent fact to store."
+
+    def _handle_implicit_storage(self, decision: dict) -> str:
+        """Helper to store memory and track update count."""
+        key = decision.get("key")
+        val = decision.get("value")
+        cat = decision.get("category")
+        
+        if cat == "preference":
+            self.hybrid_memory.store_preference(key, val)
+        elif cat == "episode":
+            self.hybrid_memory.store_episode(val, category="observed")
+            
+        self._new_memories_count += 1
+        
+        # Session 7: Trigger Synthesis if we learned enough new things
+        if self._new_memories_count >= 10:
+            logger.info("Triggering mid-session profile synthesis...")
+            self.run_synthesis()
+            self._new_memories_count = 0
+            
+        return f"✓ stored: {key}={val}"
+
+    def _handle_memory_query(self, user_input: str) -> str:
+        context = self.hybrid_memory.build_context_block(user_input)
+        if not context:
+            return "I don't recall anything about that."
+        return f"Here is what I found:\n{context}"
 
     def _handle_command_flow(self, user_input: str) -> str:
-        """Strict Command Safety Gate Flow"""
-        safety_check = self.safety_gate.verify_command(user_input)
-        
-        if not safety_check["allowed"]:
-            self.refused_commands.append({
-                "timestamp": str(datetime.now()),
-                "command": user_input,
-                "reason": safety_check["reason"]
-            })
-            return f"🚫 COMMAND REFUSED: {safety_check['reason']}"
-
-        # Dry Run / Execution Info
-        dry_run = safety_check.get("dry_run", "Executing...")
-        
-        # Execute Safe Commands
+        safety = self.safety_gate.verify_command(user_input)
+        if not safety["allowed"]:
+            return f"🚫 {safety['reason']}"
+            
         cmd = user_input.lower().split()[0]
-        if cmd in ["exit", "quit", "bye"]:
+        if cmd in ["exit", "quit"]:
             self.shutdown()
             return "__EXIT__"
         elif cmd == "status":
-            return f"✅ SYSTEM STATUS:\nSession: {self.session_id}\nMemory: Online\nSafety: Active"
-        elif cmd == "help":
-            return "Available Commands: help, status, clear, exit, whoami"
-        
-        return f"✅ {dry_run}"
+            return self._get_status_report()
+        elif cmd == "synthesize":
+            self.run_synthesis()
+            return "✓ Manual profile synthesis complete."
+            
+        return f"✅ Executed: {cmd}"
 
-    def _handle_memory_store(self, user_input: str) -> str:
-        """Route to Session 5 Memory Intelligence"""
-        self.memory_intelligence.evaluate_input(user_input) # Logic handled inside Intelligence
-        return "Thinking about whether to remember that..." # Placeholder, Intelligence logs it
+    def run_synthesis(self):
+        """Run the ProfileSynthesizer and update the UserProfile."""
+        print("\n• Synthesizing Identity Profile...", end="", flush=True)
+        delta = self.synthesizer.synthesize(self.hybrid_memory)
+        if delta:
+            self.profile_engine.update_profile(delta)
+            print(" Done.")
+            logger.info(f"Profile updated with delta: {delta.keys()}")
+        else:
+            print(" No changes detected.")
 
-    def _handle_memory_query(self, user_input: str) -> str:
-        """Explicit Memory Recall"""
-        context = self.hybrid_memory.build_context_block(user_input)
-        if not context:
-            return "I checked my memory banks, but found nothing specific on that."
-        return f"Here is what I remember:\n{context}"
-
-    def _handle_meta(self, user_input: str) -> str:
-        """Meta-Awareness (No Memory Pollution)"""
-        return f"I am Jarvis (Session 6). I am running locally with a Safety Gate active. My session ID is {self.session_id}."
-
-    def _handle_chat(self, user_input: str, stream: bool = False):
-        """Standard Chat Flow"""
-        # Session 5 Integration: Check for passive memory storage even in chat
-        self.memory_intelligence.evaluate_input(user_input)
-        
-        messages = [{"role": "user", "content": user_input}]
-        if stream:
-            return self.llm.chat_stream(messages, query_for_memory=user_input)
-        return self.llm.chat(messages, query_for_memory=user_input)
+    def _get_status_report(self) -> str:
+        p = self.profile_engine.profile
+        return (
+            f"✅ SYSTEM STATUS (Session 7):\n"
+            f"Session ID: {self.session_id}\n"
+            f"Confidence Score: {p.get('confidence_score', 0.0):.2f}\n"
+            f"Identity: {p['identity_core'].get('name', 'Unknown')}\n"
+            f"Style: {p['identity_core'].get('communication_style', 'Default')}\n"
+            f"New Memories: {self._new_memories_count}"
+        )
 
     def _resolve_clarification(self, user_input: str) -> str:
-        """Handle user response to low-confidence gate"""
+        # (Same logic as Session 6)
         original = self._pending_clarification["original_input"]
         guess = self._pending_clarification["guess"]
-        self._pending_clarification = None # Reset
+        self._pending_clarification = None
         
         if user_input.lower().startswith("y"):
-            # User confirmed the guess
-            # Recursively call process with the original input, bypassing check (simulated)
-            # In a real system, we'd inject the confirmed intent. 
-            # For now, we just route it manually based on the confirmed guess.
-            if guess == Intent.COMMAND.value: return self._handle_command_flow(original)
             if guess == Intent.CHAT.value: return self._handle_chat(original)
-            return f"Okay, proceeding with {guess} logic for '{original}'."
+            if guess == Intent.COMMAND.value: return self._handle_command_flow(original)
+            return f"Confirmed {guess}."
         else:
-            return "Understood. Please rephrase your request so I can understand better."
+            return "Understood. Please rephrase."
 
     def shutdown(self):
-        """Save Session 6 Artifacts"""
-        print("\n• Saving Session 6 Audit Logs...")
+        """Run final synthesis and save artifacts."""
+        print("\n• Shutting down Jarvis V5...")
+        
+        # Session 7: Final Synthesis
+        self.run_synthesis()
+        
+        # Export Session Artifacts
         s_dir = SESSION_OUTPUT_DIR / self.session_id
         
-        with open(s_dir / "intent_stats.json", "w") as f:
-            json.dump(dict(self.intent_stats), f, indent=2)
+        with open(s_dir / "user_profile_snapshot.json", "w") as f:
+            json.dump(self.profile_engine.profile, f, indent=2)
             
-        with open(s_dir / "refused_commands.log", "w") as f:
-            json.dump(self.refused_commands, f, indent=2)
-            
-        with open(s_dir / "clarification_events.log", "w") as f:
-            json.dump(self.clarification_events, f, indent=2)
-            
-        print(f"• Audit complete. stored in {s_dir}")
+        print(f"• Profile saved to memory/user_profile.json")
+        print(f"• Session snapshot saved to {s_dir}")

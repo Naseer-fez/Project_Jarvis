@@ -1,7 +1,8 @@
 """
-core/llm_v2.py
-───────────────
-Updated LLM interface for Jarvis Session 4.
+core/llm.py
+───────────
+LLM Client V3 (Session 7).
+Updated to support Identity-Aware System Prompts.
 """
 
 import json
@@ -10,8 +11,7 @@ import requests
 from typing import Optional, Generator
 
 from memory.hybrid_memory import HybridMemory
-# FIX: The context compressor is located in memory/, not core/
-from memory.context_compressor import ContextCompressor
+from core.context_compressor import ContextCompressor
 
 logger = logging.getLogger(__name__)
 
@@ -21,13 +21,13 @@ DEFAULT_MODEL    = "deepseek-r1:8b"
 SYSTEM_PROMPT_TEMPLATE = """\
 You are Jarvis, a personal AI assistant.
 
-Rules:
+{profile_block}
+
+RULES:
 - Always respond in English.
-- Be concise, direct, and technical when appropriate.
-- Do not use emojis or unnecessary politeness.
-- Do not switch languages unless explicitly asked to translate.
+- Do not use emojis unless the user profile suggests a casual style.
+- Be concise by default, unless the profile requests detail.
 - If you do not know something, say so honestly.
-- Do not invent or assume memory that is not provided.
 
 {memory_block}
 """
@@ -51,24 +51,29 @@ class LLMClientV2:
         except:
             return False
 
-    def _build_system_prompt(self, query: str) -> str:
+    def _build_system_prompt(self, query: str, profile_summary: str = "") -> str:
         memory_block = ""
         if self.hybrid_memory:
             try:
-                recall = self.hybrid_memory.recall_all(query, top_k=6)
+                # Session 7: Profile can influence recall? (Future optimization)
+                recall = self.hybrid_memory.recall_all(query, top_k=5)
                 memory_block = self.compressor.compress(query, recall)
             except Exception as e:
                 logger.warning(f"Memory recall failed: {e}")
 
         return SYSTEM_PROMPT_TEMPLATE.format(
-            memory_block=memory_block if memory_block else "(No memory context available)"
+            profile_block=profile_summary,
+            memory_block=memory_block if memory_block else "(No specific memory context)"
         )
 
-    def chat(self, messages: list[dict], query_for_memory: Optional[str] = None) -> str:
+    def chat(self, messages: list[dict], query_for_memory: Optional[str] = None, profile_summary: str = "") -> str:
         if not self.is_available():
             return "[Error: Ollama is offline]"
             
-        sys_prompt = self._build_system_prompt(query_for_memory or messages[-1]["content"])
+        sys_prompt = self._build_system_prompt(
+            query_for_memory or messages[-1]["content"],
+            profile_summary
+        )
         
         payload = {
             "model": self.model,
@@ -83,12 +88,20 @@ class LLMClientV2:
         except Exception as e:
             return f"[Error: {e}]"
 
-    def chat_stream(self, messages: list[dict], query_for_memory: Optional[str] = None) -> Generator[str, None, None]:
+    def chat_stream(
+        self, 
+        messages: list[dict], 
+        query_for_memory: Optional[str] = None, 
+        profile_summary: str = ""
+    ) -> Generator[str, None, None]:
         if not self.is_available():
             yield "[Error: Ollama is offline]"
             return
 
-        sys_prompt = self._build_system_prompt(query_for_memory or messages[-1]["content"])
+        sys_prompt = self._build_system_prompt(
+            query_for_memory or messages[-1]["content"], 
+            profile_summary
+        )
         
         payload = {
             "model": self.model,

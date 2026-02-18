@@ -14,3 +14,18 @@
 *.pyc binary
 *.png binary
 *.jpg binary
+
+
+# Documentation and Config
+README.MD text eol=lf
+requirements.txt text eol=lf
+
+# Core Python Logic
+core/profile.py text eol=lf
+core/synthesis.py text eol=lf
+
+# Testing
+tests/test_smoke.py text eol=lf
+
+# General fallback for all other Python files
+*.py text eol=lf
