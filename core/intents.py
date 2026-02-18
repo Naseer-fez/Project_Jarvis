@@ -1,88 +1,106 @@
 """
 core/intents.py
-───────────────
-Intent Classification V2 (Session 6).
-Returns strict JSON with confidence scores and permission flags.
+════════════════
+Intent classification for Jarvis V5.
+Uses DeepSeek R1:8b to classify user input into structured intents.
+Falls back to keyword heuristics if LLM is unavailable.
 """
 
 import json
-import re
 import logging
+import re
 from enum import Enum
-from typing import Dict, Any, Optional
-from core.llm.llm__init__ import LLMClientV2
 
 logger = logging.getLogger(__name__)
 
+
 class Intent(Enum):
-    CHAT = "chat"
-    QUERY_MEMORY = "query_memory"
-    STORE_MEMORY = "store_memory"
-    COMMAND = "command"
-    META = "meta"         # New: Questions about Jarvis itself
-    UNKNOWN = "unknown"
+    CHAT          = "chat"
+    COMMAND       = "command"
+    STORE_MEMORY  = "store_memory"
+    QUERY_MEMORY  = "query_memory"
+    META          = "meta"
+    UNKNOWN       = "unknown"
 
-INTENT_PROMPT = """
-You are the Intent Classifier for Jarvis.
-Analyze the USER INPUT and categorize it into exactly one category.
 
-CATEGORIES:
-1. COMMAND: User wants to change system state (exit, clear, help, status).
-2. QUERY_MEMORY: User asks about past facts, preferences, or saved data ("What did I say about...", "Do you know...").
-3. STORE_MEMORY: User explicitly wants to save info ("Remember that...", "I live in...").
-4. META: Questions about YOU (the AI), your version, or this session.
-5. CHAT: General conversation, greetings, jokes, thoughts.
+# ── Keyword fallback (no LLM needed) ──────────────────────
+_COMMAND_KEYWORDS  = {"exit", "quit", "status", "synthesize", "reset", "help"}
+_MEMORY_STORE_KW   = {"remember", "store", "save", "note that", "keep in mind"}
+_MEMORY_QUERY_KW   = {"recall", "what do you know", "do you remember", "retrieve", "find memory"}
+_META_KW           = {"who are you", "what are you", "jarvis", "your name", "version"}
 
-USER INPUT: "{user_input}"
+CLASSIFY_SYSTEM = """You are an intent classifier for a personal AI assistant called Jarvis.
 
-OUTPUT STRICT JSON ONLY:
-{{
-  "intent": "COMMAND" | "QUERY_MEMORY" | "STORE_MEMORY" | "META" | "CHAT" | "UNKNOWN",
-  "confidence": <float 0.0-1.0>,
-  "allowed": <boolean>
-}}
-"""
+Classify the user message into EXACTLY ONE of these intents:
+- chat          : general conversation, questions, requests for information
+- command       : system commands (exit, quit, status, synthesize, help)
+- store_memory  : user wants to save a fact, preference, or memory
+- query_memory  : user wants to retrieve something Jarvis remembers
+- meta          : questions about Jarvis itself
+
+Respond ONLY with valid JSON, no explanation:
+{"intent": "<intent>", "confidence": <0.0-1.0>}"""
+
 
 class IntentClassifierV2:
-    def __init__(self, llm_client: LLMClientV2):
-        self.llm = llm_client
+    def __init__(self, llm=None):
+        self.llm = llm
 
-    def classify(self, user_input: str) -> Dict[str, Any]:
+    def classify(self, user_input: str) -> dict:
         """
-        Hybrid Classification:
-        1. Regex (Fast, 1.0 confidence)
-        2. LLM (Slow, variable confidence)
+        Returns {"intent": str, "confidence": float}
+        Tries LLM first, falls back to keyword heuristic.
         """
-        clean_input = user_input.strip().lower()
+        # Try LLM classification
+        if self.llm is not None:
+            result = self._llm_classify(user_input)
+            if result:
+                return result
 
-        # 1. Fast Path: Regex for Hardcoded Commands
-        if clean_input in ["exit", "quit", "bye", "help", "status", "clear", "whoami"]:
-            return {"intent": Intent.COMMAND.value, "confidence": 1.0, "allowed": True}
+        # Keyword fallback
+        return self._keyword_classify(user_input)
 
-        # 2. Slow Path: LLM Analysis
+    def _llm_classify(self, text: str) -> dict | None:
+        """Synchronous LLM call for classification."""
         try:
-            prompt = INTENT_PROMPT.format(user_input=user_input)
-            response = self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                query_for_memory=None # Do not pollute classifier with memory context
+            import asyncio
+            prompt = f"Classify this message:\n\n{text}"
+            # Run async in sync context
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(
+                self.llm.complete_json(prompt, system=CLASSIFY_SYSTEM, temperature=0.0)
             )
-            parsed = self._parse_json(response)
-            
-            if parsed and "intent" in parsed:
-                return parsed
-            
+            loop.close()
+
+            if result and "intent" in result:
+                intent_str = result["intent"].lower()
+                # Validate against known intents
+                valid = {i.value for i in Intent}
+                if intent_str not in valid:
+                    intent_str = "unknown"
+                return {
+                    "intent": intent_str,
+                    "confidence": float(result.get("confidence", 0.7))
+                }
         except Exception as e:
-            logger.error(f"Intent Classification failed: {e}")
+            logger.warning(f"LLM classification failed: {e}")
+        return None
 
-        # Fallback
-        return {"intent": Intent.UNKNOWN.value, "confidence": 0.0, "allowed": False}
+    def _keyword_classify(self, text: str) -> dict:
+        """Fast keyword-based fallback classifier."""
+        lower = text.lower().strip()
+        first_word = lower.split()[0] if lower.split() else ""
 
-    def _parse_json(self, text: str) -> Optional[Dict]:
-        try:
-            # Attempt to find JSON structure even if LLM chats around it
-            match = re.search(r"(\{.*\})", text, re.DOTALL)
-            if match:
-                return json.loads(match.group(1))
-            return json.loads(text)
-        except:
-            return None
+        if first_word in _COMMAND_KEYWORDS:
+            return {"intent": Intent.COMMAND.value, "confidence": 0.95}
+
+        if any(kw in lower for kw in _MEMORY_STORE_KW):
+            return {"intent": Intent.STORE_MEMORY.value, "confidence": 0.85}
+
+        if any(kw in lower for kw in _MEMORY_QUERY_KW):
+            return {"intent": Intent.QUERY_MEMORY.value, "confidence": 0.85}
+
+        if any(kw in lower for kw in _META_KW):
+            return {"intent": Intent.META.value, "confidence": 0.9}
+
+        return {"intent": Intent.CHAT.value, "confidence": 0.75}

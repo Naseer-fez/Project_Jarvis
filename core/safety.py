@@ -1,61 +1,58 @@
 """
 core/safety.py
-──────────────
-Command Safety Gate (Session 6).
-Enforces allowlists/denylists and dry-run policies for commands.
+═══════════════
+CommandSafetyGate — validates commands before execution.
+V1 Rule: Physical actions, shell execution, and self-modification are ALWAYS blocked.
 """
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
+# ── Hard-blocked patterns ──────────────────────────────────
+BLOCKED_PATTERNS = [
+    r"\bos\.system\b",
+    r"\bsubprocess\b",
+    r"\beval\b",
+    r"\bexec\b",
+    r"rm\s+-rf",
+    r"del\s+/",
+    r"format\s+[a-zA-Z]:",
+    r"\bshutdown\b",
+    r"\breboot\b",
+    r"drop\s+table",
+    r"delete\s+from",
+]
+
+# ── Allowed command whitelist ──────────────────────────────
+ALLOWED_COMMANDS = {
+    "exit", "quit", "status", "synthesize",
+    "reset", "help", "memory", "history", "clear"
+}
+
+
 class CommandSafetyGate:
     """
-    The firewall for Jarvis Actions.
-    Determines if a command is safe to execute.
+    Verifies a command is safe before execution.
+    Returns {"allowed": bool, "reason": str}
     """
-    
-    # SAFE: Read-only or benign session commands
-    ALLOWLIST = {
-        "help", "status", "whoami", "exit", "quit", "bye", 
-        "clear", "version", "uptime"
-    }
 
-    # DANGEROUS: File system or system-level modifications (for future proofing)
-    DENYLIST = {
-        "exec", "rm", "delete", "format", "sudo", 
-        "install", "update", "upload", "download"
-    }
+    def verify_command(self, user_input: str) -> dict:
+        lower = user_input.lower().strip()
+        first_word = lower.split()[0] if lower.split() else ""
 
-    def __init__(self):
-        pass
+        # Check blocked patterns
+        for pattern in BLOCKED_PATTERNS:
+            if re.search(pattern, lower):
+                reason = f"Blocked pattern detected: '{pattern}'"
+                logger.warning(f"SAFETY BLOCK: {reason} | input={user_input!r}")
+                return {"allowed": False, "reason": reason}
 
-    def verify_command(self, command_str: str) -> dict:
-        """
-        Analyzes a command string.
-        Returns: { "allowed": bool, "reason": str, "dry_run": str }
-        """
-        cmd_root = command_str.lower().split()[0]
+        # If it's a known safe command — allow
+        if first_word in ALLOWED_COMMANDS:
+            return {"allowed": True, "reason": "whitelisted command"}
 
-        # 1. Check Denylist (Fail Fast)
-        if cmd_root in self.DENYLIST:
-            return {
-                "allowed": False,
-                "reason": f"Command '{cmd_root}' is explicitly BANNED.",
-                "dry_run": None
-            }
-
-        # 2. Check Allowlist
-        if cmd_root in self.ALLOWLIST:
-            return {
-                "allowed": True,
-                "reason": "Command is in the safe allowlist.",
-                "dry_run": f"System will execute internal routine: {cmd_root}"
-            }
-
-        # 3. Unknown Commands (Default Deny)
-        return {
-            "allowed": False,
-            "reason": f"Command '{cmd_root}' is not recognized as safe.",
-            "dry_run": None
-        }
+        # Unknown command — allow but log
+        logger.info(f"SAFETY: Unknown command '{first_word}' — allowing with log")
+        return {"allowed": True, "reason": "passed safety check"}

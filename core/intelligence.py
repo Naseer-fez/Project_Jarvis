@@ -1,98 +1,99 @@
 """
 core/intelligence.py
-────────────────────
-Memory Intelligence Layer (Session 5).
-Handles the "Decision Gate" and "Self-Reflection" logic.
+═════════════════════
+MemoryIntelligence — decides whether to passively store facts from conversation.
+Uses LLM to extract key/value pairs and categorize them.
 """
 
-import json
 import logging
 import re
-from typing import Optional, Dict, Any
-
-from core.llm.llm__init__ import LLMClientV2
-from core.prompts import MEMORY_EVALUATION_PROMPT, REFLECTION_PROMPT
 
 logger = logging.getLogger(__name__)
 
+MEMORY_EVAL_SYSTEM = """You are a memory extraction module for a personal AI assistant.
+
+Analyze the user message and decide if it contains a storable fact, preference, or episode.
+
+Rules:
+- Preferences: things the user likes/dislikes/wants (e.g. "I prefer dark mode")
+- Facts: explicit statements about themselves (e.g. "My name is Alex, I'm 30")
+- Episodes: notable events (e.g. "I just finished my project")
+- If nothing worth storing → decision = "ignore"
+
+Respond ONLY with valid JSON:
+{"decision": "store"|"ignore", "key": "short_key", "value": "what to store", "category": "preference"|"fact"|"episode"}
+
+If ignoring: {"decision": "ignore"}"""
+
+
 class MemoryIntelligence:
     """
-    The cognitive layer that sits between User Input and Memory Storage.
+    Passively evaluates conversation input and decides what to remember.
+    Does NOT store directly — returns a decision dict for the controller.
     """
 
-    def __init__(self, llm_client: LLMClientV2):
-        self.llm = llm_client
+    def __init__(self, llm=None):
+        self.llm = llm
 
-    def evaluate_input(self, user_input: str) -> Optional[Dict[str, Any]]:
+    def evaluate_input(self, user_input: str) -> dict | None:
         """
-        Decision Gate: Asks LLM if input is worth remembering.
-        Returns dict with keys {key, value, category} if yes, else None.
+        Returns a storage decision dict or None.
+        {"decision": "store", "key": ..., "value": ..., "category": ...}
+        {"decision": "ignore"} or None
         """
-        # Fast path: Ignore very short inputs
-        if len(user_input.split()) < 3:
+        # Quick heuristic pre-filter — skip short messages
+        if len(user_input.strip()) < 15:
             return None
 
-        prompt = MEMORY_EVALUATION_PROMPT.format(user_input=user_input)
-        
-        # We use a separate context-free call for evaluation to be objective
-        # Passing 'query_for_memory=None' prevents injecting existing memory to avoid bias
-        raw_response = self.llm.chat(
-            messages=[{"role": "user", "content": prompt}],
-            query_for_memory=None 
-        )
+        if self.llm:
+            result = self._llm_evaluate(user_input)
+            if result:
+                return result
 
-        return self._parse_json(raw_response)
+        return self._heuristic_evaluate(user_input)
 
-    def perform_reflection(self, session_history: list) -> Dict[str, Any]:
-        """
-        End-of-Session Reflection: Analyzes the conversation log.
-        """
-        if not session_history:
-            return {"summary": "Empty session", "new_learned_facts": []}
-
-        # Convert history objects to string log
-        log_text = "\n".join([
-            f"User: {turn['user']}\nJarvis: {turn['assistant']}"
-            for turn in session_history
-        ])
-
-        prompt = REFLECTION_PROMPT.format(conversation_log=log_text)
-        
-        raw_response = self.llm.chat(
-            messages=[{"role": "user", "content": prompt}],
-            query_for_memory=None
-        )
-
-        result = self._parse_json(raw_response)
-        if not result:
-            return {"summary": "Reflection failed", "error": "Invalid JSON"}
-        return result
-
-    def _parse_json(self, text: str) -> Optional[Dict]:
-        """
-        Robust JSON extractor that handles LLM 'thinking' output or markdown code blocks.
-        """
+    def _llm_evaluate(self, text: str) -> dict | None:
         try:
-            # 1. Try direct parse
-            return json.loads(text)
-        except:
-            pass
+            import asyncio
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(
+                self.llm.complete_json(
+                    f"Should I remember this?\n\n{text}",
+                    system=MEMORY_EVAL_SYSTEM,
+                    temperature=0.0
+                )
+            )
+            loop.close()
+            if result and result.get("decision") == "store":
+                return result
+            return {"decision": "ignore"}
+        except Exception as e:
+            logger.warning(f"MemoryIntelligence LLM failed: {e}")
+            return None
 
-        # 2. Extract from markdown code blocks ```json ... ```
-        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except:
-                pass
-        
-        # 3. Extract first valid {...} block found in text
-        match = re.search(r"(\{.*\})", text, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except:
-                pass
+    def _heuristic_evaluate(self, text: str) -> dict | None:
+        """Keyword-based fallback for memory extraction."""
+        lower = text.lower()
 
-        logger.warning(f"Failed to parse JSON from LLM response: {text[:50]}...")
-        return None
+        preference_signals = ["i prefer", "i like", "i love", "i hate", "i always", "i never", "my favourite"]
+        fact_signals = ["my name is", "i am", "i'm", "i work", "i live", "i was born"]
+
+        for sig in preference_signals:
+            if sig in lower:
+                return {
+                    "decision": "store",
+                    "key": "preference",
+                    "value": text.strip(),
+                    "category": "preference"
+                }
+
+        for sig in fact_signals:
+            if sig in lower:
+                return {
+                    "decision": "store",
+                    "key": "personal_fact",
+                    "value": text.strip(),
+                    "category": "fact"
+                }
+
+        return {"decision": "ignore"}
