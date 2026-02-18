@@ -10,7 +10,7 @@ import re
 import logging
 from enum import Enum
 from typing import Dict, Any, Optional
-from core.llm import LLMClientV2
+from core.llm.llm__init__ import LLMClientV2
 
 logger = logging.getLogger(__name__)
 

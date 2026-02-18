@@ -9,7 +9,7 @@ import json
 import logging
 from typing import Dict, Any, List
 
-from core.llm import LLMClientV2
+from core.llm.llm__init__ import LLMClientV2
 from core.profile import DEFAULT_PROFILE
 
 logger = logging.getLogger(__name__)

@@ -1,155 +1,201 @@
 """
-TaskPlanner — decomposes a user goal into an ordered list of steps.
-Uses Ollama (local LLM) to generate structured JSON plans.
+core/planning/task_planner.py
+══════════════════════════════
+LLM-powered planner using DeepSeek R1:8b via Ollama.
+
+V1 Rules:
+  - Input: user intent (text)
+  - Output: validated JSON plan
+  - NO execution. NO side effects. Planning ONLY.
+  - If LLM output is invalid JSON → return error plan, never crash
+  - Plans must pass RiskEvaluator before any step is executed
+  - All plans logged
 """
 
 import json
-import logging
-import re
-from dataclasses import dataclass, field
-from typing import Optional
-import httpx
+import asyncio
+import aiohttp
+from datetime import datetime, timezone
+from core.logger import get_logger, audit
+from core.risk_evaluator import RiskEvaluator
 
-logger = logging.getLogger("Jarvis.TaskPlanner")
+logger = get_logger("planner")
 
-PLAN_SYSTEM_PROMPT = """You are a planning module for an AI assistant called Jarvis.
-Given a user goal, decompose it into a minimal, ordered list of concrete steps.
+OLLAMA_URL = "http://localhost:11434/api/generate"
+LLM_MODEL = "deepseek-r1:8b"
 
-Respond ONLY with valid JSON in this exact schema — no explanation, no markdown:
+SYSTEM_PROMPT = """You are the planning module of Jarvis, a local AI assistant.
+
+Your ONLY job is to convert a user's intent into a structured JSON execution plan.
+
+STRICT RULES:
+1. Output ONLY valid JSON — no markdown, no explanation, no preamble
+2. Never include physical actions (mouse, keyboard, robotics) — these are BLOCKED in V1
+3. Available tools in V1:
+   - vision.analyze_image
+   - vision.snapshot
+   - memory.read
+   - memory.write
+   - planner.generate_plan (meta-planning only)
+4. If the request cannot be completed with available tools, set "feasible": false
+5. Every step needs: id, action, description, requires_confirmation (bool)
+
+OUTPUT FORMAT (strict):
 {
-  "goal": "<original goal>",
+  "goal": "string — what the user wants",
+  "feasible": true,
+  "reasoning": "string — brief reasoning",
   "steps": [
     {
-      "step_id": 1,
-      "description": "<what to do>",
-      "tool_required": "<tool_name or null>",
-      "arguments": {"key": "value"},
-      "expected_observation": "<what success looks like>",
-      "reversible": true,
-      "estimated_risk": 0.1
+      "id": 1,
+      "action": "tool.method",
+      "description": "what this step does",
+      "requires_confirmation": false,
+      "params": {}
     }
   ]
 }
 
-Available tools: get_time, get_system_stats, list_directory, read_file, write_file_safe, search_memory, log_event
-If no tool is needed for a step, set tool_required to null and arguments to null.
-Limit steps to 10 maximum. Keep it concise and practical.
+If not feasible:
+{
+  "goal": "string",
+  "feasible": false,
+  "reasoning": "string — why it cannot be done",
+  "steps": []
+}
 """
 
 
-@dataclass
-class PlanStep:
-    step_id: int
-    description: str
-    tool_required: Optional[str]
-    arguments: Optional[dict]
-    expected_observation: str
-    reversible: bool
-    estimated_risk: float
-
-
-@dataclass
-class Plan:
-    goal: str
-    steps: list[PlanStep] = field(default_factory=list)
-    raw_json: Optional[dict] = field(default=None, repr=False)
-
-    def __len__(self):
-        return len(self.steps)
-
-    def summary(self) -> str:
-        lines = [f"Goal: {self.goal}", f"Steps ({len(self.steps)}):"]
-        for s in self.steps:
-            tool = f" [tool: {s.tool_required}]" if s.tool_required else ""
-            lines.append(f"  {s.step_id}. {s.description}{tool}")
-        return "\n".join(lines)
+def _build_user_prompt(intent: str, context: str = "") -> str:
+    ctx_block = f"\n\nCONTEXT:\n{context}" if context else ""
+    return f"USER INTENT: {intent}{ctx_block}\n\nGenerate the JSON plan now."
 
 
 class TaskPlanner:
-    def __init__(self, model: str = "mistral", ollama_url: str = "http://localhost:11434"):
-        self.model = model
-        self.ollama_url = ollama_url
+    """
+    Calls DeepSeek R1:8b to generate a structured execution plan.
+    Plans are validated and risk-checked before being returned.
+    """
 
-    async def plan(self, goal: str, context: str = "") -> Optional[Plan]:
+    def __init__(self):
+        self.risk = RiskEvaluator()
+
+    async def plan(self, intent: str, context: str = "") -> dict:
         """
-        Ask the local LLM to generate a structured plan for the goal.
-        Returns a Plan object, or None on failure.
+        Generate a plan for the given intent.
+        Returns validated plan dict. Never raises — returns error plan on failure.
         """
-        user_prompt = f"User goal: {goal}"
-        if context:
-            user_prompt += f"\n\nContext:\n{context}"
+        logger.info(f"PLANNING: intent={intent!r}")
 
-        logger.info(f"Planning goal: {goal!r}")
+        raw_response = await self._call_llm(intent, context)
+        plan = self._parse_plan(raw_response, intent)
+        plan = self._risk_check_plan(plan)
 
-        raw = await self._call_ollama(PLAN_SYSTEM_PROMPT, user_prompt)
-        if not raw:
-            logger.error("TaskPlanner: No response from Ollama.")
-            return None
+        audit(
+            logger,
+            f"PLAN_GENERATED: goal={plan.get('goal')} feasible={plan.get('feasible')} steps={len(plan.get('steps', []))}",
+            plan=plan.get("goal"),
+            action="plan_generated"
+        )
+        return plan
 
-        return self._parse_plan(raw)
-
-    async def _call_ollama(self, system: str, user: str) -> Optional[str]:
+    async def _call_llm(self, intent: str, context: str) -> str:
+        """Call Ollama DeepSeek R1:8b. Returns raw string response."""
         payload = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            "model": LLM_MODEL,
+            "prompt": _build_user_prompt(intent, context),
+            "system": SYSTEM_PROMPT,
             "stream": False,
+            "options": {
+                "temperature": 0.1,  # Low temp for deterministic planning
+                "top_p": 0.9,
+            }
         }
+
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(f"{self.ollama_url}/api/chat", json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-                return data["message"]["content"]
-        except httpx.ConnectError:
-            logger.error("Cannot connect to Ollama. Is it running? (ollama serve)")
-            return None
+            async with aiohttp.ClientSession() as session:
+                async with session.post(OLLAMA_URL, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                    if resp.status != 200:
+                        logger.error(f"LLM call failed: HTTP {resp.status}")
+                        return ""
+                    data = await resp.json()
+                    return data.get("response", "")
+        except aiohttp.ClientConnectorError:
+            logger.error("Ollama not reachable. Is it running? (ollama serve)")
+            return ""
+        except asyncio.TimeoutError:
+            logger.error("LLM call timed out after 60s")
+            return ""
         except Exception as e:
-            logger.error(f"Ollama call failed: {e}")
-            return None
+            logger.error(f"LLM call exception: {e}")
+            return ""
 
-    def _parse_plan(self, raw_text: str) -> Optional[Plan]:
+    def _parse_plan(self, raw: str, original_intent: str) -> dict:
+        """Parse LLM response into validated plan dict."""
+        if not raw.strip():
+            return self._error_plan(original_intent, "LLM returned empty response")
+
+        # Strip <think>...</think> blocks from DeepSeek R1
+        import re
+        raw_clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+
         # Strip markdown code fences if present
-        text = re.sub(r"```(?:json)?", "", raw_text).strip()
+        if raw_clean.startswith("```"):
+            raw_clean = re.sub(r"^```[a-z]*\n?", "", raw_clean)
+            raw_clean = re.sub(r"\n?```$", "", raw_clean)
 
         try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            # Try to extract JSON object from surrounding text
-            match = re.search(r"\{.*\}", text, re.DOTALL)
-            if match:
-                try:
-                    data = json.loads(match.group())
-                except json.JSONDecodeError:
-                    logger.error("Failed to parse plan JSON from LLM response.")
-                    logger.debug(f"Raw text: {raw_text[:500]}")
-                    return None
-            else:
-                logger.error("No JSON object found in LLM response.")
-                return None
+            plan = json.loads(raw_clean)
+        except json.JSONDecodeError as e:
+            logger.error(f"LLM output is not valid JSON: {e}\nRaw output: {raw[:300]}")
+            return self._error_plan(original_intent, f"Invalid JSON from LLM: {e}")
 
-        try:
-            steps = [
-                PlanStep(
-                    step_id=s["step_id"],
-                    description=s["description"],
-                    tool_required=s.get("tool_required"),
-                    arguments=s.get("arguments"),
-                    expected_observation=s.get("expected_observation", ""),
-                    reversible=s.get("reversible", True),
-                    estimated_risk=float(s.get("estimated_risk", 0.1)),
-                )
-                for s in data.get("steps", [])
-            ]
+        # Validate required fields
+        required = {"goal", "feasible", "steps"}
+        missing = required - set(plan.keys())
+        if missing:
+            logger.error(f"Plan missing required fields: {missing}")
+            return self._error_plan(original_intent, f"Plan missing fields: {missing}")
 
-            plan = Plan(goal=data.get("goal", ""), steps=steps, raw_json=data)
-            logger.info(f"Plan created: {len(steps)} step(s)")
-            logger.debug(plan.summary())
+        # Validate each step
+        for step in plan.get("steps", []):
+            for field in ("id", "action", "description"):
+                if field not in step:
+                    logger.warning(f"Step {step} missing field '{field}' — plan may be incomplete")
+
+        logger.info(f"Plan parsed successfully: goal={plan.get('goal')!r} steps={len(plan.get('steps', []))}")
+        return plan
+
+    def _risk_check_plan(self, plan: dict) -> dict:
+        """Run RiskEvaluator on every step. Block unsafe plans."""
+        steps = plan.get("steps", [])
+        if not steps:
             return plan
 
-        except (KeyError, TypeError) as e:
-            logger.error(f"Plan schema error: {e}")
-            return None
+        all_safe, results = self.risk.evaluate_plan(steps)
 
+        if not all_safe:
+            blocked_tools = [r.tool for r in results if not r.allowed]
+            logger.warning(f"Plan contains blocked tools: {blocked_tools}. Marking infeasible.")
+            plan["feasible"] = False
+            plan["risk_blocked"] = True
+            plan["blocked_tools"] = blocked_tools
+            plan["steps"] = []
+            plan["reasoning"] = (
+                f"Plan was blocked by RiskEvaluator. "
+                f"Blocked tools: {blocked_tools}. "
+                f"These tools are not permitted in V1."
+            )
+
+        return plan
+
+    def _error_plan(self, intent: str, reason: str) -> dict:
+        """Return a safe fallback error plan."""
+        return {
+            "goal": intent,
+            "feasible": False,
+            "reasoning": f"Planning failed: {reason}. Jarvis cannot proceed.",
+            "steps": [],
+            "error": reason,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }

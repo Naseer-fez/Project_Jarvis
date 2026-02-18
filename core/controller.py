@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from collections import Counter
 
-from core.llm import LLMClientV2
+from core.llm.llm__init__ import LLMClientV2
 from memory.hybrid_memory import HybridMemory
 from memory.short_term import ShortTermMemory
 from core.intelligence import MemoryIntelligence 

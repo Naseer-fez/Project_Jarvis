@@ -10,7 +10,7 @@ import logging
 import re
 from typing import Optional, Dict, Any
 
-from core.llm import LLMClientV2
+from core.llm.llm__init__ import LLMClientV2
 from core.prompts import MEMORY_EVALUATION_PROMPT, REFLECTION_PROMPT
 
 logger = logging.getLogger(__name__)
