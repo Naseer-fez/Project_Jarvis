@@ -1,0 +1,82 @@
+{
+  "agent":"Jarvis","version":"2.0","root":"D:/AI/Jarvis","entry":"python main.py","mode":"local_offline",
+
+  "llm":{"model":"deepseek-r1:8b","endpoint":"http://localhost:11434/api/chat","streaming":true,"timeout":60},
+
+  "embed":{"model":"all-MiniLM-L6-v2","dim":384},
+
+  "paths":{
+    "sqlite":"D:/AI/Jarvis/memory/memory.db",
+    "chroma":"D:/AI/Jarvis/data/chroma",
+    "whisper":"D:/AI/Jarvis/data/whisper",
+    "piper":"D:/AI/Jarvis/data/piper",
+    "piper_bin":"D:/AI/Jarvis/tools/piper/piper.exe",
+    "log":"D:/AI/Jarvis/jarvis.log",
+    "venv":"D:/AI/Jarvis/jarvis_env"
+  },
+
+  "memory":{
+    "layers":["short_term(20turns)","sqlite","chroma"],
+    "collections":["jarvis_preferences","jarvis_episodes","jarvis_conversations"],
+    "recall":{"top_k":5,"threshold":0.30,"max_tokens":400,"priority":["preferences","episodes","conversations"]},
+    "chroma_ops":{"jarvis_preferences":"upsert,id=pref_{key}","jarvis_episodes":"add,id=ep_{uuid12}","jarvis_conversations":"add,id=conv_{uuid12}"}
+  },
+
+  "db_schema":{
+    "preferences":"id,key UNIQUE,value,updated_at",
+    "episodic_memory":"id,event,timestamp,category",
+    "conversation_history":"id,user_input,assistant_response,timestamp,session_id"
+  },
+
+  "files":{
+    "main.py":"entry — JarvisControllerV2 loop",
+    "core/intents.py":"Intent enum + IntentClassifier + wrappers: classify_intent,extract_memory_data,extract_memory_query",
+    "core/controller_v2.py":"orchestrator — imports: HybridMemory,ShortTermMemory,classify_intent,LLMClientV2",
+    "core/llm.py":"LLMClientV2 — imports: HybridMemory, ContextCompressor FROM core/context_compressor.py",
+    "core/context_compressor.py":"ContextCompressor.compress(query,recall)->str",
+    "core/embeddings.py":"EmbeddingManager — embed,batch,similarity,LRU cache 512",
+    "memory/long_term.py":"LongTermMemory — SQLite CRUD",
+    "memory/short_term.py":"ShortTermMemory — RAM buffer",
+    "memory/semantic_memory.py":"SemanticMemory — ChromaDB. NOTE: _model:Any(lazy import),docstring before code in initialize()",
+    "memory/hybrid_memory.py":"HybridMemory — dual-write SQLite+ChromaDB, build_context_block(query)->str"
+  },
+
+  "intents":["MEMORY_STORE","MEMORY_RECALL","QUESTION","COMMAND","UNKNOWN"],
+
+  "behavior":["be concise","no hallucinated memory","say when memory unavailable","never expose internals unless asked"],
+
+  "bugs_fixed":{
+    "B1":"core/intents.py — added module-level wrappers (classify_intent etc), class alone broke imports",
+    "B2":"core/controller_v2.py — import 'from core.llm' NOT 'from core.llm_v2' (wrong filename)",
+    "B3":"core/llm.py — ContextCompressor is in core/ not memory/",
+    "B4":"main.py — instantiate JarvisControllerV2(), no global run() exists",
+    "B5":"memory/semantic_memory.py — _model:Any, docstring before import, results['ids'] guard, List[Dict] types"
+  },
+
+  "sessions":{
+    "S1":"venv+Ollama+deepseek-r1:8b","S2":"scaffold+requirements",
+    "S3":"SQLite+intents+controller+main",
+    "S4":"ChromaDB+embeddings+hybrid+streaming — DONE, 5 bugs fixed",
+    "S5":"NEXT: voice layer","S6":"FUTURE: commands+viz","S7":"FUTURE: multi-user"
+  },
+
+  "S5":{
+    "files":{
+      "voice/listener.py":"VoiceListener.listen_once(timeout)->str — sounddevice+Whisper",
+      "voice/speaker.py":"VoiceSpeaker.speak(text,blocking) — Piper subprocess",
+      "voice/vad.py":"silence threshold, auto-stop mic",
+      "voice/wake_word.py":"pvporcupine 'Hey Jarvis' — optional",
+      "core/controller_v3.py":"extends V2 + voice I/O",
+      "main_v3.py":"argparse --voice/--text/--no-wake-word"
+    },
+    "tools":{
+      "whisper":"base.en ~150MB — python -c \"import whisper;whisper.load_model('base.en')\"",
+      "piper_exe":"github.com/rhasspy/piper/releases → D:/AI/Jarvis/tools/piper/piper.exe",
+      "piper_voice":"hf.co/rhasspy/piper-voices en_US-lessac-medium.onnx+.json → D:/AI/Jarvis/data/piper/",
+      "pip":"sounddevice soundfile openai-whisper pvporcupine(optional)"
+    },
+    "audio":{"rate":16000,"channels":1,"dtype":"float32"},
+    "flow":"IDLE→wake→LISTEN→VAD_stop→WHISPER→process()→PIPER→IDLE",
+    "build_order":["listener","speaker","vad","controller_v3","main_v3","wake_word(opt)","tests"]
+  }
+}
