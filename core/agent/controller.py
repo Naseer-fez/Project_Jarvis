@@ -1,41 +1,55 @@
 """
-MainController — top-level orchestrator for Jarvis.
-Wires all components together and runs the interactive input loop.
+core/agent/controller.py
+────────────────────────
+MainController — Top-level orchestrator for Jarvis.
+Now strictly enforces the StateMachine lifecycle.
 """
 
 import asyncio
-import json
 import logging
 import time
+import sys
 from pathlib import Path
+from typing import Optional
 
-from core.state_machine import StateMachine, AgentState
-from core.task_planner import TaskPlanner
-from core.tool_router import ToolRouter
-from core.risk_evaluator import RiskEvaluator
-from core.autonomy_governor import AutonomyGovernor
-from core.agent_loop import AgentLoopEngine
-from core.ollama_llm import OllamaLLM
-from core.audit_logger import AuditLogger
-from memory.memory_engine import MemoryEngine
-from tools.builtin_tools import register_all_tools
+# ─── IMPORTS ────────────────────────────────────────────────────────────────
+
+# 1. State Machine (The Brain's Lifecycle)
+from core.agent.state_machine import StateMachine, AgentState 
+from core.agent.agent_loop import AgentLoopEngine
+
+# 2. Intelligence & Planning
+from core.planning.task_planner import TaskPlanner
+from core.llm.ollama_llm import OllamaLLM
+from core.intents import IntentClassifierV2, Intent
+
+# 3. Tools & Execution
+from core.tools.tool_router import ToolRouter
+from core.tools.builtin_tools import register_all_tools
+
+# 4. Autonomy & Safety
+from core.autonomy.risk_evaluator import RiskEvaluator
+from core.autonomy.autonomy_governor import AutonomyGovernor
+
+# 5. Memory & Audit
+from core.memory.memory_engine import MemoryEngine
+from audit.audit_logger import AuditLogger
+
+# Optional / External Tools
+try:
+    from core.tools.vision import analyze_image
+    HAS_VISION = True
+except ImportError:
+    HAS_VISION = False
 
 logger = logging.getLogger("Jarvis.Controller")
 
-STOP_KEYWORDS = {"stop", "cancel", "abort", "quit", "exit", "bye"}
-
-# Intent signals that trigger the full agent loop vs. simple chat
-AGENT_TRIGGER_KEYWORDS = [
-    "create", "write", "read", "list", "show", "find", "get", "fetch",
-    "check", "log", "save", "search", "run", "execute", "do", "plan",
-    "analyze", "summarize", "open", "delete",
-]
-
-
-def _is_agent_task(text: str) -> bool:
-    text_lower = text.lower()
-    return any(kw in text_lower for kw in AGENT_TRIGGER_KEYWORDS)
-
+# Keywords that suggest a complex "Agentic" task
+AGENT_TRIGGER_KEYWORDS = {
+    "create", "write", "read", "scan", "list", "show", "find", 
+    "fetch", "check", "log", "save", "search", "run", "execute", 
+    "analyze", "summarize", "delete", "edit", "code", "debug"
+}
 
 class MainController:
     def __init__(
@@ -45,17 +59,29 @@ class MainController:
         model: str = "mistral",
         ollama_url: str = "http://localhost:11434",
     ):
-        session_id = f"session_{int(time.time())}"
-
-        # Core components
-        self.sm = StateMachine()
-        self.llm = OllamaLLM(model=model, base_url=ollama_url)
-        self.planner = TaskPlanner(model=model, ollama_url=ollama_url)
+        self.session_id = f"session_{int(time.time())}"
+        
+        # 1. Initialize Foundation
+        self.model = model
+        self.voice_enabled = voice_enabled
         self.router = ToolRouter()
+        
+        # 2. Initialize State Machine
+        # This tracks if we are LISTENING, THINKING, ACTING, etc.
+        self.sm = StateMachine()
+        
+        # 3. Initialize Intelligence
+        self.llm = OllamaLLM(model=model, base_url=ollama_url)
+        self.classifier = IntentClassifierV2(self.llm)
+        self.planner = TaskPlanner(model=model, ollama_url=ollama_url)
         self.risk = RiskEvaluator(autonomy_level=autonomy_level)
         self.gov = AutonomyGovernor(level=autonomy_level)
-        self.memory = MemoryEngine(session_id=session_id)
-        self.audit = AuditLogger(session_id=session_id)
+        
+        # 4. Initialize Memory & Audit
+        self.memory = MemoryEngine(session_id=self.session_id)
+        self.audit = AuditLogger(session_id=self.session_id)
+        
+        # 5. Initialize Agent Loop (Passes SM to it so it can transition to PLANNING/ACTING)
         self.agent_loop = AgentLoopEngine(
             state_machine=self.sm,
             task_planner=self.planner,
@@ -66,190 +92,233 @@ class MainController:
             ollama_url=ollama_url,
         )
 
+        # 6. Register Tools
         register_all_tools(self.router)
+        if HAS_VISION:
+            self.router.register("see", analyze_image)
+        else:
+            logger.warning("Vision tool not loaded (missing dependency or file).")
 
-        self.voice_enabled = voice_enabled
-        self.model = model
-        self._running = False
-
-        # Create required directories
+        # 7. Ensure Environment
         Path("./workspace").mkdir(exist_ok=True)
         Path("./outputs").mkdir(exist_ok=True)
+        
+        self._running = False
 
     async def run(self):
-        """Main run loop."""
+        """Main interactive loop."""
         self._running = True
+        self._print_banner()
 
-        # Startup banner
-        print("\n" + "═" * 60)
-        print("  J A R V I S  —  Local Agentic Assistant")
-        print("═" * 60)
-        print(f"  Model   : {self.model} (via Ollama)")
-        print(f"  Autonomy: {self.gov.describe()}")
-        print(f"  Voice   : {'enabled' if self.voice_enabled else 'disabled'}")
-        print("  Type 'help' for commands | Ctrl+C to exit")
-        print("═" * 60 + "\n")
+        # Health Check
+        if not await self.llm.check_availability():
+            print(f"\n⚠️  CRITICAL: Model '{self.model}' not reachable at {self.llm.base_url}")
+            print(f"   Run: `ollama run {self.model}` in another terminal.\n")
 
-        # Check Ollama
-        available = await self.llm.check_availability()
-        if not available:
-            print(f"⚠️  Warning: Ollama model '{self.model}' may not be available.")
-            print(f"   Run: ollama pull {self.model}\n")
-
-        # Voice daemon (stub — wired for future voice module)
-        if self.voice_enabled:
-            print("🎤 Voice mode enabled (STT/TTS stubs active)\n")
+        # Ensure we start in IDLE
+        if self.sm.state != AgentState.IDLE:
+            self.sm.force_idle()
 
         while self._running:
             try:
+                # 1. LISTENING Phase
                 user_input = await self._get_input()
-            except (EOFError, KeyboardInterrupt):
+                if not user_input: continue
+                
+                # 2. THINKING Phase (Processing)
+                await self._handle_input(user_input)
+                
+            except KeyboardInterrupt:
+                print("\n\n[Jarvis] Interrupt received. Stopping...")
                 break
-
-            if not user_input:
-                continue
-
-            await self._handle_input(user_input)
+            except Exception as e:
+                logger.exception("Error in main loop")
+                print(f"\n❌ Error: {e}")
+                self.sm.transition(AgentState.ERROR)
+                time.sleep(1)
+                self.sm.force_idle()
 
         await self._shutdown()
 
     async def _get_input(self) -> str:
-        """Get input from text (or voice in future)."""
+        """Transitions IDLE -> LISTENING -> gets input -> returns."""
+        # Ensure we are in a valid state to start listening
+        if self.sm.state != AgentState.IDLE:
+            self.sm.force_idle()
+            
+        self.sm.transition(AgentState.LISTENING)
+        
         loop = asyncio.get_event_loop()
-        self.sm.transition(AgentState.IDLE) if self.sm.state != AgentState.IDLE else None
-        raw = await loop.run_in_executor(None, lambda: input("You: ").strip())
-        self.audit.log_voice_interaction("user", raw)
-        return raw
+        try:
+            # Non-blocking input
+            prompt = "\n(Listening) 👤 You: "
+            raw = await loop.run_in_executor(None, lambda: input(prompt).strip())
+            return raw
+        except EOFError:
+            self._running = False
+            return ""
 
     async def _handle_input(self, text: str):
-        """Route input to the right handler."""
-        lower = text.lower().strip()
+        """Transitions LISTENING -> THINKING -> [Action]"""
+        # Valid Transition: LISTENING -> THINKING
+        self.sm.transition(AgentState.THINKING)
+        
+        text_lower = text.lower()
 
-        # Built-in commands
-        if lower in STOP_KEYWORDS:
-            if self.agent_loop and self.sm.is_interruptible():
-                self.agent_loop.request_interrupt()
-                print("\n[Jarvis] Stopping current task...\n")
-            else:
-                print("\n[Jarvis] Goodbye.\n")
-                self._running = False
+        # 1. Fast Path: Hardcoded System Commands
+        if text_lower in {"exit", "quit", "bye"}:
+            print("\n[Jarvis] Goodbye.")
+            self._running = False
             return
-
-        if lower == "help":
+            
+        if text_lower == "help":
             self._print_help()
+            self.sm.transition(AgentState.IDLE) # Done thinking
             return
-
-        if lower == "status":
+            
+        if text_lower == "status":
             self._print_status()
+            self.sm.transition(AgentState.IDLE)
             return
 
-        if lower.startswith("autonomy "):
-            level_str = lower.split()[-1]
-            if level_str.isdigit():
-                self.gov.escalate(int(level_str))
-                self.risk.autonomy_level = self.gov.level
-                print(f"\n[Jarvis] {self.gov.describe()}\n")
+        if text_lower.startswith("autonomy"):
+            try:
+                level = int(text.split()[-1])
+                self.gov.escalate(level)
+                self.risk.autonomy_level = level
+                print(f"⚙️  Autonomy updated: {self.gov.describe()}")
+            except ValueError:
+                print("Usage: autonomy <0-3>")
+            self.sm.transition(AgentState.IDLE)
             return
 
-        if lower == "memory":
-            for e in self.memory.recent(5):
-                print(f"  [{e.category}] {e.content}")
-            print()
+        # 2. Intelligent Classification
+        print("   (Thinking...)", end="\r")
+        classification = self.classifier.classify(text)
+        intent = classification.get("intent")
+        confidence = classification.get("confidence", 0.0)
+
+        # 3. Routing Logic
+        
+        # A. System Commands (via LLM classification)
+        if intent == Intent.COMMAND.value and confidence > 0.8:
+            await self._simple_chat(text, system_override=True)
             return
 
-        if lower == "clear":
-            self.llm.reset_history()
-            print("\n[Jarvis] Conversation history cleared.\n")
+        # B. Memory Operations
+        if intent == Intent.QUERY_MEMORY.value:
+            print("   (Searching Memory...)", end="\r")
+            mem_hits = self.memory.search(text, limit=3)
+            context = "\n".join([m['content'] for m in mem_hits]) if mem_hits else "No specific memory found."
+            await self._simple_chat(text, context_inject=f"MEMORY RESULTS:\n{context}")
             return
 
-        # Route to agent loop or simple chat
-        if _is_agent_task(text) and self.gov.level >= 1:
+        if intent == Intent.STORE_MEMORY.value:
+            self.memory.store(text, category="user_defined")
+            print(f"💾  Memory saved.")
+            self.sm.transition(AgentState.IDLE)
+            return
+
+        # C. Agent Tasks vs. Chat
+        is_task_keyword = any(kw in text_lower for kw in AGENT_TRIGGER_KEYWORDS)
+        
+        if is_task_keyword and self.gov.level >= 1:
+            # THINKING -> PLANNING (Handled inside AgentLoop)
             await self._run_agent_task(text)
         else:
+            # THINKING -> SPEAKING
             await self._simple_chat(text)
 
-    async def _simple_chat(self, text: str):
-        """Pure conversational response via LLM."""
-        self.sm.transition(AgentState.THINKING)
-        context = self.memory.context_summary(text)
-        response = await self.llm.chat(text, inject_context=context)
+    async def _simple_chat(self, text: str, context_inject: str = "", system_override: bool = False):
+        """Standard LLM response (Chat Mode)."""
+        # Ensure we are THINKING (we should be, but safety check)
+        if self.sm.state != AgentState.THINKING:
+             self.sm.transition(AgentState.THINKING)
+        
+        # Get context
+        if not context_inject:
+            context_inject = self.memory.context_summary(text)
+
+        response = await self.llm.chat(text, inject_context=context_inject)
+        
+        # Transition THINKING -> SPEAKING
         self.sm.transition(AgentState.SPEAKING)
-        print(f"\nJarvis: {response}\n")
+        print(f"🤖 Jarvis: {response}")
+        
+        # Log
+        self.audit.log_voice_interaction("user", text)
         self.audit.log_voice_interaction("jarvis", response)
-        self.memory.store(f"User asked: {text[:100]}", category="episodic")
+        self.memory.store(f"User: {text}\nJarvis: {response}", category="conversation")
+        
+        # Done -> IDLE
         self.sm.transition(AgentState.IDLE)
 
     async def _run_agent_task(self, goal: str):
-        """Run the full agent loop for an action-oriented goal."""
-        print(f"\n[Jarvis] Planning: {goal!r}\n")
-        context = self.memory.context_summary(goal)
-
+        """Execute the full Agentic Loop."""
+        # AgentLoop expects to be called while in THINKING or IDLE
+        # It will transition to PLANNING -> ... -> ACTING -> ...
+        print(f"\n⚙️  Starting Agent Task: {goal!r}")
+        
         trace = await self.agent_loop.run(
             goal=goal,
-            context=context,
-            confirm_callback=self._confirm_callback,
+            context=self.memory.context_summary(goal),
+            confirm_callback=self._confirm_action
         )
 
-        print(f"\nJarvis: {trace.final_response}\n")
-        self.audit.log_voice_interaction("jarvis", trace.final_response)
+        print(f"\n🤖 Jarvis: {trace.final_response}")
+        
         self.audit.log_trace(trace.to_dict())
+        if trace.success:
+            self.memory.store(f"Completed task: {goal}", category="episodic")
+        
+        # Force IDLE after complex task to reset state
+        self.sm.force_idle()
 
-        if trace.plan:
-            self.audit.log_plan(trace.plan)
+    async def _confirm_action(self, prompt: str) -> bool:
+        """Callback for autonomy governor. Transitions to AWAITING_CONFIRMATION."""
+        previous_state = self.sm.state
+        self.sm.transition(AgentState.AWAITING_CONFIRMATION)
+        
+        print(f"\n🛑  PERMISSION REQUIRED: {prompt}")
+        choice = await asyncio.get_event_loop().run_in_executor(None, input, "    Allow? [y/N]: ")
+        allowed = choice.strip().lower().startswith('y')
+        
+        # Return to previous state (usually RISK_EVALUATION or PLANNING)
+        # Note: The State Machine transitions defines AWAITING -> ACTING or IDLE.
+        # We need to be careful here. 
+        # Ideally, AgentLoop handles the transition to ACTING if True.
+        
+        return allowed
 
-        for obs in self.router.get_observations():
-            self.audit.log_observation(obs.to_dict())
-
-        for risk in trace.risk_scores:
-            self.audit.log_risk(risk)
-
-        if trace.reflection:
-            self.audit.log_reflection(trace.reflection)
-            self.memory.store(
-                f"Completed task: {goal[:80]} — {trace.stop_reason}",
-                category="episodic",
-                tags=["task", "completed"],
-            )
-
-        self.audit.log_memory_snapshot(self.memory.snapshot())
-
-    async def _confirm_callback(self, prompt: str) -> bool:
-        loop = asyncio.get_event_loop()
-        answer = await loop.run_in_executor(None, input, prompt)
-        return answer.strip().lower() in ("y", "yes")
+    def _print_banner(self):
+        print("\n" + "═" * 50)
+        print("   J A R V I S   v4.0 (Hybrid Controller)")
+        print("═" * 50)
+        print(f"   Model    : {self.model}")
+        print(f"   Autonomy : {self.gov.describe()}")
+        print(f"   Vision   : {'Enabled' if HAS_VISION else 'Disabled'}")
+        print("═" * 50 + "\n")
 
     def _print_help(self):
         print("""
-╔══════════════════════════════════════════════════╗
-║              Jarvis — Commands                   ║
-╠══════════════════════════════════════════════════╣
-║ help           Show this help menu               ║
-║ status         Show current state & config       ║
-║ memory         Show recent memory entries        ║
-║ clear          Clear conversation history        ║
-║ autonomy <N>   Set autonomy level (0-3)          ║
-║ stop/cancel    Interrupt current task            ║
-║ exit/quit      End session                       ║
-╚══════════════════════════════════════════════════╝
-Autonomy levels:
-  0 = Chat only     (no tools)
-  1 = Suggest only  (describes actions, doesn't run them)
-  2 = Read-only     (can query files/system/memory)
-  3 = Write+confirm (can write files after your approval)
-""")
+    Commands:
+      help          Show this menu
+      status        Show system state
+      clear         Clear history
+      autonomy <N>  Set level (0=Chat, 1=Suggest, 2=ReadOnly, 3=Full)
+      exit          Quit
+        """)
 
     def _print_status(self):
         print(f"""
-[Status]
-  State    : {self.sm.state.name}
-  Model    : {self.model}
-  Autonomy : {self.gov.describe()}
-  Tools    : {', '.join(self.router.registered_tools())}
-  Memory   : {len(self.memory._entries)} entries
-""")
+    [System Status]
+      State:    {self.sm.state.name}
+      Tools:    {len(self.router.registered_tools())} registered
+      Memory:   {len(self.memory._entries)} items (Session)
+      Log File: {self.audit.session_file}
+        """)
 
     async def _shutdown(self):
-        logger.info("Shutting down Jarvis...")
+        print("\n[Jarvis] Saving session artifacts...")
         self.audit.log_memory_snapshot(self.memory.snapshot())
-        print("\n[Jarvis] Session ended. Artifacts saved to ./outputs/Jarvis-Session/\n")
-
+        print("[Jarvis] Shut down complete.")
