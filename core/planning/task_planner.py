@@ -1,201 +1,188 @@
 """
-core/planning/task_planner.py
-══════════════════════════════
-LLM-powered planner using DeepSeek R1:8b via Ollama.
+core/planning/task_planner.py — LLM planner via Ollama (DeepSeek R1:8b).
 
-V1 Rules:
-  - Input: user intent (text)
-  - Output: validated JSON plan
-  - NO execution. NO side effects. Planning ONLY.
-  - If LLM output is invalid JSON → return error plan, never crash
-  - Plans must pass RiskEvaluator before any step is executed
-  - All plans logged
+Responsibilities:
+  - Translate natural-language intent into a structured JSON plan
+  - NEVER execute anything — pure planner
+  - If the LLM produces invalid JSON or is uncertain, return a safe "unknown" plan
+  - Plans are validated against a schema before being returned
+
+Plan schema:
+  {
+    "intent":  str,           # echo of the user's request
+    "summary": str,           # one-sentence human-readable plan summary
+    "confidence": float,      # 0.0–1.0
+    "steps": [
+      {
+        "id": int,
+        "action": str,        # machine-readable action type
+        "description": str,   # human-readable step description
+        "params": { ... }     # action-specific parameters
+      }
+    ],
+    "clarification_needed": bool,
+    "clarification_prompt": str   # if clarification_needed
+  }
 """
 
+from __future__ import annotations
+
 import json
-import asyncio
-import aiohttp
-from datetime import datetime, timezone
-from core.logger import get_logger, audit
-from core.risk_evaluator import RiskEvaluator
+import re
+import time
+from typing import Any
 
-logger = get_logger("planner")
+import urllib.request
+import urllib.error
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
-LLM_MODEL = "deepseek-r1:8b"
+_SYSTEM_PROMPT = """You are Jarvis, a local AI assistant. Your ONLY job is to produce a JSON plan.
 
-SYSTEM_PROMPT = """You are the planning module of Jarvis, a local AI assistant.
+RULES:
+1. Respond ONLY with valid JSON — no markdown, no explanation, no preamble.
+2. If you don't know how to do something, set clarification_needed=true and explain.
+3. Never include actions that execute shell commands, delete files, or send network requests.
+4. Never guess or hallucinate — if uncertain, say so in clarification_prompt.
+5. Keep plans concise — 1 to 5 steps maximum.
 
-Your ONLY job is to convert a user's intent into a structured JSON execution plan.
-
-STRICT RULES:
-1. Output ONLY valid JSON — no markdown, no explanation, no preamble
-2. Never include physical actions (mouse, keyboard, robotics) — these are BLOCKED in V1
-3. Available tools in V1:
-   - vision.analyze_image
-   - vision.snapshot
-   - memory.read
-   - memory.write
-   - planner.generate_plan (meta-planning only)
-4. If the request cannot be completed with available tools, set "feasible": false
-5. Every step needs: id, action, description, requires_confirmation (bool)
-
-OUTPUT FORMAT (strict):
+JSON schema (return exactly this structure):
 {
-  "goal": "string — what the user wants",
-  "feasible": true,
-  "reasoning": "string — brief reasoning",
+  "intent": "<echo user request>",
+  "summary": "<one sentence what you will do>",
+  "confidence": 0.0,
   "steps": [
     {
       "id": 1,
-      "action": "tool.method",
-      "description": "what this step does",
-      "requires_confirmation": false,
+      "action": "<action_type>",
+      "description": "<human readable>",
       "params": {}
     }
-  ]
+  ],
+  "clarification_needed": false,
+  "clarification_prompt": ""
 }
 
-If not feasible:
-{
-  "goal": "string",
-  "feasible": false,
-  "reasoning": "string — why it cannot be done",
-  "steps": []
-}
+Valid safe actions: memory_read, memory_write, speak, display, status, recall, store_fact, health_check, vision_analyze
+Forbidden actions: shell_exec, file_delete, network_request, serial_send, physical_actuate, file_write, process_spawn
 """
 
+_UNKNOWN_PLAN = {
+    "intent": "",
+    "summary": "I don't know how to do that safely.",
+    "confidence": 0.0,
+    "steps": [],
+    "clarification_needed": True,
+    "clarification_prompt": "I don't have a safe way to accomplish that request. Could you rephrase or give more detail?",
+}
 
-def _build_user_prompt(intent: str, context: str = "") -> str:
-    ctx_block = f"\n\nCONTEXT:\n{context}" if context else ""
-    return f"USER INTENT: {intent}{ctx_block}\n\nGenerate the JSON plan now."
+
+def _extract_json(text: str) -> str:
+    """Extract the first JSON object from a string (strips markdown fences, thinking tags, etc.)."""
+    # Remove DeepSeek <think>...</think> blocks
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Remove markdown fences
+    text = re.sub(r"```(?:json)?", "", text)
+    text = text.strip()
+
+    # Find first { ... } block
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if start == -1:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start != -1:
+                return text[start:i + 1]
+    return text
+
+
+def _validate_plan(plan: dict) -> dict:
+    """Coerce plan to expected schema. Never raises."""
+    return {
+        "intent":               str(plan.get("intent", "")),
+        "summary":              str(plan.get("summary", "No summary.")),
+        "confidence":           float(plan.get("confidence", 0.0)),
+        "steps":                plan.get("steps", []) if isinstance(plan.get("steps"), list) else [],
+        "clarification_needed": bool(plan.get("clarification_needed", False)),
+        "clarification_prompt": str(plan.get("clarification_prompt", "")),
+    }
 
 
 class TaskPlanner:
-    """
-    Calls DeepSeek R1:8b to generate a structured execution plan.
-    Plans are validated and risk-checked before being returned.
-    """
+    def __init__(self, config) -> None:
+        self._base_url = config.get("ollama", "base_url", fallback="http://localhost:11434")
+        self._model    = config.get("ollama", "planner_model", fallback="deepseek-r1:8b")
+        self._timeout  = int(config.get("ollama", "request_timeout_s", fallback="120"))
 
-    def __init__(self):
-        self.risk = RiskEvaluator()
-
-    async def plan(self, intent: str, context: str = "") -> dict:
+    def plan(self, intent: str, context: str = "") -> dict[str, Any]:
         """
-        Generate a plan for the given intent.
-        Returns validated plan dict. Never raises — returns error plan on failure.
+        Generate a JSON plan for the given intent.
+        Always returns a valid plan dict — never raises.
         """
-        logger.info(f"PLANNING: intent={intent!r}")
+        if not intent.strip():
+            p = dict(_UNKNOWN_PLAN)
+            p["intent"] = intent
+            p["clarification_prompt"] = "Empty request received."
+            return p
 
-        raw_response = await self._call_llm(intent, context)
-        plan = self._parse_plan(raw_response, intent)
-        plan = self._risk_check_plan(plan)
+        prompt = intent
+        if context:
+            prompt = f"Context:\n{context}\n\nRequest: {intent}"
 
-        audit(
-            logger,
-            f"PLAN_GENERATED: goal={plan.get('goal')} feasible={plan.get('feasible')} steps={len(plan.get('steps', []))}",
-            plan=plan.get("goal"),
-            action="plan_generated"
-        )
-        return plan
+        try:
+            raw = self._call_ollama(prompt)
+        except Exception as exc:
+            p = dict(_UNKNOWN_PLAN)
+            p["intent"] = intent
+            p["clarification_prompt"] = f"LLM unavailable: {exc}"
+            return p
 
-    async def _call_llm(self, intent: str, context: str) -> str:
-        """Call Ollama DeepSeek R1:8b. Returns raw string response."""
-        payload = {
-            "model": LLM_MODEL,
-            "prompt": _build_user_prompt(intent, context),
-            "system": SYSTEM_PROMPT,
+        try:
+            json_str = _extract_json(raw)
+            plan = json.loads(json_str)
+            plan = _validate_plan(plan)
+            plan["intent"] = intent  # always echo the original
+            return plan
+        except (json.JSONDecodeError, ValueError):
+            p = dict(_UNKNOWN_PLAN)
+            p["intent"] = intent
+            p["clarification_prompt"] = "LLM returned invalid JSON. Please try rephrasing."
+            return p
+
+    def _call_ollama(self, prompt: str) -> str:
+        """POST to Ollama /api/generate. Returns raw model response string."""
+        url = f"{self._base_url}/api/generate"
+        payload = json.dumps({
+            "model":  self._model,
+            "prompt": prompt,
+            "system": _SYSTEM_PROMPT,
             "stream": False,
             "options": {
-                "temperature": 0.1,  # Low temp for deterministic planning
-                "top_p": 0.9,
-            }
-        }
+                "temperature": 0.1,   # low temp for deterministic plans
+                "num_predict": 1024,
+            },
+        }).encode("utf-8")
 
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            body = resp.read().decode("utf-8")
+
+        data = json.loads(body)
+        return data.get("response", "")
+
+    def ping(self) -> bool:
+        """Check if Ollama is reachable."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(OLLAMA_URL, json=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                    if resp.status != 200:
-                        logger.error(f"LLM call failed: HTTP {resp.status}")
-                        return ""
-                    data = await resp.json()
-                    return data.get("response", "")
-        except aiohttp.ClientConnectorError:
-            logger.error("Ollama not reachable. Is it running? (ollama serve)")
-            return ""
-        except asyncio.TimeoutError:
-            logger.error("LLM call timed out after 60s")
-            return ""
-        except Exception as e:
-            logger.error(f"LLM call exception: {e}")
-            return ""
-
-    def _parse_plan(self, raw: str, original_intent: str) -> dict:
-        """Parse LLM response into validated plan dict."""
-        if not raw.strip():
-            return self._error_plan(original_intent, "LLM returned empty response")
-
-        # Strip <think>...</think> blocks from DeepSeek R1
-        import re
-        raw_clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-
-        # Strip markdown code fences if present
-        if raw_clean.startswith("```"):
-            raw_clean = re.sub(r"^```[a-z]*\n?", "", raw_clean)
-            raw_clean = re.sub(r"\n?```$", "", raw_clean)
-
-        try:
-            plan = json.loads(raw_clean)
-        except json.JSONDecodeError as e:
-            logger.error(f"LLM output is not valid JSON: {e}\nRaw output: {raw[:300]}")
-            return self._error_plan(original_intent, f"Invalid JSON from LLM: {e}")
-
-        # Validate required fields
-        required = {"goal", "feasible", "steps"}
-        missing = required - set(plan.keys())
-        if missing:
-            logger.error(f"Plan missing required fields: {missing}")
-            return self._error_plan(original_intent, f"Plan missing fields: {missing}")
-
-        # Validate each step
-        for step in plan.get("steps", []):
-            for field in ("id", "action", "description"):
-                if field not in step:
-                    logger.warning(f"Step {step} missing field '{field}' — plan may be incomplete")
-
-        logger.info(f"Plan parsed successfully: goal={plan.get('goal')!r} steps={len(plan.get('steps', []))}")
-        return plan
-
-    def _risk_check_plan(self, plan: dict) -> dict:
-        """Run RiskEvaluator on every step. Block unsafe plans."""
-        steps = plan.get("steps", [])
-        if not steps:
-            return plan
-
-        all_safe, results = self.risk.evaluate_plan(steps)
-
-        if not all_safe:
-            blocked_tools = [r.tool for r in results if not r.allowed]
-            logger.warning(f"Plan contains blocked tools: {blocked_tools}. Marking infeasible.")
-            plan["feasible"] = False
-            plan["risk_blocked"] = True
-            plan["blocked_tools"] = blocked_tools
-            plan["steps"] = []
-            plan["reasoning"] = (
-                f"Plan was blocked by RiskEvaluator. "
-                f"Blocked tools: {blocked_tools}. "
-                f"These tools are not permitted in V1."
-            )
-
-        return plan
-
-    def _error_plan(self, intent: str, reason: str) -> dict:
-        """Return a safe fallback error plan."""
-        return {
-            "goal": intent,
-            "feasible": False,
-            "reasoning": f"Planning failed: {reason}. Jarvis cannot proceed.",
-            "steps": [],
-            "error": reason,
-            "ts": datetime.now(timezone.utc).isoformat(),
-        }
+            url = f"{self._base_url}/api/tags"
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=5):
+                return True
+        except Exception:
+            return False

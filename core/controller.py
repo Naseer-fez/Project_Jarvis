@@ -1,268 +1,367 @@
 """
-core/controller.py
-──────────────────
-Jarvis Controller V5 (Session 7).
-Implements Self-Model, Adaptive Profiling, and Session Synthesis.
-AuditBridge integrated for dashboard logging.
+core/controller.py — THE SPINE.
+
+Async event loop that orchestrates all V1 components and hosts the V2 voice loop.
+
+Responsibilities:
+  - Owns the FSM, memory, planner, risk evaluator, vision tool
+  - Provides plan_for_intent() used by both CLI and voice loop
+  - Starts the voice loop if --voice flag is passed
+  - Runs the CLI input loop
+  - Manages graceful shutdown
+
+The voice loop is an OPTIONAL addon — removing it leaves a fully functional V1 system.
 """
 
-import logging
+from __future__ import annotations
+
+import asyncio
+import configparser
 import json
+import logging
+import os
+import sys
 import time
-from datetime import datetime
 from pathlib import Path
-from collections import Counter
+from typing import Optional, Tuple, Any
 
-from core.llm import LLMClientV2
-from memory.hybrid_memory import HybridMemory
-from memory.short_term import ShortTermMemory
-from core.intelligence import MemoryIntelligence
-from core.intents import IntentClassifierV2, Intent
-from core.safety import CommandSafetyGate
-from core.profile import UserProfileEngine
-from core.synthesis import ProfileSynthesizer
-from core.audit_bridge import AuditBridge
+import core.logger as logger_mod
+from core.state_machine import StateMachine, State, IllegalTransitionError
+from core.risk_evaluator import RiskEvaluator, RiskLevel
+from core.memory.hybrid_memory import HybridMemory
+from core.planning.task_planner import TaskPlanner
+from core.tools.vision import VisionTool
 
-logger = logging.getLogger(__name__)
-
-SESSION_OUTPUT_DIR = Path("outputs")
+log = logging.getLogger("jarvis.controller")
 
 
-class JarvisControllerV5:
-    def __init__(
-        self,
-        db_path: str = "memory/memory.db",
-        chroma_path: str = "D:/AI/Jarvis/data/chroma",
-        model_name: str = "deepseek-r1:8b",
-        embedding_model: str = "all-MiniLM-L6-v2",
-    ):
-        self.session_id = f"Jarvis-Session-7-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+class Controller:
+    def __init__(self, config: configparser.ConfigParser, voice: bool = False) -> None:
+        self._config    = config
+        self._voice_on  = voice
 
-        # 1. Base Layers
-        self.hybrid_memory = HybridMemory(db_path, chroma_path, embedding_model)
-        self.short_term = ShortTermMemory()
-        self.llm = LLMClientV2(self.hybrid_memory, model_name)
+        # ── V1 Core ───────────────────────────────────────────────────────────
+        self.fsm         = StateMachine()
+        self.memory      = HybridMemory(config)
+        self.planner     = TaskPlanner(config)
+        self.risk        = RiskEvaluator(config)
+        self.vision      = VisionTool(config)
 
-        # 2. Intelligence Layers
-        self.memory_intelligence = MemoryIntelligence(self.llm)
-        self.intent_classifier = IntentClassifierV2(self.llm)
-        self.safety_gate = CommandSafetyGate()
+        # ── V2 Voice (optional) ───────────────────────────────────────────────
+        self._voice_loop: Optional[Any] = None
 
-        # 3. Identity & Profile Layer (Session 7)
-        self.profile_engine = UserProfileEngine()
-        self.synthesizer = ProfileSynthesizer(self.llm)
+        # Listen for state transitions and log them
+        self.fsm.add_listener(self._on_state_change)
 
-        # 4. Session State
-        self.intent_stats = Counter()
-        self._pending_clarification = None
-        self._new_memories_count = 0
+        self._running = False
 
-        # 5. Dashboard Bridge
-        self.bridge = AuditBridge(session_id=self.session_id)
+    # ── Audit helper ──────────────────────────────────────────────────────────
 
-    def initialize(self) -> dict:
-        logger.info(f"Initializing Jarvis V5 ({self.session_id})")
+    def audit(self, event_type: str, payload: dict) -> str:
+        return logger_mod.audit(event_type, payload)
 
-        (SESSION_OUTPUT_DIR / self.session_id).mkdir(parents=True, exist_ok=True)
+    # ── State listener ────────────────────────────────────────────────────────
 
-        mem_status = self.hybrid_memory.initialize()
+    def _on_state_change(self, old: State, new: State) -> None:
+        log.debug(f"State: {old.name} → {new.name}")
+        self.audit("STATE_TRANSITION", {"from": old.name, "to": new.name})
 
-        profile_summary = self.profile_engine.get_profile_summary()
-        logger.info(f"Loaded User Profile:\n{profile_summary}")
+    # ── Core planner (used by CLI and voice loop) ─────────────────────────────
 
-        return {
-            "session_id": self.session_id,
-            "memory_mode": mem_status.get("mode", "unknown"),
-            "profile_loaded": True,
-        }
+    def plan_for_intent(self, intent: str) -> Tuple[dict, Any]:
+        """
+        Generate a plan for intent and evaluate its risk.
+        Returns (plan_dict, RiskResult).
+        Blocking — run in executor from async context.
+        """
+        # Build context from recent memory
+        recent = self.memory.semantic_search(intent, top_k=3)
+        context = ""
+        if recent:
+            context = "Known context:\n" + "\n".join(f"- {r.text}" for r in recent)
 
-    def process(self, user_input: str, stream: bool = False):
-        if not user_input.strip():
-            return ""
+        plan = self.planner.plan(intent, context=context)
+        risk = self.risk.evaluate_plan(plan)
 
-        # 0. Handle Pending Clarification
-        if self._pending_clarification:
-            return self._resolve_clarification(user_input)
+        self.audit("PLAN_GENERATED", {
+            "intent":        intent,
+            "summary":       plan.get("summary", ""),
+            "steps":         plan.get("steps", []),
+            "risk_level":    risk.level.name,
+            "risk_blocked":  risk.is_blocked,
+            "risk_reasons":  risk.reasons,
+        })
 
-        # 1. Intent Classification
-        classification = self.intent_classifier.classify(user_input)
-        intent_str = classification.get("intent", "unknown").lower()
-        confidence = classification.get("confidence", 0.0)
+        return plan, risk
 
-        self.intent_stats[intent_str] += 1
-        self.profile_engine.log_interaction(intent_str)
+    # ── Startup / shutdown ────────────────────────────────────────────────────
 
-        # Log intent as tool observation
-        self.bridge.log_tool(
-            tool_name=f"intent.{intent_str}",
-            execution_status="success",
-            duration_seconds=0.0,
-            detail=f"confidence={confidence:.2f}"
-        )
+    async def start(self) -> None:
+        self._running = True
+        self.audit("JARVIS_START", {
+            "version": self._config.get("general", "version", fallback="2.0.0"),
+            "voice":   self._voice_on,
+        })
 
-        # 2. Adaptive Confidence Gate
-        base_threshold = 0.6
-        if self.profile_engine.get_confidence_score() > 0.8:
-            base_threshold = 0.4
-
-        if confidence < base_threshold:
-            self._pending_clarification = {"original_input": user_input, "guess": intent_str}
-            return f"I'm not sure. Did you mean to {intent_str}? (yes/no)"
-
-        # 3. Routing
-        if intent_str == Intent.COMMAND.value:
-            return self._handle_command_flow(user_input)
-        elif intent_str == Intent.CHAT.value:
-            return self._handle_chat(user_input, stream)
-        elif intent_str == Intent.STORE_MEMORY.value:
-            return self._handle_memory_store(user_input)
-        elif intent_str == Intent.QUERY_MEMORY.value:
-            return self._handle_memory_query(user_input)
-        elif intent_str == Intent.META.value:
-            return "I am Jarvis (Session 7). Identity-Aware."
+        # Verify Ollama
+        if self.planner.ping():
+            log.info("✅ Ollama reachable")
         else:
-            return "I couldn't process that request."
+            log.warning("⚠  Ollama not reachable — planner will degrade gracefully")
 
-    def _handle_chat(self, user_input: str, stream: bool = False):
-        start = time.monotonic()
+        # Start voice loop
+        if self._voice_on:
+            try:
+                from core.voice.voice_loop import VoiceLoop
+                self._voice_loop = VoiceLoop(self, self._config)
+                self._voice_loop.start()
+                log.info("✅ Voice loop active")
+            except Exception as exc:
+                log.error(f"Voice loop failed to start: {exc} — falling back to CLI only")
+                self._voice_on = False
 
-        # Passive memory evaluation
-        decision = self.memory_intelligence.evaluate_input(user_input)
-        if decision and decision.get("decision") == "store":
-            self._handle_implicit_storage(decision)
+        self._print_banner()
 
-        # Get Profile Context
-        profile_ctx = self.profile_engine.get_profile_summary()
-        messages = [{"role": "user", "content": user_input}]
+    async def shutdown(self) -> None:
+        self._running = False
+        log.info("Shutting down...")
 
-        if stream:
-            response = ""
-            for chunk in self.llm.chat_stream(messages, query_for_memory=user_input, profile_summary=profile_ctx):
-                response += chunk
-        else:
-            response = self.llm.chat(messages, query_for_memory=user_input, profile_summary=profile_ctx)
+        if self._voice_loop:
+            await self._voice_loop.stop()
 
-        duration = time.monotonic() - start
+        self.audit("JARVIS_SHUTDOWN", {"ts": time.time()})
+        self.fsm.transition(State.SHUTDOWN)
+        log.info("Shutdown complete.")
 
-        # Log to dashboard
-        self.bridge.log_trace(
-            goal=user_input,
-            plan={},
-            success=True,
-            final_response=response,
-            duration_seconds=duration,
-            stop_reason="complete",
+    # ── CLI loop ──────────────────────────────────────────────────────────────
+
+    async def run_cli(self) -> None:
+        """Main CLI input loop. Runs until 'quit' or KeyboardInterrupt."""
+        loop = asyncio.get_event_loop()
+
+        while self._running:
+            try:
+                user_input = await loop.run_in_executor(None, self._prompt)
+            except (EOFError, KeyboardInterrupt):
+                break
+
+            user_input = user_input.strip()
+            if not user_input:
+                continue
+
+            await self._handle_command(user_input)
+
+    def _prompt(self) -> str:
+        state = self.fsm.state.name
+        from colorama import Fore, Style
+        return input(f"\n{Fore.BLUE}[{state}]{Style.RESET_ALL} You: ")
+
+    async def _handle_command(self, text: str) -> None:
+        lower = text.lower().strip()
+
+        if lower in ("quit", "exit", "q"):
+            self._running = False
+            return
+
+        if lower == "help":
+            self._print_help()
+            return
+
+        if lower == "status":
+            await self._cmd_status()
+            return
+
+        if lower == "memory":
+            self._cmd_memory()
+            return
+
+        if lower == "history":
+            self._cmd_history()
+            return
+
+        if lower == "reset":
+            self._cmd_reset()
+            return
+
+        if lower.startswith("vision "):
+            image_path = text[7:].strip()
+            await self._cmd_vision(image_path)
+            return
+
+        # Default: treat as intent → plan
+        await self._cmd_plan(text)
+
+    # ── Commands ──────────────────────────────────────────────────────────────
+
+    async def _cmd_plan(self, intent: str) -> None:
+        if not self.fsm.can_transition(State.PLANNING):
+            print(f"⚠  Cannot plan in state: {self.fsm.state.name}. Type 'reset' if needed.")
+            return
+
+        try:
+            self.fsm.transition(State.PLANNING)
+        except IllegalTransitionError as exc:
+            print(f"❌ State error: {exc}")
+            return
+
+        print("🤔 Planning...")
+        loop = asyncio.get_event_loop()
+
+        try:
+            plan, risk = await loop.run_in_executor(None, self.plan_for_intent, intent)
+        except Exception as exc:
+            log.error(f"Planning failed: {exc}")
+            self.fsm.transition(State.ERROR)
+            print(f"❌ Planning error: {exc}")
+            return
+
+        self._print_plan(plan, risk)
+
+        # Auto-store intent in memory for context
+        self.memory.store_fact(
+            key=f"session:last_intent",
+            value=intent,
+            source="cli",
         )
 
-        return response
+        # Handle risk outcomes
+        if risk.is_blocked:
+            print(f"\n🚫 Plan BLOCKED — {risk.summary()}")
+            self.fsm.transition(State.IDLE)
+            return
 
-    def _handle_memory_store(self, user_input: str) -> str:
-        decision = self.memory_intelligence.evaluate_input(user_input)
-        if decision and decision.get("decision") == "store":
-            return self._handle_implicit_storage(decision)
-        return "I processed that, but didn't find a permanent fact to store."
+        if risk.requires_confirmation:
+            confirmed = await self._confirm_plan(plan, risk)
+            if not confirmed:
+                self.fsm.transition(State.ABORTED)
+                print("❌ Plan aborted.")
+                return
 
-    def _handle_implicit_storage(self, decision: dict) -> str:
-        key = decision.get("key")
-        val = decision.get("value")
-        cat = decision.get("category")
+        # V1/V2: no execution — return to IDLE after review
+        print("\n✅ Plan reviewed. (Execution is blocked until V3.)")
+        self.fsm.transition(State.IDLE)
 
-        if cat == "preference":
-            self.hybrid_memory.store_preference(key, val)
-        elif cat == "episode":
-            self.hybrid_memory.store_episode(val, category="observed")
-        else:
-            self.hybrid_memory.store_fact(key, val, category=cat or "general")
+    async def _confirm_plan(self, plan: dict, risk) -> bool:
+        """Ask user to confirm a medium/high risk plan."""
+        print(f"\n⚠  Risk: {risk.level.name}")
+        if risk.reasons:
+            for r in risk.reasons:
+                print(f"   • {r}")
+        try:
+            loop = asyncio.get_event_loop()
+            answer = await loop.run_in_executor(
+                None, lambda: input("\nProceed? [y/N]: ").strip().lower()
+            )
+            return answer in ("y", "yes")
+        except (EOFError, KeyboardInterrupt):
+            return False
 
-        self._new_memories_count += 1
+    async def _cmd_status(self) -> None:
+        from colorama import Fore, Style
+        print(f"\n{'='*50}")
+        print(f"  Jarvis v{self._config.get('general', 'version', fallback='2.0.0')}")
+        print(f"{'='*50}")
+        print(f"  FSM State:    {Fore.GREEN}{self.fsm.state.name}{Style.RESET_ALL}")
+        print(f"  Memory Facts: {self.memory.count()}")
+        print(f"  Ollama:       {'✅ online' if self.planner.ping() else '❌ offline'}")
+        print(f"  Voice:        {'✅ active' if self._voice_on else '❌ disabled'}")
 
-        self.bridge.log_tool(
-            tool_name="memory.write",
-            execution_status="success",
-            duration_seconds=0.0,
-            detail=f"key={key} category={cat}"
-        )
+        ok, entries, err = logger_mod.verify_audit()
+        audit_status = f"✅ OK ({entries} entries)" if ok else f"❌ TAMPERED — {err}"
+        print(f"  Audit Log:    {audit_status}")
+        print(f"{'='*50}\n")
 
-        if self._new_memories_count >= 10:
-            logger.info("Triggering mid-session profile synthesis...")
-            self.run_synthesis()
-            self._new_memories_count = 0
+    def _cmd_memory(self) -> None:
+        facts = self.memory.list_facts(limit=20)
+        if not facts:
+            print("No facts stored yet.")
+            return
+        print(f"\n── Memory ({len(facts)} facts) ──")
+        for f in facts:
+            print(f"  {f.key}: {f.value}  [{f.source}]")
+        print()
 
-        return f"Stored: {key} = {val}"
+    def _cmd_history(self) -> None:
+        """Show recent audit log entries."""
+        audit_path = self._config.get("logging", "audit_file", fallback="logs/audit.jsonl")
+        path = Path(audit_path)
+        if not path.exists():
+            print("No audit log yet.")
+            return
+        lines = path.read_text(encoding="utf-8").strip().splitlines()
+        recent = lines[-20:]
+        print(f"\n── Last {len(recent)} audit entries ──")
+        for line in recent:
+            try:
+                entry = json.loads(line)
+                print(f"  [{entry['ts'][11:19]}] {entry['event']}  {json.dumps(entry.get('payload', {}))[:80]}")
+            except Exception:
+                print(f"  {line[:100]}")
+        print()
 
-    def _handle_memory_query(self, user_input: str) -> str:
-        start = time.monotonic()
-        context = self.hybrid_memory.build_context_block(user_input)
-        duration = time.monotonic() - start
+    def _cmd_reset(self) -> None:
+        try:
+            self.fsm.reset()
+            print("✅ Reset to IDLE.")
+            self.audit("MANUAL_RESET", {})
+        except IllegalTransitionError as exc:
+            print(f"⚠  {exc}")
 
-        self.bridge.log_tool(
-            tool_name="memory.read",
-            execution_status="success",
-            duration_seconds=duration,
-            detail=f"query={user_input[:50]}"
-        )
+    async def _cmd_vision(self, image_path: str) -> None:
+        if not image_path:
+            print("Usage: vision <path>")
+            return
+        print(f"🔍 Analyzing image: {image_path}")
+        loop = asyncio.get_event_loop()
+        try:
+            result = await loop.run_in_executor(None, self.vision.analyze, image_path)
+            print(f"\n📷 Vision result:\n{result}\n")
+            self.audit("VISION_ANALYZE", {"path": image_path, "result_len": len(result)})
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"❌ {exc}")
+        except Exception as exc:
+            print(f"❌ Vision error: {exc}")
 
-        if not context:
-            return "I don't recall anything about that."
-        return f"Here is what I found:\n{context}"
+    # ── Print helpers ─────────────────────────────────────────────────────────
 
-    def _handle_command_flow(self, user_input: str) -> str:
-        safety = self.safety_gate.verify_command(user_input)
-        if not safety["allowed"]:
-            return f"Blocked: {safety['reason']}"
+    def _print_plan(self, plan: dict, risk) -> None:
+        from colorama import Fore, Style
+        print(f"\n{'─'*50}")
+        print(f"📋 Plan: {plan.get('summary', '(no summary)')}")
+        print(f"   Confidence: {plan.get('confidence', 0.0):.0%}  |  Risk: {risk.level.name}")
 
-        cmd = user_input.lower().split()[0]
-        if cmd in ["exit", "quit"]:
-            self.shutdown()
-            return "__EXIT__"
-        elif cmd == "status":
-            return self._get_status_report()
-        elif cmd == "synthesize":
-            self.run_synthesis()
-            return "Profile synthesis complete."
+        steps = plan.get("steps", [])
+        if steps:
+            print("   Steps:")
+            for s in steps:
+                print(f"     {s.get('id', '?')}. [{s.get('action', '?')}] {s.get('description', '')}")
 
-        return f"Executed: {cmd}"
+        if plan.get("clarification_needed"):
+            print(f"\n   ❓ {plan.get('clarification_prompt', '')}")
+        print(f"{'─'*50}")
 
-    def run_synthesis(self):
-        print("\nSynthesizing Identity Profile...", end="", flush=True)
-        delta = self.synthesizer.synthesize(self.hybrid_memory)
-        if delta:
-            self.profile_engine.update_profile(delta)
-            print(" Done.")
-            logger.info(f"Profile updated: {list(delta.keys())}")
-        else:
-            print(" No changes detected.")
+    def _print_banner(self) -> None:
+        from colorama import Fore, Style
+        v = self._config.get("general", "version", fallback="2.0.0")
+        mode = "VOICE + CLI" if self._voice_on else "CLI only"
+        print(f"""
+{Fore.BLUE}╔══════════════════════════════════════╗
+║          JARVIS  v{v}            ║
+║  Offline · Local · Human-in-the-loop ║
+╚══════════════════════════════════════╝{Style.RESET_ALL}
+Mode: {mode}
+Type 'help' for commands, 'quit' to exit.
+""")
 
-    def _get_status_report(self) -> str:
-        p = self.profile_engine.profile
-        return (
-            f"SYSTEM STATUS (Session 7):\n"
-            f"Session ID: {self.session_id}\n"
-            f"Confidence Score: {p.get('confidence_score', 0.0):.2f}\n"
-            f"Identity: {p['identity_core'].get('name', 'Unknown')}\n"
-            f"Style: {p['identity_core'].get('communication_style', 'Default')}\n"
-            f"New Memories: {self._new_memories_count}"
-        )
-
-    def _resolve_clarification(self, user_input: str) -> str:
-        original = self._pending_clarification["original_input"]
-        guess = self._pending_clarification["guess"]
-        self._pending_clarification = None
-
-        if user_input.lower().startswith("y"):
-            if guess == Intent.CHAT.value:
-                return self._handle_chat(original)
-            if guess == Intent.COMMAND.value:
-                return self._handle_command_flow(original)
-            return f"Confirmed {guess}."
-        return "Understood. Please rephrase."
-
-    def shutdown(self):
-        print("\nShutting down Jarvis V5...")
-        self.run_synthesis()
-
-        s_dir = SESSION_OUTPUT_DIR / self.session_id
-        with open(s_dir / "user_profile_snapshot.json", "w") as f:
-            json.dump(self.profile_engine.profile, f, indent=2)
-
-        print(f"Profile saved. Session snapshot saved to {s_dir}")
+    def _print_help(self) -> None:
+        print("""
+Commands:
+  <any text>        Generate a plan for your intent
+  vision <path>     Analyze an image with LLaVA
+  status            Show system status
+  memory            Show stored facts
+  history           Show recent audit log
+  reset             Reset from ERROR/ABORTED
+  help              Show this help
+  quit              Shutdown
+""")

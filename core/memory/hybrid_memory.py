@@ -1,311 +1,200 @@
 """
-core/memory/hybrid_memory.py
-═════════════════════════════
-Hybrid memory facade: SQLite (facts) + Chroma (semantic recall).
+core/memory/hybrid_memory.py — Hybrid memory: SQLite facts + Chroma semantic search.
 
-V1 Rules:
-  - ONE write path (this file only)
-  - ONE read path (this file only)
-  - No memory mutation during planning
-  - All memory ops logged
-  - Jarvis cannot hallucinate memory — if it's not stored, it returns None
-  - No speculative or autonomous memory writes
+Two complementary stores:
+  - SQLite: structured key/value facts with timestamps (deterministic recall)
+  - Chroma: vector embeddings for semantic "what do I know about X" queries
 
-Architecture:
-  SQLite  → structured facts, preferences, session history, system events
-  Chroma  → semantic vector search for contextual recall
-  Facade  → hybrid_memory.py is the ONLY interface. Never call SQLite/Chroma directly.
+Never hallucinates: if nothing is found, returns empty, not fabricated answers.
 """
 
-import sqlite3
+from __future__ import annotations
+
 import json
-import os
-from datetime import datetime, timezone
+import sqlite3
+import threading
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
-from core.logger import get_logger, audit
-
-logger = get_logger("memory")
-
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
-
-SQLITE_PATH = DATA_DIR / "jarvis_memory.db"
+from typing import Any, Optional
 
 
-# ══════════════════════════════════════════════
-# SQLite Layer
-# ══════════════════════════════════════════════
-
-def _get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(SQLITE_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _init_db():
-    """Initialize SQLite schema on first run."""
-    with _get_db() as conn:
-        conn.executescript("""
-            CREATE TABLE IF NOT EXISTS facts (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                key         TEXT NOT NULL UNIQUE,
-                value       TEXT NOT NULL,
-                category    TEXT DEFAULT 'general',
-                created_at  TEXT NOT NULL,
-                updated_at  TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS session_history (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id  TEXT NOT NULL,
-                role        TEXT NOT NULL,
-                content     TEXT NOT NULL,
-                ts          TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS system_events (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                event_type  TEXT NOT NULL,
-                detail      TEXT,
-                ts          TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_facts_key ON facts(key);
-            CREATE INDEX IF NOT EXISTS idx_session_id ON session_history(session_id);
-        """)
-        logger.debug("SQLite schema initialized")
+@dataclass
+class Fact:
+    key: str
+    value: str
+    source: str
+    created_at: float
+    updated_at: float
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
-# ══════════════════════════════════════════════
-# Chroma Layer (lazy init — graceful if unavailable)
-# ══════════════════════════════════════════════
+@dataclass
+class SemanticResult:
+    text: str
+    distance: float
+    metadata: dict[str, Any]
 
-_chroma_collection = None
-
-
-def _get_chroma():
-    """Lazy-load Chroma. Returns None if Chroma is not installed."""
-    global _chroma_collection
-    if _chroma_collection is not None:
-        return _chroma_collection
-    try:
-        import chromadb
-        client = chromadb.PersistentClient(path=str(DATA_DIR / "chroma"))
-        _chroma_collection = client.get_or_create_collection(
-            name="jarvis_context",
-            metadata={"hnsw:space": "cosine"}
-        )
-        logger.info("Chroma collection ready")
-        return _chroma_collection
-    except ImportError:
-        logger.warning("chromadb not installed. Semantic recall disabled. (pip install chromadb)")
-        return None
-    except Exception as e:
-        logger.error(f"Chroma init failed: {e}. Semantic recall disabled.")
-        return None
-
-
-# ══════════════════════════════════════════════
-# Public Facade
-# ══════════════════════════════════════════════
 
 class HybridMemory:
-    """
-    Single access point for all Jarvis memory operations.
-    Do not instantiate SQLite or Chroma directly anywhere else.
-    """
+    """Facade over SQLite (facts) + Chroma (semantic recall)."""
 
-    def __init__(self):
-        _init_db()
-        logger.info("HybridMemory initialized")
+    def __init__(self, config) -> None:
+        self._lock = threading.RLock()
 
-    # ─── FACTS (SQLite) ───────────────────────────────────
+        data_dir = Path(config.get("memory", "data_dir", fallback="data"))
+        data_dir.mkdir(parents=True, exist_ok=True)
 
-    def write_fact(self, key: str, value: str | dict | list, category: str = "general") -> bool:
-        """Store or update a fact. Returns True on success."""
-        if isinstance(value, (dict, list)):
-            value = json.dumps(value)
+        sqlite_path = config.get("memory", "sqlite_file", fallback="data/jarvis_memory.db")
+        self._db_path = sqlite_path
+        self._init_sqlite()
 
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            with _get_db() as conn:
-                conn.execute("""
-                    INSERT INTO facts (key, value, category, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    ON CONFLICT(key) DO UPDATE SET
-                        value=excluded.value,
-                        category=excluded.category,
-                        updated_at=excluded.updated_at
-                """, (key, str(value), category, now, now))
-            audit(logger, f"MEMORY_WRITE: key={key!r} category={category}", action="memory_write")
-            return True
-        except Exception as e:
-            logger.error(f"write_fact failed: key={key!r} error={e}")
-            return False
-
-    def read_fact(self, key: str) -> str | None:
-        """Read a fact by key. Returns None if not found."""
-        try:
-            with _get_db() as conn:
-                row = conn.execute("SELECT value FROM facts WHERE key = ?", (key,)).fetchone()
-            if row:
-                logger.debug(f"MEMORY_READ: key={key!r} found")
-                return row["value"]
-            logger.debug(f"MEMORY_READ: key={key!r} not found")
-            return None
-        except Exception as e:
-            logger.error(f"read_fact failed: key={key!r} error={e}")
-            return None
-
-    def delete_fact(self, key: str) -> bool:
-        """Delete a fact. Logged."""
-        try:
-            with _get_db() as conn:
-                conn.execute("DELETE FROM facts WHERE key = ?", (key,))
-            audit(logger, f"MEMORY_DELETE: key={key!r}", action="memory_delete")
-            return True
-        except Exception as e:
-            logger.error(f"delete_fact failed: key={key!r} error={e}")
-            return False
-
-    def list_facts(self, category: str | None = None) -> list[dict]:
-        """List all facts, optionally filtered by category."""
-        try:
-            with _get_db() as conn:
-                if category:
-                    rows = conn.execute(
-                        "SELECT key, value, category, updated_at FROM facts WHERE category = ?",
-                        (category,)
-                    ).fetchall()
-                else:
-                    rows = conn.execute(
-                        "SELECT key, value, category, updated_at FROM facts"
-                    ).fetchall()
-            return [dict(r) for r in rows]
-        except Exception as e:
-            logger.error(f"list_facts failed: {e}")
-            return []
-
-    # ─── SESSION HISTORY (SQLite) ─────────────────────────
-
-    def write_session(self, session_id: str, role: str, content: str) -> bool:
-        """Append a message to session history."""
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            with _get_db() as conn:
-                conn.execute(
-                    "INSERT INTO session_history (session_id, role, content, ts) VALUES (?, ?, ?, ?)",
-                    (session_id, role, content, now)
-                )
-            return True
-        except Exception as e:
-            logger.error(f"write_session failed: {e}")
-            return False
-
-    def read_session(self, session_id: str, limit: int = 20) -> list[dict]:
-        """Read the last N messages from a session."""
-        try:
-            with _get_db() as conn:
-                rows = conn.execute("""
-                    SELECT role, content, ts FROM session_history
-                    WHERE session_id = ?
-                    ORDER BY id DESC LIMIT ?
-                """, (session_id, limit)).fetchall()
-            return list(reversed([dict(r) for r in rows]))
-        except Exception as e:
-            logger.error(f"read_session failed: {e}")
-            return []
-
-    # ─── SYSTEM EVENTS (SQLite) ───────────────────────────
-
-    def log_event(self, event_type: str, detail: str = "") -> bool:
-        """Log a system event (state change, error, boot, etc.)."""
-        now = datetime.now(timezone.utc).isoformat()
-        try:
-            with _get_db() as conn:
-                conn.execute(
-                    "INSERT INTO system_events (event_type, detail, ts) VALUES (?, ?, ?)",
-                    (event_type, detail, now)
-                )
-            return True
-        except Exception as e:
-            logger.error(f"log_event failed: {e}")
-            return False
-
-    # ─── SEMANTIC RECALL (Chroma) ─────────────────────────
-
-    def remember(self, text: str, metadata: dict | None = None, doc_id: str | None = None) -> bool:
-        """
-        Store text in semantic memory for future recall.
-        Falls back gracefully if Chroma is unavailable.
-        """
-        collection = _get_chroma()
-        if collection is None:
-            logger.warning("Semantic store unavailable. Falling back to SQLite fact store.")
-            key = doc_id or f"semantic_{datetime.now(timezone.utc).timestamp()}"
-            return self.write_fact(key, text, category="semantic_fallback")
+        # Chroma is optional — degrade gracefully if not installed
+        self._chroma = None
+        self._collection = None
+        chroma_dir = config.get("memory", "chroma_dir", fallback="data/chroma")
+        embedding_model = config.get("memory", "embedding_model", fallback="all-MiniLM-L6-v2")
+        self._top_k = int(config.get("memory", "semantic_top_k", fallback="5"))
 
         try:
-            _id = doc_id or f"mem_{datetime.now(timezone.utc).timestamp()}"
-            collection.add(
-                documents=[text],
-                metadatas=[metadata or {}],
-                ids=[_id]
+            import chromadb
+            from chromadb.utils import embedding_functions as ef
+
+            self._chroma = chromadb.PersistentClient(path=chroma_dir)
+            emb_fn = ef.SentenceTransformerEmbeddingFunction(model_name=embedding_model)
+            self._collection = self._chroma.get_or_create_collection(
+                name="jarvis_facts",
+                embedding_function=emb_fn,
             )
-            audit(logger, f"SEMANTIC_WRITE: id={_id!r}", action="semantic_write")
-            return True
-        except Exception as e:
-            logger.error(f"remember() failed: {e}")
-            return False
-
-    def recall(self, query: str, n_results: int = 3) -> list[dict]:
-        """
-        Retrieve semantically similar memories.
-        Returns list of {document, metadata, distance} dicts.
-        Returns [] if Chroma unavailable or no results.
-        """
-        collection = _get_chroma()
-        if collection is None:
-            logger.warning("Semantic recall unavailable (Chroma not ready)")
-            return []
-
-        try:
-            results = collection.query(
-                query_texts=[query],
-                n_results=min(n_results, collection.count() or 1)
-            )
-            docs = results.get("documents", [[]])[0]
-            metas = results.get("metadatas", [[]])[0]
-            distances = results.get("distances", [[]])[0]
-
-            recall_results = [
-                {"document": d, "metadata": m, "distance": dist}
-                for d, m, dist in zip(docs, metas, distances)
-            ]
-            logger.info(f"SEMANTIC_RECALL: query={query!r} results={len(recall_results)}")
-            return recall_results
-        except Exception as e:
-            logger.error(f"recall() failed: {e}")
-            return []
-
-    # ─── DIAGNOSTICS ──────────────────────────────────────
-
-    def status(self) -> dict:
-        """Return memory system health status."""
-        try:
-            with _get_db() as conn:
-                fact_count = conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
-                session_count = conn.execute("SELECT COUNT(*) FROM session_history").fetchone()[0]
+        except ImportError:
+            pass  # Chroma not installed — semantic search disabled
         except Exception:
-            fact_count = -1
-            session_count = -1
+            pass  # Chroma init failed — degrade gracefully
 
-        chroma = _get_chroma()
-        chroma_count = chroma.count() if chroma else -1
+    # ── SQLite setup ──────────────────────────────────────────────────────────
 
-        return {
-            "sqlite_facts": fact_count,
-            "sqlite_sessions": session_count,
-            "chroma_docs": chroma_count,
-            "chroma_available": chroma is not None,
-        }
+    def _init_sqlite(self) -> None:
+        with self._connect() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS facts (
+                    key         TEXT PRIMARY KEY,
+                    value       TEXT NOT NULL,
+                    source      TEXT NOT NULL DEFAULT 'user',
+                    created_at  REAL NOT NULL,
+                    updated_at  REAL NOT NULL,
+                    metadata    TEXT NOT NULL DEFAULT '{}'
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_updated ON facts(updated_at)")
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self._db_path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    # ── Write ─────────────────────────────────────────────────────────────────
+
+    def store_fact(self, key: str, value: str, source: str = "user",
+                   metadata: dict | None = None) -> None:
+        """Store or update a key/value fact."""
+        now = time.time()
+        meta = metadata or {}
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute("""
+                    INSERT INTO facts (key, value, source, created_at, updated_at, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value      = excluded.value,
+                        source     = excluded.source,
+                        updated_at = excluded.updated_at,
+                        metadata   = excluded.metadata
+                """, (key, value, source, now, now, json.dumps(meta)))
+
+            # Mirror to Chroma
+            if self._collection is not None:
+                doc = f"{key}: {value}"
+                try:
+                    self._collection.upsert(
+                        ids=[key],
+                        documents=[doc],
+                        metadatas=[{"source": source, "key": key, **meta}],
+                    )
+                except Exception:
+                    pass
+
+    # ── Read ──────────────────────────────────────────────────────────────────
+
+    def get_fact(self, key: str) -> Optional[Fact]:
+        """Exact key lookup."""
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute(
+                    "SELECT * FROM facts WHERE key = ?", (key,)
+                ).fetchone()
+            if row is None:
+                return None
+            return Fact(
+                key=row["key"], value=row["value"], source=row["source"],
+                created_at=row["created_at"], updated_at=row["updated_at"],
+                metadata=json.loads(row["metadata"]),
+            )
+
+    def list_facts(self, limit: int = 20) -> list[Fact]:
+        """Most recently updated facts."""
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM facts ORDER BY updated_at DESC LIMIT ?", (limit,)
+                ).fetchall()
+            return [
+                Fact(key=r["key"], value=r["value"], source=r["source"],
+                     created_at=r["created_at"], updated_at=r["updated_at"],
+                     metadata=json.loads(r["metadata"]))
+                for r in rows
+            ]
+
+    def semantic_search(self, query: str, top_k: int | None = None) -> list[SemanticResult]:
+        """Semantic similarity search via Chroma. Returns [] if unavailable."""
+        if self._collection is None:
+            return []
+        k = top_k or self._top_k
+        try:
+            results = self._collection.query(
+                query_texts=[query],
+                n_results=min(k, self._collection.count()),
+            )
+            out = []
+            for i, doc in enumerate(results["documents"][0]):
+                dist = results["distances"][0][i]
+                meta = results["metadatas"][0][i] if results.get("metadatas") else {}
+                out.append(SemanticResult(text=doc, distance=dist, metadata=meta))
+            return out
+        except Exception:
+            return []
+
+    def recall(self, query: str) -> str:
+        """
+        Best-effort recall for a natural language query.
+        Returns a human-readable string or 'I don't know.'
+        Never hallucinates.
+        """
+        # 1. Try exact key match first
+        fact = self.get_fact(query)
+        if fact:
+            return f"{fact.key}: {fact.value}"
+
+        # 2. Try semantic search
+        results = self.semantic_search(query, top_k=3)
+        if results:
+            lines = [f"- {r.text}" for r in results if r.distance < 1.0]
+            if lines:
+                return "Related facts:\n" + "\n".join(lines)
+
+        return "I don't know."
+
+    def count(self) -> int:
+        with self._lock:
+            with self._connect() as conn:
+                row = conn.execute("SELECT COUNT(*) as n FROM facts").fetchone()
+                return row["n"]

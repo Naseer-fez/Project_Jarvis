@@ -1,181 +1,172 @@
 """
-core/risk_evaluator.py
-═══════════════════════
-Stateless, deterministic, table-based risk scoring.
+core/risk_evaluator.py — Stateless, table-driven risk scorer.
 
-V1 Rules:
-  - No ML. No probability models. Simple table lookup.
-  - Physical actions are HARD BLOCKED — not just high risk
-  - If a tool is unknown → blocked by default (fail safe)
-  - All evaluations are logged
-  - RiskEvaluator is the LAST LINE of defense before any tool call
+Given a list of action strings from the planner, returns a RiskResult.
+No side effects. No LLM calls. Deterministic.
 
-Risk Levels:
-  0.0 - 0.3  → SAFE  (proceed)
-  0.3 - 0.6  → CAUTION (log, proceed with note)
-  0.6 - 0.9  → HIGH (require explicit confirmation flag)
-  0.9 - 1.0  → CRITICAL (block)
-  BLOCKED     → Hard block, never executable in V1
+Risk levels (ascending): LOW < MEDIUM < HIGH < FORBIDDEN
 """
 
-from dataclasses import dataclass
-from enum import Enum
-from core.logger import get_logger, audit
+from __future__ import annotations
 
-logger = get_logger("risk_evaluator")
+from dataclasses import dataclass, field
+from enum import IntEnum
+from typing import Sequence
 
 
-class RiskLevel(str, Enum):
-    SAFE = "SAFE"
-    CAUTION = "CAUTION"
-    HIGH = "HIGH"
-    CRITICAL = "CRITICAL"
-    BLOCKED = "BLOCKED"  # Hardcoded NEVER in V1
+class RiskLevel(IntEnum):
+    LOW      = 0
+    MEDIUM   = 1
+    HIGH     = 2
+    FORBIDDEN = 3
+
+    def label(self) -> str:
+        return self.name
 
 
 @dataclass(frozen=True)
 class RiskResult:
-    tool: str
-    score: float
     level: RiskLevel
-    allowed: bool
-    reason: str
+    blocking_actions: list[str]      = field(default_factory=list)
+    high_risk_actions: list[str]     = field(default_factory=list)
+    reasons: list[str]               = field(default_factory=list)
 
+    @property
+    def is_blocked(self) -> bool:
+        return self.level == RiskLevel.FORBIDDEN
 
-# ══════════════════════════════════════════════
-# RISK TABLE — Only this file changes risk scores
-# ══════════════════════════════════════════════
-RISK_TABLE: dict[str, float | str] = {
-    # Perception tools (L0)
-    "vision.analyze_image":        0.1,
-    "vision.snapshot":             0.1,
-    "memory.read":                 0.1,
+    @property
+    def requires_confirmation(self) -> bool:
+        return self.level >= RiskLevel.MEDIUM
 
-    # Planning/Reasoning tools (L1)
-    "memory.write":                0.2,
-    "planner.generate_plan":       0.2,
-    "risk_evaluator.evaluate":     0.1,
-
-    # Digital interaction tools (L2 — V2+)
-    "filesystem.read":             0.4,
-    "filesystem.write":            0.6,
-    "tts.speak":                   0.2,
-
-    # Physical / System tools — HARD BLOCKED IN V1
-    "desktop_automation.click":    "BLOCKED",
-    "desktop_automation.type":     "BLOCKED",
-    "desktop_automation.scroll":   "BLOCKED",
-    "serial_controller.send":      "BLOCKED",
-    "serial_controller.move":      "BLOCKED",
-    "shell.execute":               "BLOCKED",
-}
-
-# Thresholds
-THRESHOLD_CAUTION = 0.3
-THRESHOLD_HIGH = 0.6
-THRESHOLD_CRITICAL = 0.9
+    def summary(self) -> str:
+        parts = [f"Risk: {self.level.label()}"]
+        if self.blocking_actions:
+            parts.append(f"BLOCKED: {', '.join(self.blocking_actions)}")
+        if self.high_risk_actions:
+            parts.append(f"HIGH: {', '.join(self.high_risk_actions)}")
+        if self.reasons:
+            parts.append(" | ".join(self.reasons))
+        return " — ".join(parts)
 
 
 class RiskEvaluator:
     """
-    Stateless risk evaluator. Call evaluate() before every tool call.
-    If it returns allowed=False, the call MUST NOT proceed.
+    Evaluate risk of a plan.
+
+    Action classification is loaded from config but falls back to sensible
+    built-in defaults so the evaluator always works even without config.
     """
 
-    def evaluate(self, tool_name: str, context: dict | None = None) -> RiskResult:
-        """
-        Evaluate risk for a given tool.
-        Always returns a RiskResult. Never raises.
-        """
-        raw = RISK_TABLE.get(tool_name)
+    _DEFAULT_FORBIDDEN = frozenset({
+        "shell_exec", "shell", "exec", "subprocess",
+        "file_delete", "delete_file", "rm", "rmdir",
+        "registry_write", "registry_delete",
+        "network_request", "http_get", "http_post", "curl", "wget",
+        "physical_actuate", "actuate", "motor_command",
+        "serial_send", "serial_write",
+        "format_disk", "wipe",
+    })
 
-        # Unknown tool → block by default (fail safe)
-        if raw is None:
-            result = RiskResult(
-                tool=tool_name,
-                score=1.0,
-                level=RiskLevel.BLOCKED,
-                allowed=False,
-                reason=f"Unknown tool '{tool_name}' — blocked by default (fail-safe policy)"
+    _DEFAULT_HIGH = frozenset({
+        "file_write", "write_file", "save_file",
+        "process_spawn", "spawn_process", "popen",
+        "system_config", "set_config", "env_write",
+        "install_package", "pip_install",
+    })
+
+    _DEFAULT_MEDIUM = frozenset({
+        "file_read", "read_file", "open_file",
+        "ui_interaction", "click", "type_text", "key_press",
+        "notification", "send_notification",
+        "screenshot",
+    })
+
+    _DEFAULT_LOW = frozenset({
+        "memory_read", "memory_write", "recall", "store_fact",
+        "speak", "tts", "display", "print",
+        "status", "health_check",
+    })
+
+    def __init__(self, config=None) -> None:
+        self._forbidden = set(self._DEFAULT_FORBIDDEN)
+        self._high      = set(self._DEFAULT_HIGH)
+        self._medium    = set(self._DEFAULT_MEDIUM)
+        self._low       = set(self._DEFAULT_LOW)
+
+        if config is not None:
+            self._load_config(config)
+
+    def _load_config(self, config) -> None:
+        def _parse(section: str, key: str) -> set[str]:
+            raw = config.get(section, key, fallback="")
+            return {a.strip().lower() for a in raw.split(",") if a.strip()}
+
+        forbidden = _parse("risk", "forbidden_actions")
+        high      = _parse("risk", "high_risk_actions")
+        medium    = _parse("risk", "medium_risk_actions")
+        low       = _parse("risk", "low_risk_actions")
+
+        if forbidden: self._forbidden = forbidden
+        if high:      self._high      = high
+        if medium:    self._medium    = medium
+        if low:       self._low       = low
+
+    def evaluate(self, actions: Sequence[str]) -> RiskResult:
+        """Evaluate a list of action names. Returns a RiskResult."""
+        if not actions:
+            return RiskResult(
+                level=RiskLevel.LOW,
+                reasons=["No actions — trivial plan"],
             )
-            self._log(result)
-            return result
 
-        # Hard block
-        if raw == "BLOCKED":
-            result = RiskResult(
-                tool=tool_name,
-                score=1.0,
-                level=RiskLevel.BLOCKED,
-                allowed=False,
-                reason=f"Tool '{tool_name}' is HARD BLOCKED in V1 (physical/system action)"
-            )
-            self._log(result)
-            return result
+        blocking:  list[str] = []
+        high_risk: list[str] = []
+        reasons:   list[str] = []
+        max_level = RiskLevel.LOW
 
-        score: float = raw
-        level = self._score_to_level(score)
-        allowed = level not in (RiskLevel.CRITICAL, RiskLevel.BLOCKED)
+        for raw_action in actions:
+            action = raw_action.strip().lower()
 
-        result = RiskResult(
-            tool=tool_name,
-            score=score,
-            level=level,
-            allowed=allowed,
-            reason=self._reason(tool_name, score, level)
+            if action in self._forbidden:
+                blocking.append(action)
+                max_level = RiskLevel.FORBIDDEN
+                reasons.append(f"'{action}' is forbidden (L2/L3 blocked)")
+
+            elif action in self._high:
+                high_risk.append(action)
+                if max_level < RiskLevel.HIGH:
+                    max_level = RiskLevel.HIGH
+                reasons.append(f"'{action}' is high-risk")
+
+            elif action in self._medium:
+                if max_level < RiskLevel.MEDIUM:
+                    max_level = RiskLevel.MEDIUM
+                reasons.append(f"'{action}' requires confirmation")
+
+            elif action in self._low:
+                pass  # stays LOW
+            else:
+                # Unknown action — treat as HIGH by default (conservative)
+                high_risk.append(action)
+                if max_level < RiskLevel.HIGH:
+                    max_level = RiskLevel.HIGH
+                reasons.append(f"'{action}' is unknown — treated as high-risk")
+
+        return RiskResult(
+            level=max_level,
+            blocking_actions=blocking,
+            high_risk_actions=high_risk,
+            reasons=reasons,
         )
-        self._log(result)
-        return result
 
-    def evaluate_plan(self, steps: list[dict]) -> tuple[bool, list[RiskResult]]:
-        """
-        Evaluate all steps in a plan.
-        Returns (all_safe, results_list).
-        Plan is safe only if ALL steps are allowed.
-        """
-        results = []
+    def evaluate_plan(self, plan: dict) -> RiskResult:
+        """Convenience: evaluate a full plan dict as produced by the planner."""
+        steps = plan.get("steps", [])
+        actions = []
         for step in steps:
-            tool = step.get("action", "unknown")
-            result = self.evaluate(tool)
-            results.append(result)
-
-        all_safe = all(r.allowed for r in results)
-        if not all_safe:
-            blocked = [r for r in results if not r.allowed]
-            logger.warning(
-                f"PLAN BLOCKED: {len(blocked)}/{len(results)} steps failed risk check. "
-                f"Blocked tools: {[r.tool for r in blocked]}"
-            )
-        return all_safe, results
-
-    def _score_to_level(self, score: float) -> RiskLevel:
-        if score >= THRESHOLD_CRITICAL:
-            return RiskLevel.CRITICAL
-        elif score >= THRESHOLD_HIGH:
-            return RiskLevel.HIGH
-        elif score >= THRESHOLD_CAUTION:
-            return RiskLevel.CAUTION
-        else:
-            return RiskLevel.SAFE
-
-    def _reason(self, tool: str, score: float, level: RiskLevel) -> str:
-        reasons = {
-            RiskLevel.SAFE: f"Tool '{tool}' is low-risk (score={score}). Proceed.",
-            RiskLevel.CAUTION: f"Tool '{tool}' has moderate risk (score={score}). Logging.",
-            RiskLevel.HIGH: f"Tool '{tool}' is high-risk (score={score}). Confirmation recommended.",
-            RiskLevel.CRITICAL: f"Tool '{tool}' exceeds critical threshold (score={score}). BLOCKED.",
-        }
-        return reasons.get(level, "Unknown risk level.")
-
-    def _log(self, result: RiskResult):
-        level_fn = logger.warning if not result.allowed else logger.debug
-        level_fn(
-            f"RISK [{result.level.value}] tool={result.tool} score={result.score} "
-            f"allowed={result.allowed} | {result.reason}"
-        )
-        audit(
-            logger,
-            f"RISK_EVAL: tool={result.tool} level={result.level.value} allowed={result.allowed}",
-            tool=result.tool,
-            risk=result.score,
-        )
+            if isinstance(step, dict):
+                action = step.get("action", step.get("type", ""))
+                if action:
+                    actions.append(action)
+        return self.evaluate(actions)
