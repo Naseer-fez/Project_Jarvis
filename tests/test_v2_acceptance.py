@@ -2,7 +2,7 @@
 tests/test_v2_acceptance.py — V2 Voice Layer Acceptance Checklist.
 
 ALL V1 tests must still pass. These tests cover the V2 voice additions.
-Run: pytest tests/test_v2_acceptance.py -v
+Run: python -m pytest tests/test_v2_acceptance.py -v
 
 Tests use mocks for audio hardware — no microphone or speaker required.
 """
@@ -128,7 +128,7 @@ class TestWakeWordDetector:
                 on_cancel=lambda: None,
             )
             # Simulate wake word fire (normally called from thread)
-            loop.call_soon(detector._on_wake_word)
+            detector._fire_wake()
             loop.run_until_complete(asyncio.sleep(0))
             assert "wake" in fired
         finally:
@@ -144,7 +144,7 @@ class TestWakeWordDetector:
                 on_wake=lambda: None,
                 on_cancel=lambda: fired.append("cancel"),
             )
-            loop.call_soon(detector._on_cancel_word)
+            detector._fire_cancel()
             loop.run_until_complete(asyncio.sleep(0))
             assert "cancel" in fired
         finally:
