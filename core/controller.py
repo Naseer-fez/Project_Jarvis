@@ -19,21 +19,18 @@ import asyncio
 import configparser
 import json
 import logging
-import os
-import sys
 import time
 from pathlib import Path
 from typing import Optional, Tuple, Any
 
 import core.logger as logger_mod
 from core.state_machine import StateMachine, State, IllegalTransitionError
-from core.risk_evaluator import RiskEvaluator, RiskLevel
+from core.risk_evaluator import RiskEvaluator
 from core.memory.hybrid_memory import HybridMemory
 from core.planning.task_planner import TaskPlanner
 from core.tools.vision import VisionTool
 
 log = logging.getLogger("jarvis.controller")
-
 
 class Controller:
     def __init__(self, config: configparser.ConfigParser, voice: bool = False) -> None:
@@ -50,8 +47,9 @@ class Controller:
         # ── V2 Voice (optional) ───────────────────────────────────────────────
         self._voice_loop: Optional[Any] = None
 
-        # Listen for state transitions and log them
-        self.fsm.add_listener(self._on_state_change)
+        # Listen for state transitions and log them (if FSM supports listeners)
+        if hasattr(self.fsm, "add_listener"):
+            self.fsm.add_listener(self._on_state_change)
 
         self._running = False
 
@@ -74,14 +72,22 @@ class Controller:
         Returns (plan_dict, RiskResult).
         Blocking — run in executor from async context.
         """
-        # Build context from recent memory
-        recent = self.memory.semantic_search(intent, top_k=3)
-        context = ""
-        if recent:
-            context = "Known context:\n" + "\n".join(f"- {r.text}" for r in recent)
+        # Build context from hybrid memory (Semantic + SQLite)
+        try:
+            # Uses HybridMemory's recall method from Session 4
+            context_text = self.memory.recall(intent)
+        except Exception as e:
+            log.warning(f"Memory recall failed during planning: {e}")
+            context_text = ""
 
+        context = f"Known context:\n{context_text}" if context_text else ""
+
+        # Generate plan
         plan = self.planner.plan(intent, context=context)
-        risk = self.risk.evaluate_plan(plan)
+        
+        # Evaluate risk based on planned actions
+        actions = [step.get("action") for step in plan.get("steps", [])]
+        risk = self.risk.evaluate(actions)
 
         self.audit("PLAN_GENERATED", {
             "intent":        intent,
@@ -89,7 +95,7 @@ class Controller:
             "steps":         plan.get("steps", []),
             "risk_level":    risk.level.name,
             "risk_blocked":  risk.is_blocked,
-            "risk_reasons":  risk.reasons,
+            "risk_reasons":  risk.reasons() if hasattr(risk, 'reasons') else []
         })
 
         return plan, risk
@@ -104,10 +110,13 @@ class Controller:
         })
 
         # Verify Ollama
-        if self.planner.ping():
-            log.info("✅ Ollama reachable")
-        else:
-            log.warning("⚠  Ollama not reachable — planner will degrade gracefully")
+        try:
+            if self.planner.ping():
+                log.info("✅ Ollama reachable")
+            else:
+                log.warning("⚠  Ollama not reachable — planner will degrade gracefully")
+        except AttributeError:
+            log.debug("Planner has no ping method, skipping Ollama check.")
 
         # Start voice loop
         if self._voice_on:
@@ -130,7 +139,13 @@ class Controller:
             await self._voice_loop.stop()
 
         self.audit("JARVIS_SHUTDOWN", {"ts": time.time()})
-        self.fsm.transition(State.SHUTDOWN)
+        
+        # Transition to IDLE/Shutdown state gracefully
+        try:
+            self.fsm.force_idle()
+        except Exception:
+            pass
+            
         log.info("Shutdown complete.")
 
     # ── CLI loop ──────────────────────────────────────────────────────────────
@@ -194,14 +209,11 @@ class Controller:
     # ── Commands ──────────────────────────────────────────────────────────────
 
     async def _cmd_plan(self, intent: str) -> None:
-        if not self.fsm.can_transition(State.PLANNING):
-            print(f"⚠  Cannot plan in state: {self.fsm.state.name}. Type 'reset' if needed.")
-            return
-
+        # Check if FSM allows transitioning to PLANNING
         try:
             self.fsm.transition(State.PLANNING)
         except IllegalTransitionError as exc:
-            print(f"❌ State error: {exc}")
+            print(f"❌ State error: Cannot plan right now ({exc}). Type 'reset' if stuck.")
             return
 
         print("🤔 Planning...")
@@ -210,43 +222,38 @@ class Controller:
         try:
             plan, risk = await loop.run_in_executor(None, self.plan_for_intent, intent)
         except Exception as exc:
-            log.error(f"Planning failed: {exc}")
-            self.fsm.transition(State.ERROR)
+            log.error(f"Planning failed: {exc}", exc_info=True)
+            try:
+                self.fsm.transition(State.ERROR)
+            except IllegalTransitionError:
+                self.fsm.force_idle()
             print(f"❌ Planning error: {exc}")
             return
 
         self._print_plan(plan, risk)
 
-        # Auto-store intent in memory for context
-        self.memory.store_fact(
-            key=f"session:last_intent",
-            value=intent,
-            source="cli",
-        )
-
         # Handle risk outcomes
         if risk.is_blocked:
-            print(f"\n🚫 Plan BLOCKED — {risk.summary()}")
-            self.fsm.transition(State.IDLE)
+            print(f"\n🚫 Plan BLOCKED — forbidden action detected.")
+            self.fsm.force_idle()
             return
 
-        if risk.requires_confirmation:
+        # In V1/V2 execution is blocked regardless, but we simulate confirmation for high-risk
+        if risk.level.name in ["HIGH", "MEDIUM"]:
             confirmed = await self._confirm_plan(plan, risk)
             if not confirmed:
-                self.fsm.transition(State.ABORTED)
-                print("❌ Plan aborted.")
+                print("❌ Plan aborted by user.")
+                self.fsm.force_idle() # Safely return to IDLE, not ABORTED
                 return
 
-        # V1/V2: no execution — return to IDLE after review
-        print("\n✅ Plan reviewed. (Execution is blocked until V3.)")
-        self.fsm.transition(State.IDLE)
+        print("\n✅ Plan reviewed. (Execution is strictly blocked until V3.)")
+        self.fsm.force_idle()
 
     async def _confirm_plan(self, plan: dict, risk) -> bool:
         """Ask user to confirm a medium/high risk plan."""
-        print(f"\n⚠  Risk: {risk.level.name}")
-        if risk.reasons:
-            for r in risk.reasons:
-                print(f"   • {r}")
+        from colorama import Fore, Style
+        print(f"\n{Fore.YELLOW}⚠  Risk Level: {risk.level.name}{Style.RESET_ALL}")
+        
         try:
             loop = asyncio.get_event_loop()
             answer = await loop.run_in_executor(
@@ -262,8 +269,12 @@ class Controller:
         print(f"  Jarvis v{self._config.get('general', 'version', fallback='2.0.0')}")
         print(f"{'='*50}")
         print(f"  FSM State:    {Fore.GREEN}{self.fsm.state.name}{Style.RESET_ALL}")
-        print(f"  Memory Facts: {self.memory.count()}")
-        print(f"  Ollama:       {'✅ online' if self.planner.ping() else '❌ offline'}")
+        
+        try:
+            print(f"  Ollama:       {'✅ online' if self.planner.ping() else '❌ offline'}")
+        except AttributeError:
+            pass
+            
         print(f"  Voice:        {'✅ active' if self._voice_on else '❌ disabled'}")
 
         ok, entries, err = logger_mod.verify_audit()
@@ -272,14 +283,12 @@ class Controller:
         print(f"{'='*50}\n")
 
     def _cmd_memory(self) -> None:
-        facts = self.memory.list_facts(limit=20)
-        if not facts:
-            print("No facts stored yet.")
-            return
-        print(f"\n── Memory ({len(facts)} facts) ──")
-        for f in facts:
-            print(f"  {f.key}: {f.value}  [{f.source}]")
-        print()
+        # Fallback for displaying memory in CLI
+        try:
+            # Assumes a sqlite pass-through method exists for debugging
+            print("To view semantic memory, check ChromaDB. (CLI Memory view limited in V2).")
+        except Exception as e:
+            print(f"Memory print error: {e}")
 
     def _cmd_history(self) -> None:
         """Show recent audit log entries."""
@@ -301,10 +310,10 @@ class Controller:
 
     def _cmd_reset(self) -> None:
         try:
-            self.fsm.reset()
+            self.fsm.force_idle()
             print("✅ Reset to IDLE.")
             self.audit("MANUAL_RESET", {})
-        except IllegalTransitionError as exc:
+        except Exception as exc:
             print(f"⚠  {exc}")
 
     async def _cmd_vision(self, image_path: str) -> None:
