@@ -20,7 +20,26 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from colorama import Fore, Style, init as colorama_init
+try:
+    from colorama import Fore, Style, init as colorama_init
+except ImportError:
+    class _DummyColor:
+        BLACK = ""
+        RED = ""
+        GREEN = ""
+        YELLOW = ""
+        BLUE = ""
+        MAGENTA = ""
+        CYAN = ""
+        WHITE = ""
+        RESET_ALL = ""
+
+    Fore = _DummyColor()
+    Style = _DummyColor()
+
+    def colorama_init(*args, **kwargs):
+        del args, kwargs
+        return None
 
 colorama_init(autoreset=True)
 
