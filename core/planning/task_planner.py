@@ -64,7 +64,8 @@ JSON schema (return exactly this structure):
 Valid actions:
 memory_read, memory_write, speak, display, status, recall, store_fact, health_check, vision_analyze,
 file_read, file_write, system_stats, app_open, web_search, screen_capture, screen_understand,
-vision_click, gui_click, gui_type, gui_hotkey, serial_connect, serial_send, serial_disconnect
+vision_click, gui_click, gui_type, gui_hotkey, serial_connect, serial_send, serial_disconnect,
+physical_actuate, sensor_read
 
 Never output these forbidden actions:
 shell_exec, file_delete, registry_write, format_disk, wipe_disk

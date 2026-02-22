@@ -94,6 +94,8 @@ class ToolDispatcher:
             "serial_connect": self._serial_connect,
             "serial_send": self._serial_send,
             "serial_disconnect": self._serial_disconnect,
+            "physical_actuate": self._physical_actuate,
+            "sensor_read": self._sensor_read,
 
             # Optional real-time data
             "web_search": self._web_search,
@@ -566,11 +568,16 @@ class ToolDispatcher:
         if self._serial is None:
             raise RuntimeError("Serial controller unavailable.")
         port = str(params.get("port", "")).strip()
+        baud = int(params.get("baud_rate", 0) or 0)
+        if baud <= 0:
+            baud = None
         if not port:
-            raise ValueError("serial_connect requires 'port'.")
-        baud = int(params.get("baud_rate", 9600))
+            # allow controller default port in serial controller config
+            self._serial.connect(port=None, baud_rate=baud)
+            return "Serial connected using configured default port."
         self._serial.connect(port=port, baud_rate=baud)
-        return f"Serial connected: {port} @ {baud}"
+        baud_text = str(baud) if baud is not None else "default"
+        return f"Serial connected: {port} @ {baud_text}"
 
     def _serial_send(self, params: dict[str, Any]) -> str:
         if self._serial is None:
@@ -587,6 +594,40 @@ class ToolDispatcher:
             raise RuntimeError("Serial controller unavailable.")
         self._serial.disconnect()
         return "Serial disconnected."
+
+    def _physical_actuate(self, params: dict[str, Any]) -> str:
+        """
+        Hardware actuation wrapper.
+        Accepts either explicit serial command or device/state pair.
+        """
+        if self._serial is None:
+            raise RuntimeError("Serial controller unavailable.")
+
+        command = str(params.get("command", "")).strip()
+        if not command:
+            device = str(params.get("device", "")).strip().upper()
+            state = str(params.get("state", "")).strip().upper()
+            if not device or not state:
+                raise ValueError(
+                    "physical_actuate requires either 'command' or ('device' and 'state')."
+                )
+            command = f"{device}:{state}"
+
+        reply = self._serial.send(command)
+        return f"Actuation command sent '{command}'. Reply: {reply}"
+
+    def _sensor_read(self, params: dict[str, Any]) -> str:
+        if self._serial is None:
+            raise RuntimeError("Serial controller unavailable.")
+        sensor = str(params.get("sensor", "")).strip().upper()
+        command = str(params.get("command", "")).strip()
+        if not command:
+            if not sensor:
+                raise ValueError("sensor_read requires 'sensor' or explicit 'command'.")
+            command = f"READ:{sensor}"
+
+        reply = self._serial.send(command)
+        return f"Sensor read '{command}' -> {reply}"
 
     def _web_search(self, params: dict[str, Any]) -> str:
         if not self._allow_web_search:

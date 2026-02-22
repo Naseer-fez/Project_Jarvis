@@ -370,6 +370,28 @@ class Controller:
             query = text[7:].strip()
             await self._cmd_web_search(query)
             return
+        if lower.startswith("serial connect"):
+            args = text.split()
+            port = args[2] if len(args) >= 3 else ""
+            baud = args[3] if len(args) >= 4 else ""
+            await self._cmd_serial_connect(port=port, baud=baud)
+            return
+        if lower.startswith("serial send "):
+            command = text[12:].strip()
+            await self._cmd_serial_send(command)
+            return
+        if lower == "serial disconnect":
+            await self._cmd_serial_disconnect()
+            return
+        if lower.startswith("actuate "):
+            args = text.split(maxsplit=2)
+            payload = args[1:] if len(args) > 1 else []
+            await self._cmd_actuate(payload)
+            return
+        if lower.startswith("sensor "):
+            sensor = text[7:].strip()
+            await self._cmd_sensor_read(sensor)
+            return
         if lower.startswith("vision "):
             image_path = text[7:].strip()
             await self._cmd_vision(image_path)
@@ -559,6 +581,141 @@ class Controller:
         finally:
             self.fsm.force_idle()
 
+    async def _cmd_serial_connect(self, port: str, baud: str) -> None:
+        try:
+            params: dict[str, Any] = {}
+            if port:
+                params["port"] = port
+            if baud:
+                try:
+                    params["baud_rate"] = int(baud)
+                except ValueError:
+                    print("Baud rate must be an integer.")
+                    return
+
+            plan = {
+                "summary": "Connect to serial hardware",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "serial_connect",
+                        "description": "Open serial connection",
+                        "params": params,
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["serial_connect"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent="serial connect",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
+    async def _cmd_serial_send(self, command: str) -> None:
+        if not command:
+            print("Usage: serial send <command>")
+            return
+        try:
+            plan = {
+                "summary": "Send serial command",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "serial_send",
+                        "description": "Send raw serial command",
+                        "params": {"command": command},
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["serial_send"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent=f"serial send {command}",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
+    async def _cmd_serial_disconnect(self) -> None:
+        try:
+            plan = {
+                "summary": "Close serial connection",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "serial_disconnect",
+                        "description": "Close serial port",
+                        "params": {},
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["serial_disconnect"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent="serial disconnect",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
+    async def _cmd_actuate(self, payload: list[str]) -> None:
+        if len(payload) < 2:
+            print("Usage: actuate <device> <state>")
+            return
+        device, state = payload[0], payload[1]
+        try:
+            plan = {
+                "summary": f"Actuate {device} -> {state}",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "physical_actuate",
+                        "description": "Send physical actuation command via serial",
+                        "params": {"device": device, "state": state},
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["physical_actuate"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent=f"actuate {device} {state}",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
+    async def _cmd_sensor_read(self, sensor: str) -> None:
+        if not sensor:
+            print("Usage: sensor <name>")
+            return
+        try:
+            plan = {
+                "summary": f"Read sensor {sensor}",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "sensor_read",
+                        "description": "Query a hardware sensor value via serial",
+                        "params": {"sensor": sensor},
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["sensor_read"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent=f"sensor {sensor}",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
     # -- Print helpers ----------------------------------------------------
 
     def _print_plan(self, plan: dict, risk: Any) -> None:
@@ -600,6 +757,11 @@ Commands:
   screen            Capture active monitor and analyze with LLaVA
   click <target>    Vision-guided click on a UI target
   search <query>    Web search via DuckDuckGo
+  serial connect [port] [baud]  Connect serial device
+  serial send <cmd>  Send raw serial command
+  serial disconnect  Close serial connection
+  actuate <device> <state>  Physical actuation command via serial
+  sensor <name>      Read sensor value via serial
   status            Show system status
   memory            Show memory hint
   history           Show recent audit log

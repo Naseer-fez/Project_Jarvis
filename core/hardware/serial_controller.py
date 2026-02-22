@@ -14,11 +14,14 @@ class SerialController:
         self._serial = None
         self._port: str | None = None
         self._baud_rate: int = 9600
+        self._default_port: str | None = None
 
         config_enabled = False
         if config is not None:
             try:
                 config_enabled = config.getboolean("hardware", "enabled", fallback=False)
+                self._default_port = config.get("hardware", "default_port", fallback="").strip() or None
+                self._baud_rate = int(config.get("hardware", "baud_rate", fallback="9600"))
             except Exception:
                 config_enabled = False
 
@@ -30,10 +33,13 @@ class SerialController:
                 "SerialController is disabled. Set [hardware] enabled=true to unblock V3 serial commands."
             )
 
-    def connect(self, port: str, baud_rate: int = 9600, timeout_s: float = 1.0) -> None:
+    def connect(self, port: str | None = None, baud_rate: int | None = None, timeout_s: float = 1.0) -> None:
         self._require_enabled()
+        port = (port or self._default_port or "").strip()
         if not port:
             raise ValueError("Serial port is required.")
+        if baud_rate is None:
+            baud_rate = self._baud_rate
 
         try:
             import serial

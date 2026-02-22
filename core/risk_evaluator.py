@@ -82,6 +82,7 @@ class RiskEvaluator:
         "file_read", "read_file", "open_file",
         "screen_capture", "screenshot",
         "screen_understand",
+        "sensor_read",
         "web_search",
         "ui_interaction", "click", "type_text", "key_press",
         "notification", "send_notification",

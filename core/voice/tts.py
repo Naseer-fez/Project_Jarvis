@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+from pathlib import Path
 
 log = logging.getLogger("jarvis.voice.tts")
 
@@ -43,8 +44,9 @@ class TTS:
         try:
             from piper import PiperVoice
 
-            self._piper_voice = PiperVoice.load(self._voice)
-            log.info(f"TTS backend: Piper ({self._voice})")
+            resolved_voice = self._resolve_piper_voice_path(self._voice)
+            self._piper_voice = PiperVoice.load(resolved_voice)
+            log.info(f"TTS backend: Piper ({resolved_voice})")
             return "piper"
         except ImportError:
             log.warning("piper-tts not installed - trying pyttsx3 fallback")
@@ -64,6 +66,26 @@ class TTS:
 
         log.warning("No TTS audio backend - using CLI fallback only")
         return "cli"
+
+    def _resolve_piper_voice_path(self, voice: str) -> str:
+        """
+        Resolve voice model location for Piper.
+        Supports:
+        - Absolute/relative .onnx path
+        - Voice id stored under data/voices/<voice_id>.onnx
+        """
+        raw = Path(voice)
+        if raw.suffix.lower() == ".onnx" and raw.exists():
+            return str(raw)
+
+        if raw.exists():
+            return str(raw)
+
+        local = Path("data/voices") / f"{voice}.onnx"
+        if local.exists():
+            return str(local)
+
+        return voice
 
     def speak(self, text: str) -> None:
         if not text.strip():
