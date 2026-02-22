@@ -72,6 +72,7 @@ class RiskEvaluator:
         "app_open",
         "serial_send", "serial_write",
         "physical_actuate", "actuate", "motor_command",
+        "vision_click",
         "gui_click", "gui_type", "gui_hotkey",
         "system_config", "set_config", "env_write",
         "install_package", "pip_install",
@@ -80,6 +81,7 @@ class RiskEvaluator:
     _DEFAULT_MEDIUM = frozenset({
         "file_read", "read_file", "open_file",
         "screen_capture", "screenshot",
+        "screen_understand",
         "web_search",
         "ui_interaction", "click", "type_text", "key_press",
         "notification", "send_notification",

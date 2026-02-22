@@ -359,6 +359,17 @@ class Controller:
         if lower == "reset":
             self._cmd_reset()
             return
+        if lower == "screen":
+            await self._cmd_screen_understand()
+            return
+        if lower.startswith("click "):
+            target = text[6:].strip()
+            await self._cmd_click_target(target)
+            return
+        if lower.startswith("search "):
+            query = text[7:].strip()
+            await self._cmd_web_search(query)
+            return
         if lower.startswith("vision "):
             image_path = text[7:].strip()
             await self._cmd_vision(image_path)
@@ -473,6 +484,81 @@ class Controller:
         except Exception as exc:
             print(f"Vision error: {exc}")
 
+    async def _cmd_screen_understand(self) -> None:
+        try:
+            plan = {
+                "summary": "Capture active monitor and analyze with LLaVA",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "screen_understand",
+                        "description": "Capture active monitor and analyze desktop UI",
+                        "params": {},
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["screen_understand"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent="screen understand",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
+    async def _cmd_click_target(self, target: str) -> None:
+        if not target:
+            print("Usage: click <target description>")
+            return
+        try:
+            plan = {
+                "summary": f"Find '{target}' on screen and click it",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "vision_click",
+                        "description": "Vision-guided UI click",
+                        "params": {"target": target},
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["vision_click"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent=f"click {target}",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
+    async def _cmd_web_search(self, query: str) -> None:
+        if not query:
+            print("Usage: search <query>")
+            return
+        try:
+            plan = {
+                "summary": f"Search web for: {query}",
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "web_search",
+                        "description": "Fetch recent web snippets",
+                        "params": {"query": query, "max_results": 5},
+                    }
+                ],
+            }
+            risk = self.risk.evaluate(["web_search"])
+            summary, _ = await self.execute_plan_with_feedback(
+                intent=f"search {query}",
+                plan=plan,
+                risk=risk,
+            )
+            print(f"\nJarvis: {summary}")
+        finally:
+            self.fsm.force_idle()
+
     # -- Print helpers ----------------------------------------------------
 
     def _print_plan(self, plan: dict, risk: Any) -> None:
@@ -511,6 +597,9 @@ Type 'help' for commands, 'quit' to exit.
 Commands:
   <any text>        Generate a plan and execute approved steps
   vision <path>     Analyze an image with LLaVA
+  screen            Capture active monitor and analyze with LLaVA
+  click <target>    Vision-guided click on a UI target
+  search <query>    Web search via DuckDuckGo
   status            Show system status
   memory            Show memory hint
   history           Show recent audit log

@@ -6,7 +6,9 @@ Maps planner actions to explicit Python handlers. No dynamic eval/exec.
 
 from __future__ import annotations
 
+import json
 import platform
+import re
 import subprocess
 import time
 from dataclasses import dataclass
@@ -47,6 +49,15 @@ class ToolDispatcher:
             config.get("execution", "max_read_bytes", fallback="200000")
         )
         self._allowed_apps = self._load_allowed_apps()
+        self._allow_app_launch = config.getboolean(
+            "execution", "allow_app_launch", fallback=True
+        )
+        self._allow_gui_automation = config.getboolean(
+            "execution", "allow_gui_automation", fallback=False
+        )
+        self._allow_web_search = config.getboolean(
+            "execution", "allow_web_search", fallback=True
+        )
 
         self._action_map: dict[str, Callable[[dict[str, Any]], str]] = {
             # Memory
@@ -73,6 +84,8 @@ class ToolDispatcher:
             # Vision/screen/gui
             "vision_analyze": self._vision_analyze,
             "screen_capture": self._screen_capture,
+            "screen_understand": self._screen_understand,
+            "vision_click": self._vision_click,
             "gui_click": self._gui_click,
             "gui_type": self._gui_type,
             "gui_hotkey": self._gui_hotkey,
@@ -276,6 +289,8 @@ class ToolDispatcher:
             return f"Platform: {platform.system()} {platform.release()}"
 
     def _app_open(self, params: dict[str, Any]) -> str:
+        if not self._allow_app_launch:
+            raise PermissionError("Application launch is disabled by config.")
         app = str(params.get("app", "")).strip().lower()
         if not app:
             raise ValueError("app_open requires 'app'.")
@@ -306,20 +321,200 @@ class ToolDispatcher:
         output_path = str(params.get("path", "")).strip()
         if not output_path:
             output_path = f"screenshot_{int(time.time())}.png"
-        path = self._resolve_safe_path(output_path, for_write=True)
+        capture_mode = str(params.get("capture_mode", "active_monitor")).strip().lower()
+        path, _ = self._capture_screen_image(output_path=output_path, capture_mode=capture_mode)
+        return f"Screenshot saved: {path}"
 
+    def _screen_understand(self, params: dict[str, Any]) -> str:
+        """
+        Phase 4 loop step 1:
+        Capture active monitor and immediately pass image to LLaVA.
+        """
+        if self._vision is None:
+            raise RuntimeError("Vision tool unavailable.")
+
+        output_path = str(params.get("path", "")).strip()
+        if not output_path:
+            output_path = f"screen_{int(time.time())}.png"
+        prompt = str(
+            params.get(
+                "prompt",
+                "Describe the visible desktop UI. Identify important actionable elements.",
+            )
+        ).strip()
+        capture_mode = str(params.get("capture_mode", "active_monitor")).strip().lower()
+        path, _ = self._capture_screen_image(output_path=output_path, capture_mode=capture_mode)
+        description = self._vision.analyze(str(path), prompt=prompt)
+        return f"Screenshot: {path}\nVision:\n{description}"
+
+    def _vision_click(self, params: dict[str, Any]) -> str:
+        """
+        Phase 4 loop step 2:
+        Ask LLaVA for a pixel coordinate of a target and click with pyautogui.
+        """
+        if not self._allow_gui_automation:
+            raise PermissionError("GUI automation is disabled by config.")
+        if self._vision is None:
+            raise RuntimeError("Vision tool unavailable.")
+
+        target = str(params.get("target", "")).strip()
+        if not target:
+            raise ValueError("vision_click requires 'target'.")
+
+        output_path = str(params.get("path", "")).strip()
+        if not output_path:
+            output_path = f"vision_click_{int(time.time())}.png"
+        capture_mode = str(params.get("capture_mode", "active_monitor")).strip().lower()
+        path, offset = self._capture_screen_image(output_path=output_path, capture_mode=capture_mode)
+
+        llava_prompt = (
+            "You are helping with GUI automation. "
+            f"Find the best click point for this target: '{target}'. "
+            "Return ONLY JSON with keys: x, y, confidence, reason, not_found. "
+            "x and y must be integer pixel coordinates relative to this image. "
+            "If target is absent, set not_found=true and x=y=0."
+        )
+        raw = self._vision.analyze(str(path), prompt=llava_prompt)
+        point = self._extract_click_point(raw)
+        if point.get("not_found"):
+            return f"Target not found: {target}. Vision reason: {point.get('reason', '')}"
+
+        rel_x = int(point["x"])
+        rel_y = int(point["y"])
+        abs_x = rel_x + offset[0]
+        abs_y = rel_y + offset[1]
+
+        if bool(params.get("dry_run", False)):
+            return (
+                f"Dry run. Target '{target}' at image=({rel_x},{rel_y}), "
+                f"screen=({abs_x},{abs_y}), confidence={point.get('confidence', 0)}"
+            )
+
+        move_duration = float(params.get("move_duration_s", 0.2))
+        button = str(params.get("button", "left"))
+        clicks = int(params.get("clicks", 1))
+        self._gui_click(
+            {
+                "x": abs_x,
+                "y": abs_y,
+                "button": button,
+                "clicks": clicks,
+                "move_duration_s": move_duration,
+            }
+        )
+        return (
+            f"Clicked target '{target}' at screen ({abs_x},{abs_y}) "
+            f"[confidence={point.get('confidence', 0)}] using {path}"
+        )
+
+    def _capture_screen_image(self, output_path: str, capture_mode: str) -> tuple[Path, tuple[int, int]]:
+        path = self._resolve_safe_path(output_path, for_write=True)
         try:
             from PIL import ImageGrab
         except ImportError as exc:
-            raise RuntimeError(
-                "screen_capture requires pillow (PIL.ImageGrab)."
-            ) from exc
+            raise RuntimeError("screen capture requires pillow (PIL.ImageGrab).") from exc
+
+        if capture_mode == "active_monitor":
+            bbox = self._get_active_monitor_bbox()
+            if bbox:
+                left, top, right, bottom = bbox
+                image = ImageGrab.grab(bbox=(left, top, right, bottom))
+                image.save(path)
+                return path, (left, top)
+
+        if capture_mode == "all":
+            image = ImageGrab.grab(all_screens=True)
+            image.save(path)
+            return path, (0, 0)
 
         image = ImageGrab.grab()
         image.save(path)
-        return f"Screenshot saved: {path}"
+        return path, (0, 0)
+
+    def _get_active_monitor_bbox(self) -> tuple[int, int, int, int] | None:
+        if platform.system().lower() != "windows":
+            return None
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return None
+
+            monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+            if not monitor:
+                return None
+
+            class RECT(ctypes.Structure):
+                _fields_ = [
+                    ("left", wintypes.LONG),
+                    ("top", wintypes.LONG),
+                    ("right", wintypes.LONG),
+                    ("bottom", wintypes.LONG),
+                ]
+
+            class MONITORINFO(ctypes.Structure):
+                _fields_ = [
+                    ("cbSize", wintypes.DWORD),
+                    ("rcMonitor", RECT),
+                    ("rcWork", RECT),
+                    ("dwFlags", wintypes.DWORD),
+                ]
+
+            info = MONITORINFO()
+            info.cbSize = ctypes.sizeof(MONITORINFO)
+            ok = user32.GetMonitorInfoW(monitor, ctypes.byref(info))
+            if not ok:
+                return None
+
+            return (
+                int(info.rcMonitor.left),
+                int(info.rcMonitor.top),
+                int(info.rcMonitor.right),
+                int(info.rcMonitor.bottom),
+            )
+        except Exception:
+            return None
+
+    def _extract_click_point(self, raw_text: str) -> dict[str, Any]:
+        json_blob = self._extract_json_blob(raw_text)
+        if not json_blob:
+            raise ValueError(f"Vision did not return JSON coordinates. Raw: {raw_text[:300]}")
+        try:
+            obj = json.loads(json_blob)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Vision returned invalid JSON: {exc}") from exc
+
+        if not isinstance(obj, dict):
+            raise ValueError("Vision JSON must be an object.")
+        if bool(obj.get("not_found", False)):
+            return {"not_found": True, "reason": str(obj.get("reason", ""))}
+
+        if "x" not in obj or "y" not in obj:
+            raise ValueError("Vision JSON must include x and y.")
+        return {
+            "x": int(obj["x"]),
+            "y": int(obj["y"]),
+            "confidence": float(obj.get("confidence", 0.0)),
+            "reason": str(obj.get("reason", "")),
+            "not_found": bool(obj.get("not_found", False)),
+        }
+
+    def _extract_json_blob(self, text: str) -> str:
+        text = text.strip()
+        if text.startswith("{") and text.endswith("}"):
+            return text
+
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if match:
+            return match.group(0)
+        return ""
 
     def _gui_click(self, params: dict[str, Any]) -> str:
+        if not self._allow_gui_automation:
+            raise PermissionError("GUI automation is disabled by config.")
         try:
             import pyautogui
         except ImportError as exc:
@@ -329,13 +524,18 @@ class ToolDispatcher:
         y = params.get("y")
         button = str(params.get("button", "left"))
         clicks = int(params.get("clicks", 1))
+        move_duration = float(params.get("move_duration_s", 0.0))
         if x is None or y is None:
             pyautogui.click(button=button, clicks=clicks)
         else:
+            if move_duration > 0:
+                pyautogui.moveTo(int(x), int(y), duration=move_duration)
             pyautogui.click(x=int(x), y=int(y), button=button, clicks=clicks)
         return "GUI click executed."
 
     def _gui_type(self, params: dict[str, Any]) -> str:
+        if not self._allow_gui_automation:
+            raise PermissionError("GUI automation is disabled by config.")
         try:
             import pyautogui
         except ImportError as exc:
@@ -349,6 +549,8 @@ class ToolDispatcher:
         return "GUI typing executed."
 
     def _gui_hotkey(self, params: dict[str, Any]) -> str:
+        if not self._allow_gui_automation:
+            raise PermissionError("GUI automation is disabled by config.")
         try:
             import pyautogui
         except ImportError as exc:
@@ -387,6 +589,8 @@ class ToolDispatcher:
         return "Serial disconnected."
 
     def _web_search(self, params: dict[str, Any]) -> str:
+        if not self._allow_web_search:
+            raise PermissionError("Web search is disabled by config.")
         query = str(params.get("query", "")).strip()
         if not query:
             raise ValueError("web_search requires 'query'.")
