@@ -35,7 +35,7 @@ class TestEmbeddingManager(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from core.embeddings import EmbeddingManager
+        from core.memory.embeddings import EmbeddingManager
         cls.em = EmbeddingManager(model_name="all-MiniLM-L6-v2")
         cls.available = cls.em.initialize()
 
@@ -271,7 +271,7 @@ class TestHybridMemory(unittest.TestCase):
 class TestContextCompressor(unittest.TestCase):
 
     def setUp(self):
-        from core.context_compressor import ContextCompressor
+        from core.memory.context_compressor import ContextCompressor
         self.cc = ContextCompressor(threshold=0.0)  # 0.0 threshold = include everything
 
     def _make_recall(self):
@@ -312,7 +312,7 @@ class TestContextCompressor(unittest.TestCase):
         self.assertEqual(result, "")
 
     def test_05_threshold_filtering(self):
-        from core.context_compressor import ContextCompressor
+        from core.memory.context_compressor import ContextCompressor
         cc_strict = ContextCompressor(threshold=0.9)  # Very strict
         recall = {
             "preferences": [

@@ -124,7 +124,7 @@ class HybridMemory:
 
     def build_context_block(self, query: str) -> str:
         try:
-            from core.context_compressor import ContextCompressor
+            from core.memory.context_compressor import ContextCompressor
             cc = ContextCompressor(threshold=0.0)
             return cc.compress(query, self.recall_all(query))
         except ImportError:

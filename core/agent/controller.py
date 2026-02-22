@@ -21,7 +21,7 @@ from core.agent.agent_loop import AgentLoopEngine
 # 2. Intelligence & Planning
 from core.planning.task_planner import TaskPlanner
 from core.llm.ollama_llm import OllamaLLM
-from core.intents import IntentClassifierV2, Intent
+from core.planning.intents import IntentClassifierV2, Intent
 
 # 3. Tools & Execution
 from core.tools.tool_router import ToolRouter

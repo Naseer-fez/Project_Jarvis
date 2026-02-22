@@ -5,7 +5,7 @@ Orchestration layer for Jarvis Session 4.
 """
 import uuid
 from memory.hybrid_memory import HybridMemory
-from core.llm_v2 import LLMClientV2
+from core.llm.llm_v2 import LLMClientV2
 
 class JarvisControllerV2:
     def __init__(self, db_path="memory/memory.db", chroma_path="data/chroma", model_name="deepseek-r1:8b", embedding_model="all-MiniLM-L6-v2"):
