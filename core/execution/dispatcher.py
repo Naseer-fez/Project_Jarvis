@@ -357,10 +357,12 @@ class ToolDispatcher:
         if self._trace is None:
             return
         status = "success" if result.success else "failure"
+        payload = result.to_dict()
+        payload.pop("action", None)
         self._trace.action(
             action=result.action,
             status=status,
-            **result.to_dict(),
+            **payload,
         )
         if not result.success:
             self._trace.error(

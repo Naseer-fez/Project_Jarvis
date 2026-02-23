@@ -50,7 +50,8 @@ class Controller:
     def __init__(self, config: configparser.ConfigParser, voice: bool = False) -> None:
         self._config = config
         self._voice_on = voice
-        self.session_id = f"session_{int(time.time())}"
+        configured_session = config.get("general", "session_name", fallback="").strip()
+        self.session_id = configured_session or f"session_{int(time.time())}"
 
         self.fsm = StateMachine()
         self.memory = HybridMemory(config)
@@ -126,13 +127,27 @@ class Controller:
         context = f"Known context:\n{context_text}" if context_text else ""
         plan = self.planner.plan(intent, context=context)
 
-        actions = []
+        actions: list[str] = []
         for step in plan.get("steps", []):
             if isinstance(step, dict):
                 action = step.get("action", "")
                 if action:
-                    actions.append(action)
+                    actions.append(str(action).strip().lower())
         risk = self.risk.evaluate(actions)
+        perms = self.permissions.evaluate(actions)
+
+        dedup_tools: list[str] = []
+        seen: set[str] = set()
+        for action in actions:
+            if action not in seen:
+                seen.add(action)
+                dedup_tools.append(action)
+
+        computed_risk = "critical" if perms.blocked_actions else risk.level.label().lower()
+        confirmation_needed = bool(perms.confirmation_actions) or self._requires_confirmation(risk)
+        plan["tools_required"] = dedup_tools
+        plan["risk_level"] = computed_risk
+        plan["confirmation_required"] = confirmation_needed
 
         self.audit(
             "PLAN_GENERATED",
@@ -140,10 +155,20 @@ class Controller:
                 "intent": intent,
                 "summary": plan.get("summary", ""),
                 "steps": plan.get("steps", []),
-                "risk_level": risk.level.name,
+                "risk_level": computed_risk,
                 "risk_blocked": risk.is_blocked,
                 "risk_reasons": risk.reasons,
+                "permission_blocked": perms.blocked_actions,
+                "permission_confirm": perms.confirmation_actions,
             },
+        )
+        self.trace.decision(
+            "plan_generated",
+            intent=intent,
+            summary=plan.get("summary", ""),
+            tools_required=plan.get("tools_required", []),
+            risk_level=plan.get("risk_level", "low"),
+            confirmation_required=plan.get("confirmation_required", False),
         )
         return plan, risk
 
@@ -157,6 +182,36 @@ class Controller:
         """
         Execute a planned workflow through dispatcher, then summarize outcomes.
         """
+        if self._failsafe_disabled:
+            return "Failsafe mode is active. Action execution is temporarily disabled.", []
+
+        actions = []
+        for step in plan.get("steps", []):
+            if isinstance(step, dict):
+                action = str(step.get("action", "")).strip().lower()
+                if action:
+                    actions.append(action)
+        perms = self.permissions.evaluate(actions)
+        if perms.blocked_actions:
+            response = (
+                "I cannot execute this request. Blocked actions: "
+                + ", ".join(perms.blocked_actions)
+            )
+            self.audit(
+                "PLAN_EXECUTION_BLOCKED",
+                {
+                    "intent": intent,
+                    "blocked_actions": perms.blocked_actions,
+                    "reason": "permission_matrix",
+                },
+            )
+            self.trace.decision(
+                "plan_blocked",
+                intent=intent,
+                blocked_actions=perms.blocked_actions,
+            )
+            return response, []
+
         if risk.is_blocked:
             response = f"I cannot execute this request. {risk.summary()}"
             self.audit(
@@ -165,7 +220,7 @@ class Controller:
             )
             return response, []
 
-        if self._requires_confirmation(risk):
+        if self._requires_confirmation(risk) or perms.needs_confirmation:
             approved = False
             if confirm_callback is not None:
                 approved = await confirm_callback(plan, risk)
@@ -188,7 +243,50 @@ class Controller:
             raise
 
         loop = asyncio.get_event_loop()
-        results = await loop.run_in_executor(None, self.dispatcher.execute_plan, plan)
+        self.dispatcher.clear_cancel()
+        dispatch_priority = int(plan.get("priority", 5))
+
+        async def _dispatch_job():
+            return await loop.run_in_executor(None, self.dispatcher.execute_plan, plan)
+
+        task_id, dispatch_future = await self.task_manager.submit(
+            _dispatch_job,
+            priority=dispatch_priority,
+            name="plan_dispatch",
+        )
+        self.trace.decision(
+            "dispatch_submitted",
+            task_id=task_id,
+            priority=dispatch_priority,
+        )
+        self._current_dispatch_future = dispatch_future
+        try:
+            results = await self._current_dispatch_future
+        except asyncio.CancelledError:
+            self.dispatcher.request_cancel()
+            self.trace.error("controller", "Dispatch future cancelled", intent=intent)
+            return "Execution cancelled.", []
+        except Exception as exc:
+            self._failsafe_error_count += 1
+            self.trace.error("controller", str(exc), intent=intent)
+            if self._failsafe_auto_disable and self._failsafe_error_count >= self._failsafe_threshold:
+                self._failsafe_disabled = True
+                self.audit(
+                    "FAILSAFE_ENABLED",
+                    {
+                        "reason": "execution_errors",
+                        "error_count": self._failsafe_error_count,
+                    },
+                )
+                self.trace.decision(
+                    "failsafe_enabled",
+                    reason="execution_errors",
+                    error_count=self._failsafe_error_count,
+                )
+            raise
+        finally:
+            self._current_dispatch_future = None
+            self.dispatcher.clear_cancel()
 
         self.audit(
             "PLAN_EXECUTED",
@@ -198,9 +296,35 @@ class Controller:
                 "results": [r.to_dict() for r in results],
             },
         )
+        self.trace.decision(
+            "plan_executed",
+            intent=intent,
+            result_count=len(results),
+            failed=sum(1 for r in results if not r.success),
+        )
+
+        if any(not r.success for r in results):
+            self._failsafe_error_count += 1
+            if self._failsafe_auto_disable and self._failsafe_error_count >= self._failsafe_threshold:
+                self._failsafe_disabled = True
+                self.audit(
+                    "FAILSAFE_ENABLED",
+                    {
+                        "reason": "step_failures",
+                        "error_count": self._failsafe_error_count,
+                    },
+                )
+                self.trace.decision(
+                    "failsafe_enabled",
+                    reason="step_failures",
+                    error_count=self._failsafe_error_count,
+                )
 
         self._inject_execution_feedback(intent, results)
         summary = await loop.run_in_executor(None, self._summarize_execution, intent, plan, results)
+
+        if all(r.success for r in results):
+            self._failsafe_error_count = 0
 
         if self.fsm.state == State.EXECUTING and self.fsm.can_transition(State.SPEAKING):
             self.fsm.transition(State.SPEAKING)
@@ -211,7 +335,7 @@ class Controller:
         threshold_name = self._config.get(
             "risk", "voice_confirm_threshold", fallback="MEDIUM"
         ).upper()
-        order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "FORBIDDEN": 3}
+        order = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3, "FORBIDDEN": 3}
         required_at = order.get(threshold_name, 1)
         return order.get(risk.level.name, 0) >= required_at and not risk.is_blocked
 
@@ -234,6 +358,19 @@ class Controller:
                         "success": res.success,
                     },
                 )
+                if hasattr(self.memory, "store_action"):
+                    self.memory.store_action(
+                        action=res.action,
+                        outcome=outcome[:2000],
+                        success=res.success,
+                        metadata={"intent": intent, "step_id": res.step_id},
+                    )
+                if not res.success and hasattr(self.memory, "store_failure"):
+                    self.memory.store_failure(
+                        action=res.action,
+                        error=str(res.error or ""),
+                        metadata={"intent": intent, "step_id": res.step_id},
+                    )
             except Exception as exc:
                 log.warning(f"Failed to persist execution feedback: {exc}")
 
@@ -308,10 +445,66 @@ class Controller:
             return f"Execution complete. {ok} step(s) succeeded."
         return f"Execution finished with issues. {ok} succeeded, {failed} failed."
 
+    def request_interrupt(self, reason: str = "manual") -> None:
+        self.dispatcher.request_cancel()
+        if self._current_dispatch_future is not None:
+            self._current_dispatch_future.cancel()
+        try:
+            if self.fsm.state != State.IDLE and self.fsm.can_transition(State.INTERRUPTED):
+                self.fsm.transition(State.INTERRUPTED)
+                if self.fsm.can_transition(State.IDLE):
+                    self.fsm.transition(State.IDLE)
+        except Exception:
+            self.fsm.force_idle()
+
+        self.audit("INTERRUPT_REQUESTED", {"reason": reason})
+        self.trace.decision("interrupt_requested", reason=reason)
+
+    def _load_plugins(self) -> None:
+        plugin_dir = self._config.get("plugins", "directory", fallback="core/plugins")
+        loaded = self.tool_registry.load_plugins(plugin_dir)
+        for name, handler in self.tool_registry.get_permitted_tools().items():
+            if name in self.dispatcher._action_map:  # intentional: avoid overriding core actions
+                continue
+            self.dispatcher.register_action(name, handler)
+
+        if loaded:
+            self.trace.decision("plugins_loaded", count=len(loaded), names=loaded)
+
+    async def _control_plane_loop(self) -> None:
+        while self._running:
+            try:
+                if self._control_file.exists():
+                    data = json.loads(self._control_file.read_text(encoding="utf-8"))
+                    if isinstance(data, dict) and data:
+                        await self._apply_control_flags(data)
+                        self._control_file.write_text("{}", encoding="utf-8")
+            except Exception as exc:
+                self.trace.error("control_plane", str(exc))
+            await asyncio.sleep(0.25)
+
+    async def _apply_control_flags(self, flags: dict[str, Any]) -> None:
+        if flags.get("interrupt"):
+            self.request_interrupt(reason="dashboard")
+        if flags.get("disable_actions"):
+            self._failsafe_disabled = True
+            self.trace.decision("failsafe_manual_disable")
+        if flags.get("resume_actions"):
+            self._failsafe_disabled = False
+            self._failsafe_error_count = 0
+            self.trace.decision("failsafe_manual_resume")
+
     # -- Startup / shutdown ----------------------------------------------
 
     async def start(self) -> None:
         self._running = True
+        await self.task_manager.start()
+        self._control_task = asyncio.create_task(self._control_plane_loop(), name="control_plane")
+        try:
+            cleaned = self.memory.cleanup_stale_data()
+            self.trace.decision("memory_cleanup", **cleaned)
+        except Exception:
+            pass
         self.audit(
             "JARVIS_START",
             {
@@ -334,6 +527,11 @@ class Controller:
 
                 self._voice_loop = VoiceLoop(self, self._config)
                 self._voice_loop.start()
+                self.memory.set_preference(
+                    "voice_enabled",
+                    str(self._voice_on).lower(),
+                    category="voice_setting",
+                )
                 log.info("Voice loop active")
             except Exception as exc:
                 log.error(f"Voice loop failed to start: {exc} - falling back to CLI only")
@@ -345,8 +543,17 @@ class Controller:
         self._running = False
         log.info("Shutting down...")
 
+        if self._control_task:
+            self._control_task.cancel()
+            try:
+                await self._control_task
+            except asyncio.CancelledError:
+                pass
+
         if self._voice_loop:
             await self._voice_loop.stop()
+
+        await self.task_manager.stop()
 
         self.audit("JARVIS_SHUTDOWN", {"ts": time.time()})
         try:
@@ -394,6 +601,19 @@ class Controller:
             return
         if lower == "reset":
             self._cmd_reset()
+            return
+        if lower == "interrupt":
+            self.request_interrupt(reason="cli")
+            print("Interrupt requested.")
+            return
+        if lower == "failsafe on":
+            self._failsafe_disabled = True
+            print("Failsafe enabled.")
+            return
+        if lower == "failsafe off":
+            self._failsafe_disabled = False
+            self._failsafe_error_count = 0
+            print("Failsafe disabled.")
             return
         if lower == "screen":
             await self._cmd_screen_understand()
@@ -492,14 +712,24 @@ class Controller:
         except AttributeError:
             pass
         print(f"  Voice:        {'active' if self._voice_on else 'disabled'}")
+        if self._voice_loop is not None and hasattr(self._voice_loop, "state"):
+            value = getattr(self._voice_loop.state, "value", self._voice_loop.state)
+            print(f"  Voice State:  {value}")
         print(f"  Serial:       {'connected' if self.serial.is_connected else 'disconnected'}")
+        print(f"  Failsafe:     {'enabled' if self._failsafe_disabled else 'normal'}")
         ok, entries, err = logger_mod.verify_audit()
         audit_status = f"OK ({entries} entries)" if ok else f"TAMPERED - {err}"
         print(f"  Audit Log:    {audit_status}")
         print(f"{'=' * 50}\n")
 
     def _cmd_memory(self) -> None:
-        print("To inspect memory details, query through a planning command or inspect data files.")
+        facts = self.memory.count()
+        actions = len(self.memory.recent_actions(limit=10)) if hasattr(self.memory, "recent_actions") else 0
+        prefs = len(self.memory.get_preferences()) if hasattr(self.memory, "get_preferences") else 0
+        print(
+            f"Memory summary: facts={facts}, recent_action_events={actions}, "
+            f"preferences={prefs}"
+        )
 
     def _cmd_history(self) -> None:
         audit_path = self._config.get("logging", "audit_file", fallback="logs/audit.jsonl")
@@ -522,6 +752,9 @@ class Controller:
     def _cmd_reset(self) -> None:
         try:
             self.fsm.force_idle()
+            self._failsafe_disabled = False
+            self._failsafe_error_count = 0
+            self.dispatcher.clear_cancel()
             print("Reset to IDLE.")
             self.audit("MANUAL_RESET", {})
         except Exception as exc:
@@ -757,7 +990,12 @@ class Controller:
     def _print_plan(self, plan: dict, risk: Any) -> None:
         print(f"\n{'-' * 50}")
         print(f"Plan: {plan.get('summary', '(no summary)')}")
-        print(f"Confidence: {plan.get('confidence', 0.0):.0%} | Risk: {risk.level.name}")
+        risk_label = str(plan.get("risk_level", risk.level.name)).upper()
+        confirm = bool(plan.get("confirmation_required", False))
+        print(
+            f"Confidence: {plan.get('confidence', 0.0):.0%} | "
+            f"Risk: {risk_label} | Confirm: {'yes' if confirm else 'no'}"
+        )
         steps = plan.get("steps", [])
         if steps:
             print("Steps:")
@@ -802,6 +1040,8 @@ Commands:
   memory            Show memory hint
   history           Show recent audit log
   reset             Reset to IDLE
+  interrupt         Cancel current execution
+  failsafe on/off   Manually disable/enable action execution
   help              Show this help
   quit              Shutdown
 """

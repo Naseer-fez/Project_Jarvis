@@ -63,6 +63,10 @@ Examples:
         "--log-level", default=None, choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         help="Override log level (DEBUG, INFO, WARNING, ERROR)",
     )
+    parser.add_argument(
+        "--session-name", default=None,
+        help="Optional runtime session name for trace outputs.",
+    )
     return parser.parse_args()
 
 async def _main(args: argparse.Namespace) -> None:
@@ -73,6 +77,11 @@ async def _main(args: argparse.Namespace) -> None:
         if not config.has_section("logging"):
             config.add_section("logging")
         config.set("logging", "level", args.log_level.upper())
+
+    if args.session_name:
+        if not config.has_section("general"):
+            config.add_section("general")
+        config.set("general", "session_name", args.session_name)
 
     # Initialise logging first
     import core.logger as logger_mod

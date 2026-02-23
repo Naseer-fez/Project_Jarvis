@@ -58,9 +58,6 @@ class AsyncTaskManager:
         priority: int = 5,
         name: str = "task",
     ) -> tuple[str, asyncio.Future]:
-        if self._scheduler_task is None or self._scheduler_task.done():
-            await self.start()
-
         task_id = f"task_{uuid.uuid4().hex[:10]}"
         future: asyncio.Future = asyncio.get_event_loop().create_future()
         heapq.heappush(

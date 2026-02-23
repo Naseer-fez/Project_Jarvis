@@ -51,15 +51,18 @@ class ToolRegistry:
             if path.name.startswith("_"):
                 continue
             module_name = f"jarvis_plugin_{path.stem}"
-            spec = importlib.util.spec_from_file_location(module_name, path)
-            if spec is None or spec.loader is None:
+            try:
+                spec = importlib.util.spec_from_file_location(module_name, path)
+                if spec is None or spec.loader is None:
+                    continue
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                register_fn = getattr(module, "register", None)
+                if callable(register_fn):
+                    register_fn(self)
+                    loaded.append(path.stem)
+            except Exception:
                 continue
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            register_fn = getattr(module, "register", None)
-            if callable(register_fn):
-                register_fn(self)
-                loaded.append(path.stem)
         return loaded
 
     def list_specs(self) -> list[ToolSpec]:

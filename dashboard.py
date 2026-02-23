@@ -1,120 +1,136 @@
 """
-dashboard.py
-────────────
-Real-time UI and Audit Log Viewer for Jarvis.
-Run with: streamlit run dashboard.py
+Jarvis Dashboard (V4-ready)
+Run: streamlit run dashboard.py
 """
 
-import streamlit as st
-import pandas as pd
+from __future__ import annotations
+
 import json
-from pathlib import Path
 import time
+from pathlib import Path
 
-st.set_page_config(page_title="Jarvis Dashboard", page_icon="🤖", layout="wide")
+import pandas as pd
+import streamlit as st
 
-# ─── Config ───
-LOG_DIR = Path("outputs/Jarvis-Session")
+st.set_page_config(page_title="Jarvis Control", page_icon="J", layout="wide")
 
-# ─── Sidebar: Session Selector ───
-st.sidebar.title("🧠 Jarvis Core")
-st.sidebar.markdown("---")
+TRACE_DIR = Path("outputs/Jarvis-Session")
+CONTROL_FILE = Path("runtime/control_flags.json")
+CONTROL_FILE.parent.mkdir(parents=True, exist_ok=True)
+if not CONTROL_FILE.exists():
+    CONTROL_FILE.write_text("{}", encoding="utf-8")
 
-if not LOG_DIR.exists():
-    st.error(f"No logs found in {LOG_DIR}")
-    st.stop()
 
-# Find sessions (folders inside outputs/Jarvis-Session)
-# Adjust logic based on your AuditLogger structure. 
-# Assuming AuditLogger creates files in outputs/Jarvis-Session/ directly 
-# or makes subfolders based on session_id.
-# Based on your file: AuditLogger uses `outputs/Jarvis-Session/filename.jsonl`.
-# It doesn't seem to create subfolders per session in the provided code, 
-# but appends to shared files. We will read the shared files and filter by Session ID.
-
-# 1. Load Data
-@st.cache_data(ttl=5)
-def load_data(filename):
-    path = LOG_DIR / filename
-    if not path.exists(): return []
-    data = []
-    with open(path, "r") as f:
-        for line in f:
+def _load_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    out: list[dict] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
             try:
-                data.append(json.loads(line))
-            except: pass
-    return data
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return out
 
-# Load Trace and Obs
-plans = load_data("agent_plan.jsonl")
-traces = load_data("execution_trace.jsonl")
-observations = load_data("tool_observations.jsonl")
-risks = load_data("risk_assessment_log.jsonl")
 
-# Extract Session IDs
-all_sessions = sorted(list(set([d['session_id'] for d in traces])), reverse=True)
+def _write_control(payload: dict) -> None:
+    CONTROL_FILE.write_text(json.dumps(payload), encoding="utf-8")
 
-if not all_sessions:
-    st.warning("Waiting for Jarvis to start a session...")
+
+st.title("Jarvis Runtime Dashboard")
+st.caption("Real-time transcription, state, action logs, and manual overrides.")
+
+if not TRACE_DIR.exists():
+    st.warning(f"Trace directory not found: {TRACE_DIR}")
     st.stop()
 
-selected_session = st.sidebar.selectbox("Select Session", all_sessions)
+transcriptions = _load_jsonl(TRACE_DIR / "voice_transcription.jsonl")
+states = _load_jsonl(TRACE_DIR / "state_trace.jsonl")
+actions = _load_jsonl(TRACE_DIR / "action_trace.jsonl")
+errors = _load_jsonl(TRACE_DIR / "error_trace.jsonl")
 
-# Filter Data
-session_traces = [t for t in traces if t['session_id'] == selected_session]
-session_obs = [o for o in observations if o.get('session_id') == selected_session] 
-# Note: Your current ToolRouter/AuditLogger might not tag observations with session_id 
-# directly in the file format provided. 
-# If not, we view global logs or you update AuditLogger to include session_id in all files.
-# For now, we'll display what we have.
+left, right = st.columns([2, 1])
 
-# ─── Main Dashboard ───
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.subheader("📝 Activity Feed (Audit Log)")
-    
-    # Combine Plans and Traces for a timeline
-    timeline = []
-    for t in session_traces:
-        timeline.append({"time": t['timestamp'], "type": "GOAL", "data": t['data']})
-        
-    # Sort by time
-    # timeline.sort(key=lambda x: x['time'], reverse=True)
-
-    for item in reversed(timeline):
-        data = item['data']
-        with st.expander(f"Goal: {data.get('goal', 'Unknown')} ({data.get('duration_seconds', 0)}s)", expanded=True):
-            st.markdown(f"**Outcome:** {'✅ Success' if data.get('success') else '❌ Failed'}")
-            st.caption(f"Reason: {data.get('stop_reason')}")
-            
-            if data.get('plan'):
-                st.info(f"**Plan:** {len(data['plan']['steps'])} steps")
-            
-            if data.get('final_response'):
-                st.markdown(f"**Jarvis:** {data['final_response']}")
-
-with col2:
-    st.subheader("⚙️ Tool Execution")
-    # Show global recent tool usage if session linking isn't perfect yet
-    st.caption("Recent tool calls system-wide")
-    
-    df_obs = pd.DataFrame([x['data'] for x in observations])
-    if not df_obs.empty:
-        # Simplify view
-        df_display = df_obs[['tool_name', 'execution_status', 'duration_seconds']]
-        st.dataframe(df_display.tail(10), use_container_width=True)
+with left:
+    st.subheader("Real-Time Transcription")
+    if transcriptions:
+        rows = []
+        for row in transcriptions[-50:]:
+            data = row.get("data", {})
+            rows.append(
+                {
+                    "timestamp": row.get("timestamp"),
+                    "text": data.get("text", ""),
+                    "final": data.get("is_final", False),
+                    "confidence": data.get("confidence"),
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
     else:
-        st.write("No tools used yet.")
+        st.info("No transcription events yet.")
 
-    st.subheader("🛡️ Risk Assessments")
-    df_risk = pd.DataFrame([x['data'] for x in risks])
-    if not df_risk.empty:
-        st.line_chart(df_risk['composite_score'].tail(20))
-        latest = df_risk.iloc[-1]
-        st.metric("Current Risk Level", latest['level'], f"{latest['composite_score']:.2f}")
+    st.subheader("Action Log")
+    if actions:
+        rows = []
+        for row in actions[-100:]:
+            data = row.get("data", {})
+            rows.append(
+                {
+                    "timestamp": row.get("timestamp"),
+                    "action": data.get("action"),
+                    "status": data.get("status"),
+                    "step_id": data.get("step_id"),
+                    "duration_s": data.get("duration_s"),
+                    "error": data.get("error"),
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No action traces yet.")
 
-# Auto-refresh
-time.sleep(2)
+with right:
+    st.subheader("Agent State View")
+    if states:
+        recent = [row.get("data", {}) for row in states[-15:]]
+        df = pd.DataFrame(recent)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        if not df.empty and "state" in df.columns:
+            st.metric("Current State", str(df.iloc[-1]["state"]))
+    else:
+        st.info("No state transitions yet.")
+
+    st.subheader("Manual Override Controls")
+    if st.button("Interrupt Current Task", use_container_width=True):
+        _write_control({"interrupt": True, "ts": time.time()})
+        st.success("Interrupt signal sent.")
+
+    if st.button("Enable Failsafe (Disable Actions)", use_container_width=True):
+        _write_control({"disable_actions": True, "ts": time.time()})
+        st.success("Failsafe disable signal sent.")
+
+    if st.button("Resume Actions", use_container_width=True):
+        _write_control({"resume_actions": True, "ts": time.time()})
+        st.success("Resume signal sent.")
+
+    st.subheader("Error Trace")
+    if errors:
+        rows = []
+        for row in errors[-20:]:
+            data = row.get("data", {})
+            rows.append(
+                {
+                    "timestamp": row.get("timestamp"),
+                    "source": data.get("source"),
+                    "message": data.get("message"),
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("No errors logged.")
+
+time.sleep(1.0)
 st.rerun()
