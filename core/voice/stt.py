@@ -17,7 +17,7 @@ import io
 import logging
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Callable, Optional
 
 log = logging.getLogger("jarvis.voice.stt")
 
@@ -91,6 +91,10 @@ class STT:
     def is_ready(self) -> bool:
         return self._ready
 
+    @property
+    def is_offline(self) -> bool:
+        return True
+
     def capture_and_transcribe(self) -> Optional[TranscriptResult]:
         """
         Open mic, capture speech, transcribe.
@@ -112,6 +116,30 @@ class STT:
 
         audio_hash = hashlib.sha256(pcm_bytes).hexdigest()
         return self._transcribe(pcm_bytes, audio_hash)
+
+    def capture_and_transcribe_stream(
+        self,
+        on_partial: Optional[Callable[[str, bool], None]] = None,
+    ) -> Optional[TranscriptResult]:
+        """
+        Compatibility streaming API.
+        Returns a final transcript and optionally emits partial text segments.
+        """
+        result = self.capture_and_transcribe()
+        if result is None or on_partial is None:
+            return result
+
+        words = result.text.split()
+        if not words:
+            return result
+        if len(words) == 1:
+            on_partial(words[0], True)
+            return result
+
+        for idx in range(1, len(words)):
+            on_partial(" ".join(words[:idx]), False)
+        on_partial(result.text, True)
+        return result
 
     def _capture_audio(self) -> bytes:
         """Capture until silence or max duration. Returns raw PCM bytes."""

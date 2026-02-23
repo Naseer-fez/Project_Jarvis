@@ -21,6 +21,7 @@ class State(Enum):
     LISTENING = auto()
     TRANSCRIBING = auto()
     SPEAKING = auto()
+    INTERRUPTED = auto()
 
 
 class IllegalTransitionError(Exception):
@@ -46,9 +47,10 @@ class StateMachine:
             State.EXECUTING: {State.SPEAKING, State.IDLE, State.ERROR},
 
             # Voice flow
-            State.LISTENING: {State.TRANSCRIBING, State.IDLE, State.ERROR},
-            State.TRANSCRIBING: {State.PLANNING, State.IDLE, State.ERROR},
-            State.SPEAKING: {State.IDLE, State.ERROR},
+            State.LISTENING: {State.TRANSCRIBING, State.IDLE, State.ERROR, State.INTERRUPTED},
+            State.TRANSCRIBING: {State.PLANNING, State.IDLE, State.ERROR, State.INTERRUPTED},
+            State.SPEAKING: {State.IDLE, State.ERROR, State.INTERRUPTED},
+            State.INTERRUPTED: {State.IDLE, State.ERROR},
 
             State.ERROR: {State.IDLE},
         }

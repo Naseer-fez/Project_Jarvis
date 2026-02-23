@@ -20,6 +20,9 @@ Plan schema:
         "params": { ... }     # action-specific parameters
       }
     ],
+    "tools_required": [str],  # deduped action list
+    "risk_level": "low|medium|high|critical",
+    "confirmation_required": bool,
     "clarification_needed": bool,
     "clarification_prompt": str   # if clarification_needed
   }
@@ -29,11 +32,12 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from typing import Any
 
 import urllib.request
 import urllib.error
+
+from core.planning.plan_schema import build_unknown_plan, normalize_plan
 
 _SYSTEM_PROMPT = """You are Jarvis, a local AI assistant. Your ONLY job is to produce a JSON plan.
 
@@ -57,6 +61,9 @@ JSON schema (return exactly this structure):
       "params": {}
     }
   ],
+  "tools_required": ["<action_type>"],
+  "risk_level": "low",
+  "confirmation_required": false,
   "clarification_needed": false,
   "clarification_prompt": ""
 }
@@ -70,15 +77,6 @@ physical_actuate, sensor_read
 Never output these forbidden actions:
 shell_exec, file_delete, registry_write, format_disk, wipe_disk
 """
-
-_UNKNOWN_PLAN = {
-    "intent": "",
-    "summary": "I don't know how to do that safely.",
-    "confidence": 0.0,
-    "steps": [],
-    "clarification_needed": True,
-    "clarification_prompt": "I don't have a safe way to accomplish that request. Could you rephrase or give more detail?",
-}
 
 
 def _extract_json(text: str) -> str:
@@ -104,18 +102,6 @@ def _extract_json(text: str) -> str:
     return text
 
 
-def _validate_plan(plan: dict) -> dict:
-    """Coerce plan to expected schema. Never raises."""
-    return {
-        "intent":               str(plan.get("intent", "")),
-        "summary":              str(plan.get("summary", "No summary.")),
-        "confidence":           float(plan.get("confidence", 0.0)),
-        "steps":                plan.get("steps", []) if isinstance(plan.get("steps"), list) else [],
-        "clarification_needed": bool(plan.get("clarification_needed", False)),
-        "clarification_prompt": str(plan.get("clarification_prompt", "")),
-    }
-
-
 class TaskPlanner:
     def __init__(self, config) -> None:
         self._base_url = config.get("ollama", "base_url", fallback="http://localhost:11434")
@@ -128,10 +114,7 @@ class TaskPlanner:
         Always returns a valid plan dict — never raises.
         """
         if not intent.strip():
-            p = dict(_UNKNOWN_PLAN)
-            p["intent"] = intent
-            p["clarification_prompt"] = "Empty request received."
-            return p
+            return build_unknown_plan(intent, reason="Empty request received.")
 
         prompt = intent
         if context:
@@ -140,22 +123,17 @@ class TaskPlanner:
         try:
             raw = self._call_ollama(prompt)
         except Exception as exc:
-            p = dict(_UNKNOWN_PLAN)
-            p["intent"] = intent
-            p["clarification_prompt"] = f"LLM unavailable: {exc}"
-            return p
+            return build_unknown_plan(intent, reason=f"LLM unavailable: {exc}")
 
         try:
             json_str = _extract_json(raw)
-            plan = json.loads(json_str)
-            plan = _validate_plan(plan)
-            plan["intent"] = intent  # always echo the original
-            return plan
+            parsed = json.loads(json_str)
+            return normalize_plan(parsed, intent=intent)
         except (json.JSONDecodeError, ValueError):
-            p = dict(_UNKNOWN_PLAN)
-            p["intent"] = intent
-            p["clarification_prompt"] = "LLM returned invalid JSON. Please try rephrasing."
-            return p
+            return build_unknown_plan(
+                intent,
+                reason="LLM returned invalid JSON. Please try rephrasing.",
+            )
 
     def _call_ollama(self, prompt: str) -> str:
         """POST to Ollama /api/generate. Returns raw model response string."""

@@ -58,6 +58,7 @@ class WakeWordDetector:
         self._threshold = float(config.get("voice", "wakeword_threshold", fallback="0.5"))
         self._sample_rate = int(config.get("voice", "audio_sample_rate", fallback="16000"))
         self._chunk_ms    = int(config.get("voice", "audio_chunk_ms",    fallback="30"))
+        self._debounce_s  = float(config.get("voice", "wakeword_debounce_s", fallback="1.0"))
 
         self._backend = self._init_backend()
 
@@ -97,6 +98,10 @@ class WakeWordDetector:
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3.0)
+
+    @property
+    def is_running(self) -> bool:
+        return self._running
 
     # ── Detection loop ────────────────────────────────────────────────────────
 
@@ -141,7 +146,7 @@ class WakeWordDetector:
                         break
                     elif score > self._threshold:
                         self._fire_wake()
-                        time.sleep(1.5)  # debounce
+                        time.sleep(self._debounce_s)
                         break
 
             stream.stop_stream()
@@ -174,7 +179,7 @@ class WakeWordDetector:
                         self._fire_cancel()
                     elif self._wake_word in result:
                         self._fire_wake()
-                        time.sleep(1.5)
+                        time.sleep(self._debounce_s)
 
             stream.stop_stream()
             stream.close()

@@ -15,13 +15,17 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Tuple
 
 import core.logger as logger_mod
+from core.execution.async_task_manager import AsyncTaskManager
 from core.execution.dispatcher import DispatchResult, ToolDispatcher
 from core.hardware.serial_controller import SerialController
 from core.memory.hybrid_memory import HybridMemory
+from core.permission_matrix import PermissionMatrix
 from core.planning.task_planner import TaskPlanner
 from core.risk_evaluator import RiskEvaluator
 from core.state_machine import IllegalTransitionError, State, StateMachine
+from core.tools.registry import ToolRegistry
 from core.tools.vision import VisionTool
+from core.trace_logger import TraceLogger
 from memory.short_term import ShortTermMemory
 
 try:
@@ -46,24 +50,55 @@ class Controller:
     def __init__(self, config: configparser.ConfigParser, voice: bool = False) -> None:
         self._config = config
         self._voice_on = voice
+        self.session_id = f"session_{int(time.time())}"
 
         self.fsm = StateMachine()
         self.memory = HybridMemory(config)
         self.short_memory = ShortTermMemory(max_turns=20)
         self.planner = TaskPlanner(config)
         self.risk = RiskEvaluator(config)
+        self.permissions = PermissionMatrix(config)
         self.vision = VisionTool(config)
         self.serial = SerialController(config=config)
+        self.trace = TraceLogger(
+            output_dir=config.get("logging", "trace_dir", fallback="outputs/Jarvis-Session"),
+            session_id=self.session_id,
+        )
         self.dispatcher = ToolDispatcher(
             config=config,
             memory=self.memory,
             vision=self.vision,
             serial_controller=self.serial,
+            trace_logger=self.trace,
         )
+        self.task_manager = AsyncTaskManager(
+            max_parallel=int(config.get("concurrency", "max_parallel_tasks", fallback="3"))
+        )
+        self.tool_registry = ToolRegistry(
+            enabled_scopes={
+                s.strip()
+                for s in config.get("plugins", "enabled_scopes", fallback="core").split(",")
+                if s.strip()
+            }
+            or {"core"}
+        )
+        self._load_plugins()
 
         self._voice_loop: Optional[Any] = None
         self.fsm.add_listener(self._on_state_change)
         self._running = False
+        self._current_dispatch_future: Optional[asyncio.Future] = None
+        self._failsafe_error_count = 0
+        self._failsafe_threshold = int(config.get("risk", "failsafe_error_threshold", fallback="3"))
+        self._failsafe_auto_disable = config.getboolean(
+            "risk", "failsafe_auto_disable_on_error", fallback=True
+        )
+        self._failsafe_disabled = False
+        self._control_task: Optional[asyncio.Task] = None
+        self._control_file = Path(
+            config.get("dashboard", "control_file", fallback="runtime/control_flags.json")
+        )
+        self._control_file.parent.mkdir(parents=True, exist_ok=True)
 
     # -- Audit ------------------------------------------------------------
 
@@ -73,6 +108,7 @@ class Controller:
     def _on_state_change(self, old: State, new: State) -> None:
         log.debug(f"State: {old.name} -> {new.name}")
         self.audit("STATE_TRANSITION", {"from": old.name, "to": new.name})
+        self.trace.state(state=new.name.lower(), source="controller")
 
     # -- Planning ---------------------------------------------------------
 

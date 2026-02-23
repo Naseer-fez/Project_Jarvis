@@ -41,6 +41,7 @@ class HybridMemory:
 
     def __init__(self, config) -> None:
         self._lock = threading.RLock()
+        self._config = config
 
         data_dir = Path(config.get("memory", "data_dir", fallback="data"))
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -55,6 +56,8 @@ class HybridMemory:
         chroma_dir = config.get("memory", "chroma_dir", fallback="data/chroma")
         embedding_model = config.get("memory", "embedding_model", fallback="all-MiniLM-L6-v2")
         self._top_k = int(config.get("memory", "semantic_top_k", fallback="5"))
+        self._stale_days = int(config.get("memory", "stale_action_days", fallback="30"))
+        self._auto_cleanup = config.getboolean("memory", "decay_cleanup_on_start", fallback=True)
 
         try:
             import chromadb
@@ -71,6 +74,12 @@ class HybridMemory:
         except Exception:
             pass  # Chroma init failed — degrade gracefully
 
+        if self._auto_cleanup:
+            try:
+                self.cleanup_stale_data(max_age_days=self._stale_days)
+            except Exception:
+                pass
+
     # ── SQLite setup ──────────────────────────────────────────────────────────
 
     def _init_sqlite(self) -> None:
@@ -86,6 +95,27 @@ class HybridMemory:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_updated ON facts(updated_at)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS episodic_events (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action      TEXT NOT NULL,
+                    outcome     TEXT NOT NULL,
+                    success     INTEGER NOT NULL,
+                    ts          REAL NOT NULL,
+                    metadata    TEXT NOT NULL DEFAULT '{}'
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON episodic_events(ts)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS preferences (
+                    key         TEXT NOT NULL,
+                    value       TEXT NOT NULL,
+                    category    TEXT NOT NULL DEFAULT 'behavior_rule',
+                    updated_at  REAL NOT NULL,
+                    PRIMARY KEY (key, category)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_pref_category ON preferences(category)")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._db_path, check_same_thread=False)
@@ -122,6 +152,18 @@ class HybridMemory:
                     )
                 except Exception:
                     pass
+
+    def delete_fact(self, key: str) -> bool:
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute("DELETE FROM facts WHERE key = ?", (key,))
+                deleted = int(cur.rowcount)
+            if deleted and self._collection is not None:
+                try:
+                    self._collection.delete(ids=[key])
+                except Exception:
+                    pass
+        return bool(deleted)
 
     # ── Read ──────────────────────────────────────────────────────────────────
 
@@ -192,6 +234,111 @@ class HybridMemory:
                 return "Related facts:\n" + "\n".join(lines)
 
         return "I don't know."
+
+    def store_action(
+        self,
+        action: str,
+        outcome: str,
+        success: bool,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        payload = json.dumps(metadata or {})
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO episodic_events (action, outcome, success, ts, metadata)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (action, outcome, 1 if success else 0, time.time(), payload),
+                )
+
+    def store_failure(
+        self,
+        action: str,
+        error: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.store_action(
+            action=action,
+            outcome=error,
+            success=False,
+            metadata=metadata,
+        )
+
+    def recent_actions(self, limit: int = 20, failures_only: bool = False) -> list[dict[str, Any]]:
+        where = "WHERE success = 0" if failures_only else ""
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT action, outcome, success, ts, metadata
+                    FROM episodic_events
+                    {where}
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            out.append(
+                {
+                    "action": row["action"],
+                    "outcome": row["outcome"],
+                    "success": bool(row["success"]),
+                    "ts": float(row["ts"]),
+                    "metadata": json.loads(row["metadata"]),
+                }
+            )
+        return out
+
+    def set_preference(self, key: str, value: str, category: str = "behavior_rule") -> None:
+        now = time.time()
+        with self._lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO preferences (key, value, category, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(key, category) DO UPDATE SET
+                        value = excluded.value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, value, category, now),
+                )
+
+    def get_preferences(self, category: str | None = None) -> dict[str, str]:
+        with self._lock:
+            with self._connect() as conn:
+                if category:
+                    rows = conn.execute(
+                        """
+                        SELECT key, value
+                        FROM preferences
+                        WHERE category = ?
+                        ORDER BY updated_at DESC
+                        """,
+                        (category,),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT key, value
+                        FROM preferences
+                        ORDER BY updated_at DESC
+                        """
+                    ).fetchall()
+        return {row["key"]: row["value"] for row in rows}
+
+    def cleanup_stale_data(self, max_age_days: int | None = None) -> dict[str, int]:
+        days = self._stale_days if max_age_days is None else int(max_age_days)
+        cutoff = time.time() - (max(days, 0) * 86400)
+        with self._lock:
+            with self._connect() as conn:
+                cur = conn.execute("DELETE FROM episodic_events WHERE ts < ?", (cutoff,))
+                removed_events = int(cur.rowcount)
+        return {"episodic_removed": removed_events}
 
     def count(self) -> int:
         with self._lock:

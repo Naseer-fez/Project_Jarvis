@@ -1,4 +1,4 @@
-"""
+﻿"""
 core/execution/dispatcher.py - Secure plan step dispatcher.
 
 Maps planner actions to explicit Python handlers. No dynamic eval/exec.
@@ -6,10 +6,12 @@ Maps planner actions to explicit Python handlers. No dynamic eval/exec.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import platform
 import re
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +26,9 @@ class DispatchResult:
     output: str
     error: str | None = None
     duration_s: float = 0.0
+    rolled_back: bool = False
+    timed_out: bool = False
+    cancelled: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -33,15 +38,48 @@ class DispatchResult:
             "output": self.output,
             "error": self.error,
             "duration_s": round(self.duration_s, 3),
+            "rolled_back": self.rolled_back,
+            "timed_out": self.timed_out,
+            "cancelled": self.cancelled,
         }
 
 
 class ToolDispatcher:
-    def __init__(self, config, memory=None, vision=None, serial_controller=None) -> None:
+    def __init__(
+        self,
+        config,
+        memory=None,
+        vision=None,
+        serial_controller=None,
+        trace_logger=None,
+    ) -> None:
         self._config = config
         self._memory = memory
         self._vision = vision
         self._serial = serial_controller
+        self._trace = trace_logger
+
+        self._sandboxed_execution = config.getboolean(
+            "execution", "sandboxed_execution", fallback=True
+        )
+        self._rollback_support = config.getboolean(
+            "execution", "rollback_support", fallback=True
+        )
+        self._timeout_handling = config.getboolean(
+            "execution", "timeout_handling", fallback=True
+        )
+        self._step_timeout_s = float(
+            config.get("execution", "step_timeout_s", fallback="20")
+        )
+        self._stop_on_failure = config.getboolean(
+            "execution", "stop_on_failure", fallback=False
+        )
+        self._rollback_on_failure = config.getboolean(
+            "execution", "rollback_on_failure", fallback=True
+        )
+        workers = int(config.get("execution", "max_step_workers", fallback="4"))
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers))
+        self._cancel_event = threading.Event()
 
         self._safe_dirs = self._load_safe_dirs()
         self._default_root = self._safe_dirs[0]
@@ -85,7 +123,11 @@ class ToolDispatcher:
             "vision_analyze": self._vision_analyze,
             "screen_capture": self._screen_capture,
             "screen_understand": self._screen_understand,
+            "screen_stream_sample": self._screen_stream_sample,
+            "vision_detect_objects": self._vision_detect_objects,
+            "vision_detect_ui": self._vision_detect_ui,
             "vision_click": self._vision_click,
+            "vision_to_action_bridge": self._vision_click,
             "gui_click": self._gui_click,
             "gui_type": self._gui_type,
             "gui_hotkey": self._gui_hotkey,
@@ -100,6 +142,19 @@ class ToolDispatcher:
             # Optional real-time data
             "web_search": self._web_search,
         }
+
+    def register_action(
+        self,
+        action_name: str,
+        handler: Callable[[dict[str, Any]], str],
+    ) -> None:
+        self._action_map[action_name.strip().lower()] = handler
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+    def clear_cancel(self) -> None:
+        self._cancel_event.clear()
 
     def execute_plan(self, plan: dict[str, Any]) -> list[DispatchResult]:
         """
@@ -118,7 +173,21 @@ class ToolDispatcher:
             ]
 
         results: list[DispatchResult] = []
+        rollback_stack: list[Callable[[], None]] = []
         for idx, step in enumerate(steps, start=1):
+            if self._cancel_event.is_set():
+                cancelled_result = DispatchResult(
+                    step_id=idx,
+                    action="cancelled",
+                    success=False,
+                    output="",
+                    error="Execution cancelled.",
+                    cancelled=True,
+                )
+                results.append(cancelled_result)
+                self._trace_action(cancelled_result)
+                break
+
             step_id = idx
             action = "unknown"
             params: dict[str, Any] = {}
@@ -132,42 +201,174 @@ class ToolDispatcher:
             t0 = time.monotonic()
             handler = self._action_map.get(action)
             if handler is None:
-                results.append(
-                    DispatchResult(
-                        step_id=step_id,
-                        action=action,
-                        success=False,
-                        output="",
-                        error=f"Action '{action}' is not mapped to a dispatcher handler.",
-                        duration_s=time.monotonic() - t0,
-                    )
+                rolled = self._rollback(rollback_stack) if self._should_rollback() else False
+                result = DispatchResult(
+                    step_id=step_id,
+                    action=action,
+                    success=False,
+                    output="",
+                    error=f"Action '{action}' is not mapped to a dispatcher handler.",
+                    duration_s=time.monotonic() - t0,
+                    rolled_back=rolled,
                 )
+                results.append(result)
+                self._trace_action(result)
+                if self._stop_on_failure:
+                    break
                 continue
 
+            rollback_cb = self._prepare_rollback(action, params)
             try:
-                output = handler(params)
-                results.append(
-                    DispatchResult(
-                        step_id=step_id,
-                        action=action,
-                        success=True,
-                        output=str(output),
-                        duration_s=time.monotonic() - t0,
-                    )
+                output = self._run_step(handler, params)
+                if rollback_cb is not None:
+                    rollback_stack.append(rollback_cb)
+                result = DispatchResult(
+                    step_id=step_id,
+                    action=action,
+                    success=True,
+                    output=str(output),
+                    duration_s=time.monotonic() - t0,
+                )
+            except TimeoutError as exc:
+                rolled = self._rollback(rollback_stack) if self._should_rollback() else False
+                result = DispatchResult(
+                    step_id=step_id,
+                    action=action,
+                    success=False,
+                    output="",
+                    error=str(exc),
+                    duration_s=time.monotonic() - t0,
+                    rolled_back=rolled,
+                    timed_out=True,
+                )
+            except RuntimeError as exc:
+                rolled = self._rollback(rollback_stack) if self._should_rollback() else False
+                result = DispatchResult(
+                    step_id=step_id,
+                    action=action,
+                    success=False,
+                    output="",
+                    error=str(exc),
+                    duration_s=time.monotonic() - t0,
+                    rolled_back=rolled,
+                    cancelled="cancelled" in str(exc).lower(),
                 )
             except Exception as exc:
-                results.append(
-                    DispatchResult(
-                        step_id=step_id,
-                        action=action,
-                        success=False,
-                        output="",
-                        error=str(exc),
-                        duration_s=time.monotonic() - t0,
-                    )
+                rolled = self._rollback(rollback_stack) if self._should_rollback() else False
+                result = DispatchResult(
+                    step_id=step_id,
+                    action=action,
+                    success=False,
+                    output="",
+                    error=str(exc),
+                    duration_s=time.monotonic() - t0,
+                    rolled_back=rolled,
                 )
 
+            results.append(result)
+            self._trace_action(result)
+            if not result.success and self._stop_on_failure:
+                break
+
         return results
+
+    # -- Internal execution helpers --------------------------------------
+
+    def _run_step(self, handler: Callable[[dict[str, Any]], str], params: dict[str, Any]) -> str:
+        if not self._timeout_handling:
+            if self._cancel_event.is_set():
+                raise RuntimeError("Execution cancelled.")
+            return str(handler(params))
+
+        start = time.monotonic()
+        future = self._executor.submit(handler, params)
+        while True:
+            if self._cancel_event.is_set():
+                future.cancel()
+                raise RuntimeError("Execution cancelled.")
+
+            elapsed = time.monotonic() - start
+            if elapsed > self._step_timeout_s:
+                future.cancel()
+                raise TimeoutError(f"Step timed out after {self._step_timeout_s:.1f}s.")
+
+            try:
+                return str(future.result(timeout=0.05))
+            except concurrent.futures.TimeoutError:
+                continue
+
+    def _prepare_rollback(self, action: str, params: dict[str, Any]) -> Callable[[], None] | None:
+        if not self._rollback_support:
+            return None
+
+        if action in ("file_write", "write_file"):
+            path = self._resolve_safe_path(str(params.get("path", "")), for_write=True)
+            existed = path.exists() and path.is_file()
+            previous = ""
+            if existed:
+                previous = path.read_text(encoding="utf-8", errors="replace")
+
+            def _undo_file() -> None:
+                if existed:
+                    path.write_text(previous, encoding="utf-8")
+                elif path.exists():
+                    path.unlink()
+
+            return _undo_file
+
+        if action in ("memory_write", "store_fact") and self._memory is not None:
+            key = str(params.get("key", "")).strip()
+            if not key:
+                return None
+            previous = self._memory.get_fact(key) if hasattr(self._memory, "get_fact") else None
+
+            def _undo_memory() -> None:
+                if previous is None:
+                    if hasattr(self._memory, "delete_fact"):
+                        self._memory.delete_fact(key)
+                    return
+                self._memory.store_fact(
+                    previous.key,
+                    previous.value,
+                    source=previous.source,
+                    metadata=previous.metadata,
+                )
+
+            return _undo_memory
+
+        return None
+
+    def _should_rollback(self) -> bool:
+        return self._rollback_support and self._rollback_on_failure
+
+    def _rollback(self, rollback_stack: list[Callable[[], None]]) -> bool:
+        if not rollback_stack:
+            return False
+        ok = True
+        while rollback_stack:
+            rollback_fn = rollback_stack.pop()
+            try:
+                rollback_fn()
+            except Exception:
+                ok = False
+        return ok
+
+    def _trace_action(self, result: DispatchResult) -> None:
+        if self._trace is None:
+            return
+        status = "success" if result.success else "failure"
+        self._trace.action(
+            action=result.action,
+            status=status,
+            **result.to_dict(),
+        )
+        if not result.success:
+            self._trace.error(
+                source="dispatcher",
+                message=result.error or "Action failed",
+                action=result.action,
+                step_id=result.step_id,
+            )
 
     # -- Security helpers -------------------------------------------------
 
@@ -205,6 +406,11 @@ class ToolDispatcher:
             candidate = (self._default_root / candidate).resolve()
         else:
             candidate = candidate.resolve()
+
+        if not self._sandboxed_execution:
+            if for_write:
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+            return candidate
 
         for root in self._safe_dirs:
             try:
@@ -348,6 +554,57 @@ class ToolDispatcher:
         path, _ = self._capture_screen_image(output_path=output_path, capture_mode=capture_mode)
         description = self._vision.analyze(str(path), prompt=prompt)
         return f"Screenshot: {path}\nVision:\n{description}"
+
+    def _screen_stream_sample(self, params: dict[str, Any]) -> str:
+        """
+        Capture multiple frames for lightweight live screen ingestion.
+        """
+        frames = int(params.get("frames", 3))
+        interval_s = float(params.get("interval_s", 0.5))
+        prefix = str(params.get("prefix", "stream_frame")).strip() or "stream_frame"
+        capture_mode = str(params.get("capture_mode", "active_monitor")).strip().lower()
+        frames = max(1, min(frames, 20))
+
+        captured: list[str] = []
+        for idx in range(frames):
+            output_path = f"{prefix}_{int(time.time())}_{idx}.png"
+            path, _ = self._capture_screen_image(output_path=output_path, capture_mode=capture_mode)
+            captured.append(str(path))
+            if idx < frames - 1:
+                time.sleep(max(0.0, interval_s))
+        return "Sampled frames:\n" + "\n".join(captured)
+
+    def _vision_detect_objects(self, params: dict[str, Any]) -> str:
+        if self._vision is None:
+            raise RuntimeError("Vision tool unavailable.")
+        path = str(params.get("path", "")).strip()
+        if not path:
+            sampled, _ = self._capture_screen_image(
+                output_path=f"objects_{int(time.time())}.png",
+                capture_mode=str(params.get("capture_mode", "active_monitor")).strip().lower(),
+            )
+            path = str(sampled)
+        prompt = (
+            "Detect major objects. Return JSON array entries with "
+            "label, confidence (0-1), and bbox [x,y,w,h]."
+        )
+        return str(self._vision.analyze(path, prompt=prompt))
+
+    def _vision_detect_ui(self, params: dict[str, Any]) -> str:
+        if self._vision is None:
+            raise RuntimeError("Vision tool unavailable.")
+        path = str(params.get("path", "")).strip()
+        if not path:
+            sampled, _ = self._capture_screen_image(
+                output_path=f"ui_{int(time.time())}.png",
+                capture_mode=str(params.get("capture_mode", "active_monitor")).strip().lower(),
+            )
+            path = str(sampled)
+        prompt = (
+            "Detect actionable UI elements. Return JSON array entries with "
+            "type, label, confidence (0-1), and bbox [x,y,w,h]."
+        )
+        return str(self._vision.analyze(path, prompt=prompt))
 
     def _vision_click(self, params: dict[str, Any]) -> str:
         """
