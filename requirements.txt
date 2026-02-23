@@ -1,20 +1,39 @@
-# ── V1 Core ──────────────────────────────────────────────────────────────────
-ollama>=0.2.0
-chromadb>=0.5.0
-sentence-transformers>=3.0.0
+# =============================
+# Project Jarvis – ALL-IN-ONE
+# Windows Safe | NO MSVC
+# =============================
 
-# ── V2 Voice ──────────────────────────────────────────────────────────────────
-faster-whisper>=1.0.0
-openwakeword>=0.6.0
-piper-tts>=1.2.0
-sounddevice>=0.4.6
-soundfile>=0.12.1
-webrtcvad>=2.0.10
-pyaudio>=0.2.13
-numpy>=1.24.0
+# ---- Core runtime ----
+pydantic
+fastapi
+uvicorn
+requests
+aiohttp
+python-dotenv
+rich
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
-colorama>=0.4.6
+# ---- LLM + Memory ----
+ollama
+chromadb
+sentence-transformers
+numpy
 
-streamlit>=1.30.0
-pandas>=2.0.0
+# ---- Logging / Audit ----
+cryptography
+
+# ---- Testing ----
+pytest
+pytest-asyncio
+pytest-mock
+
+# ---- Dev / Quality ----
+mypy
+black
+ruff
+types-requests
+types-setuptools
+
+# ---- Voice (NO native build) ----
+sounddevice
+soundfile
+whispercpp
