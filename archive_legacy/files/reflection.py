@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from core.agentic.agent_context import AgentContext
-    from core.agentic.mission import core.autonomy.goals
+    from core.agentic.mission import Mission
 
 
 def _utcnow() -> datetime:
@@ -107,7 +107,7 @@ class ReflectionEngine:
         Call this immediately after a mission reaches a terminal state.
         """
         import uuid
-        from core.agentic.mission import core.autonomy.goalsStatus
+        from core.agentic.mission import MissionStatus
 
         conf_before = context.confidence_score
         risk_before = context.risk_score
@@ -150,7 +150,7 @@ class ReflectionEngine:
         risk: float,
         max_retries: int,
     ) -> tuple[ReflectionVerdict, str, list[str], float, float]:
-        from core.agentic.mission import core.autonomy.goalsStatus
+        from core.agentic.mission import MissionStatus
 
         lessons: list[str] = []
 

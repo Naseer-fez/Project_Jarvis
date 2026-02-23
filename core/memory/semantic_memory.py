@@ -24,8 +24,12 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
-import chromadb
-from chromadb.config import Settings
+try:
+    import chromadb
+    from chromadb.config import Settings
+except Exception:
+    chromadb = None  # type: ignore[assignment]
+    Settings = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +66,7 @@ class SemanticMemory:
         self.model_name  = model_name
         # typed as Any because SentenceTransformer is imported lazily
         self._model: Any = None
-        self._client: Optional[chromadb.ClientAPI] = None
+        self._client: Any = None
         self._collections: Dict[str, Any] = {}
         self._initialized = False
 
@@ -75,7 +79,11 @@ class SemanticMemory:
         """
         if self._initialized:
             return True
-            
+
+        if chromadb is None or Settings is None:
+            logger.warning("ChromaDB is not installed; semantic memory disabled.")
+            return False
+             
         try:
             logger.info(f"Loading embedding model: {self.model_name}")
             from sentence_transformers import SentenceTransformer

@@ -1,36 +1,48 @@
-#!/usr/bin/env python3
+from __future__ import annotations
 
-# Copyright (c) Facebook, Inc. and its affiliates.
-# All rights reserved.
-#
-# This source code is licensed under the BSD-style license found in the
-# LICENSE file in the root directory of this source tree.
+import configparser
+from pathlib import Path
+from typing import Any
 
-import logging
-
-from torch.distributed._shard.sharded_tensor.logging_handlers import _log_handlers
+import core.logger as _core_logger
+from core.logger import AuditLog
 
 
-__all__: list[str] = []
+def setup(
+    config_or_name: configparser.ConfigParser | str = "Jarvis",
+    level: str | int = "INFO",
+    log_file: str | Path | None = None,
+):
+    return _core_logger.setup(config_or_name=config_or_name, level=level, log_file=log_file)
 
 
-def _get_or_create_logger() -> logging.Logger:
-    logging_handler, log_handler_name = _get_logging_handler()
-    logger = logging.getLogger(f"sharding-spec-{log_handler_name}")
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        "%(asctime)s %(filename)s:%(lineno)s %(levelname)s p:%(processName)s t:%(threadName)s: %(message)s"
-    )
-    logging_handler.setFormatter(formatter)
-    logger.propagate = False
-    logger.addHandler(logging_handler)
-    return logger
+def get(name: str | None = None):
+    return _core_logger.get(name=name)
 
 
-def _get_logging_handler(
-    destination: str = "default",
-) -> tuple[logging.Handler, str]:
-    log_handler = _log_handlers[destination]
-    log_handler_name = type(log_handler).__name__
-    return (log_handler, log_handler_name)
+def get_logger(name: str = "Jarvis"):
+    return _core_logger.get_logger(name=name)
 
+
+def audit(event_type: str, payload: dict[str, Any]):
+    return _core_logger.audit(event_type=event_type, payload=payload)
+
+
+def verify_audit():
+    return _core_logger.verify_audit()
+
+
+def __getattr__(name: str):
+    if name == "_audit":
+        return _core_logger._audit
+    raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+__all__ = [
+    "AuditLog",
+    "setup",
+    "get",
+    "get_logger",
+    "audit",
+    "verify_audit",
+]
