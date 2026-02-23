@@ -473,3 +473,4 @@ class TestSerialControllerStub:
         from core.hardware.serial_controller import SerialController
         sc = SerialController()
         assert sc.is_connected is False
+

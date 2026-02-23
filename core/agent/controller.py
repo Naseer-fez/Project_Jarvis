@@ -322,3 +322,4 @@ class MainController:
         print("\n[Jarvis] Saving session artifacts...")
         self.audit.log_memory_snapshot(self.memory.snapshot())
         print("[Jarvis] Shut down complete.")
+

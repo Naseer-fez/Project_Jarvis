@@ -132,3 +132,4 @@ class BaseIntegration(abc.ABC):
             error=f"Integration error [{self.tool_name}]: {type(exc).__name__}: {exc}",
             tool_name=self.tool_name,
         )
+

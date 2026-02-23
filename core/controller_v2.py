@@ -4,7 +4,7 @@ core/controller_v2.py
 Orchestration layer for Jarvis Session 4.
 """
 import uuid
-from memory.hybrid_memory import HybridMemory
+from core.memory.hybrid_memory import HybridMemory
 from core.llm.llm_v2 import LLMClientV2
 
 class JarvisControllerV2:
@@ -65,3 +65,4 @@ class JarvisControllerV2:
 
     def session_summary(self):
         return {"session_id": self.session_id, "exchanges": self.exchanges}
+

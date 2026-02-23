@@ -139,3 +139,4 @@ class AsyncTaskManager:
                 self._records[task_id].error = str(exc)
             finally:
                 self._running.pop(task_id, None)
+

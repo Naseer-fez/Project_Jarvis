@@ -112,3 +112,4 @@ class ContextCompressor:
             for item in items:
                 lines.append(f"    ✓ INCLUDED | score={item.get('score', 0):.3f}")
         return "\n".join(lines)
+

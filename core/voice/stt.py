@@ -252,3 +252,4 @@ class STT:
         except Exception as exc:
             log.error(f"Transcription failed: {exc}")
             return None
+

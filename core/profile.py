@@ -109,3 +109,4 @@ class UserProfileEngine:
         self.profile["last_updated"] = datetime.utcnow().isoformat()
         self._save()
         logger.info("User profile updated and saved.")
+

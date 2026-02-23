@@ -358,3 +358,4 @@ class VoiceLoop:
 
     def _tts_print(self, text: str) -> None:
         print(f"{Fore.YELLOW}{text}{Style.RESET_ALL}")
+

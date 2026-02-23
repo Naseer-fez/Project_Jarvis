@@ -275,3 +275,4 @@ class AgentLoopEngine:
             logger.error(f"Reflection LLM call failed: {e}")
             return "I completed the task. Check the execution trace for details."
 
+

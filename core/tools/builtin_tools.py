@@ -143,3 +143,4 @@ def register_all_tools(router):
     router.register("log_event", log_event)
     logger.info(f"Registered {len(router.registered_tools())} tools: {router.registered_tools()}")
 
+

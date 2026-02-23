@@ -83,3 +83,4 @@ class SerialController:
     @property
     def enabled(self) -> bool:
         return self._enabled
+

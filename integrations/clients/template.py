@@ -66,3 +66,4 @@ class CustomApi2Integration(BaseIntegration):
             return self._offline_result()
         except Exception as exc:              # noqa: BLE001
             return self._error_result(exc)
+

@@ -194,3 +194,4 @@ def test_async_task_manager_priority_and_cancel():
         assert order[0] == "high"
 
     asyncio.run(_run())
+

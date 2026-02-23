@@ -123,7 +123,7 @@ class TestSemanticMemory(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmpdir = tempfile.mkdtemp()
-        from memory.semantic_memory import SemanticMemory
+        from core.memory.semantic_memory import SemanticMemory
         cls.sm = SemanticMemory(
             chroma_path=cls.tmpdir,
             model_name="all-MiniLM-L6-v2",
@@ -217,7 +217,7 @@ class TestHybridMemory(unittest.TestCase):
     def setUpClass(cls):
         cls.tmpdir  = tempfile.mkdtemp()
         cls.db_path = os.path.join(cls.tmpdir, "test_memory.db")
-        from memory.hybrid_memory import HybridMemory
+        from core.memory.hybrid_memory import HybridMemory
         cls.hm = HybridMemory(
             db_path=cls.db_path,
             chroma_path=os.path.join(cls.tmpdir, "chroma"),
@@ -442,4 +442,5 @@ if __name__ == "__main__":
     print("=" * 60)
 
     sys.exit(0 if result.wasSuccessful() else 1)
+
 

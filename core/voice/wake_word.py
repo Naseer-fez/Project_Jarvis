@@ -197,3 +197,4 @@ class WakeWordDetector:
             if self._running:
                 log.debug("Dummy wake word backend: firing synthetic wake event")
                 self._fire_wake()
+

@@ -109,3 +109,4 @@ def test_dispatcher_sensor_read_builds_read_command(serial_cfg):
     assert results[0].success is True
     assert fake.commands == ["READ:TEMP"]
     assert "24.6C" in results[0].output
+

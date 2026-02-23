@@ -1,151 +1,189 @@
 """
-RiskEvaluator — heuristic weighted-sum risk scoring.
+core/risk_evaluator.py — Stateless, table-driven risk scorer.
 
-Risk inputs:
-  - intent_risk:   inferred from the user's goal description
-  - tool_risk:     based on the specific tool being used
-  - profile_risk:  based on configured autonomy level
-  - environment_risk: based on operational context
+Given a list of action strings from the planner, returns a RiskResult.
+No side effects. No LLM calls. Deterministic.
 
-Risk thresholds:
-  0.00 – 0.40 → SAFE (execute)
-  0.40 – 0.60 → REVIEW (log warning)
-  0.60 – 0.75 → CONFIRM (require user OK)
-  0.75+       → BLOCK (refuse)
+Risk levels (ascending): LOW < MEDIUM < HIGH < CRITICAL
 """
 
-import logging
-from dataclasses import dataclass
-from enum import Enum
-from typing import Optional
+from __future__ import annotations
 
-logger = logging.getLogger("Jarvis.RiskEvaluator")
-
-
-class RiskLevel(Enum):
-    SAFE = "safe"
-    REVIEW = "review"
-    CONFIRM = "confirm"
-    BLOCK = "block"
+from dataclasses import dataclass, field
+from enum import IntEnum
+from typing import Sequence
 
 
-# Tool-level base risk scores
-TOOL_RISK_MAP: dict[str, float] = {
-    # Read-only tools — very low risk
-    "get_time": 0.0,
-    "get_system_stats": 0.05,
-    "list_directory": 0.05,
-    "read_file": 0.1,
-    "search_memory": 0.05,
-    # Write tools — elevated risk
-    "write_file_safe": 0.6,
-    "log_event": 0.2,
-    # Unknown tools
-    "__unknown__": 0.8,
-}
+class RiskLevel(IntEnum):
+    LOW = 0
+    MEDIUM = 1
+    HIGH = 2
+    CRITICAL = 3
+    # Backward-compatibility alias used by older tests/code paths.
+    FORBIDDEN = 3
 
-# Keywords that raise intent risk
-DANGEROUS_INTENT_KEYWORDS = [
-    "delete", "remove", "erase", "overwrite", "shutdown", "reboot",
-    "format", "kill", "terminate", "sudo", "admin", "password", "secret",
-]
-
-ELEVATED_INTENT_KEYWORDS = [
-    "write", "modify", "update", "change", "edit", "create", "install",
-]
-
-WEIGHTS = {
-    "intent_risk": 0.30,
-    "tool_risk": 0.40,
-    "profile_risk": 0.20,
-    "environment_risk": 0.10,
-}
-
-THRESHOLDS = {
-    RiskLevel.SAFE: 0.40,
-    RiskLevel.REVIEW: 0.60,
-    RiskLevel.CONFIRM: 0.75,
-}
+    def label(self) -> str:
+        if int(self) == int(RiskLevel.CRITICAL):
+            return "CRITICAL"
+        return self.name
 
 
-@dataclass
-class RiskReport:
-    intent_risk: float
-    tool_risk: float
-    profile_risk: float
-    environment_risk: float
-    composite_score: float
+@dataclass(frozen=True)
+class RiskResult:
     level: RiskLevel
-    explanation: str
+    blocking_actions: list[str]      = field(default_factory=list)
+    high_risk_actions: list[str]     = field(default_factory=list)
+    reasons: list[str]               = field(default_factory=list)
+
+    @property
+    def is_blocked(self) -> bool:
+        return self.level >= RiskLevel.CRITICAL
+
+    @property
+    def requires_confirmation(self) -> bool:
+        return self.level >= RiskLevel.MEDIUM and not self.is_blocked
+
+    def summary(self) -> str:
+        parts = [f"Risk: {self.level.label()}"]
+        if self.blocking_actions:
+            parts.append(f"BLOCKED: {', '.join(self.blocking_actions)}")
+        if self.high_risk_actions:
+            parts.append(f"HIGH: {', '.join(self.high_risk_actions)}")
+        if self.reasons:
+            parts.append(" | ".join(self.reasons))
+        return " — ".join(parts)
 
 
 class RiskEvaluator:
-    def __init__(self, autonomy_level: int = 1):
-        self.autonomy_level = autonomy_level  # 0-3
+    """
+    Evaluate risk of a plan.
 
-    def evaluate(
-        self,
-        goal: str,
-        tool_name: Optional[str] = None,
-        step_description: str = "",
-    ) -> RiskReport:
-        intent_risk = self._score_intent(goal + " " + step_description)
-        tool_risk = self._score_tool(tool_name)
-        profile_risk = self._score_profile()
-        environment_risk = 0.05  # Default low environment risk
+    Action classification is loaded from config but falls back to sensible
+    built-in defaults so the evaluator always works even without config.
+    """
 
-        composite = (
-            intent_risk * WEIGHTS["intent_risk"]
-            + tool_risk * WEIGHTS["tool_risk"]
-            + profile_risk * WEIGHTS["profile_risk"]
-            + environment_risk * WEIGHTS["environment_risk"]
+    _DEFAULT_CRITICAL = frozenset({
+        "shell_exec", "shell", "exec", "subprocess",
+        "file_delete", "delete_file", "rm", "rmdir",
+        "registry_write", "registry_delete",
+        "network_request", "http_get", "http_post", "curl", "wget",
+        "format_disk", "wipe",
+    })
+
+    _DEFAULT_HIGH = frozenset({
+        "file_write", "write_file", "save_file",
+        "process_spawn", "spawn_process", "popen",
+        "app_open",
+        "serial_send", "serial_write",
+        "physical_actuate", "actuate", "motor_command",
+        "vision_click",
+        "gui_click", "gui_type", "gui_hotkey",
+        "system_config", "set_config", "env_write",
+        "install_package", "pip_install",
+    })
+
+    _DEFAULT_MEDIUM = frozenset({
+        "file_read", "read_file", "open_file",
+        "screen_capture", "screenshot",
+        "screen_understand",
+        "sensor_read",
+        "web_search",
+        "ui_interaction", "click", "type_text", "key_press",
+        "notification", "send_notification",
+    })
+
+    _DEFAULT_LOW = frozenset({
+        "memory_read", "memory_write", "recall", "store_fact",
+        "speak", "tts", "display", "print",
+        "status", "health_check", "system_stats", "vision_analyze",
+    })
+
+    def __init__(self, config=None) -> None:
+        self._critical = set(self._DEFAULT_CRITICAL)
+        self._high = set(self._DEFAULT_HIGH)
+        self._medium = set(self._DEFAULT_MEDIUM)
+        self._low = set(self._DEFAULT_LOW)
+
+        if config is not None:
+            self._load_config(config)
+
+    def _load_config(self, config) -> None:
+        def _parse(section: str, key: str) -> set[str]:
+            raw = config.get(section, key, fallback="")
+            return {a.strip().lower() for a in raw.split(",") if a.strip()}
+
+        critical = _parse("risk", "critical_actions")
+        if not critical:
+            critical = _parse("risk", "forbidden_actions")
+        high = _parse("risk", "high_risk_actions")
+        medium = _parse("risk", "medium_risk_actions")
+        low = _parse("risk", "low_risk_actions")
+
+        if critical:
+            self._critical = critical
+        if high:
+            self._high = high
+        if medium:
+            self._medium = medium
+        if low:
+            self._low = low
+
+    def evaluate(self, actions: Sequence[str]) -> RiskResult:
+        """Evaluate a list of action names. Returns a RiskResult."""
+        if not actions:
+            return RiskResult(
+                level=RiskLevel.LOW,
+                reasons=["No actions — trivial plan"],
+            )
+
+        blocking: list[str] = []
+        high_risk: list[str] = []
+        reasons: list[str] = []
+        max_level = RiskLevel.LOW
+
+        for raw_action in actions:
+            action = raw_action.strip().lower()
+
+            if action in self._critical:
+                blocking.append(action)
+                max_level = RiskLevel.CRITICAL
+                reasons.append(f"'{action}' is critical and blocked")
+
+            elif action in self._high:
+                high_risk.append(action)
+                if max_level < RiskLevel.HIGH:
+                    max_level = RiskLevel.HIGH
+                reasons.append(f"'{action}' is high-risk")
+
+            elif action in self._medium:
+                if max_level < RiskLevel.MEDIUM:
+                    max_level = RiskLevel.MEDIUM
+                reasons.append(f"'{action}' requires confirmation")
+
+            elif action in self._low:
+                pass  # stays LOW
+            else:
+                # Unknown action — treat as HIGH by default (conservative)
+                high_risk.append(action)
+                if max_level < RiskLevel.HIGH:
+                    max_level = RiskLevel.HIGH
+                reasons.append(f"'{action}' is unknown — treated as high-risk")
+
+        return RiskResult(
+            level=max_level,
+            blocking_actions=blocking,
+            high_risk_actions=high_risk,
+            reasons=reasons,
         )
-        composite = round(min(composite, 1.0), 4)
-        level = self._classify(composite)
 
-        explanation = (
-            f"intent={intent_risk:.2f}, tool={tool_risk:.2f}, "
-            f"profile={profile_risk:.2f}, env={environment_risk:.2f} "
-            f"→ composite={composite:.2f} [{level.value.upper()}]"
-        )
-        logger.info(f"Risk assessment: {explanation}")
-
-        return RiskReport(
-            intent_risk=intent_risk,
-            tool_risk=tool_risk,
-            profile_risk=profile_risk,
-            environment_risk=environment_risk,
-            composite_score=composite,
-            level=level,
-            explanation=explanation,
-        )
-
-    def _score_intent(self, text: str) -> float:
-        text_lower = text.lower()
-        for kw in DANGEROUS_INTENT_KEYWORDS:
-            if kw in text_lower:
-                return 0.85
-        for kw in ELEVATED_INTENT_KEYWORDS:
-            if kw in text_lower:
-                return 0.45
-        return 0.1
-
-    def _score_tool(self, tool_name: Optional[str]) -> float:
-        if tool_name is None:
-            return 0.0
-        return TOOL_RISK_MAP.get(tool_name, TOOL_RISK_MAP["__unknown__"])
-
-    def _score_profile(self) -> float:
-        # Higher autonomy level → agent is more trusted → lower profile risk
-        profile_risk_by_level = {0: 0.8, 1: 0.5, 2: 0.3, 3: 0.2}
-        return profile_risk_by_level.get(self.autonomy_level, 0.5)
-
-    def _classify(self, score: float) -> RiskLevel:
-        if score >= THRESHOLDS[RiskLevel.CONFIRM]:
-            return RiskLevel.BLOCK
-        if score >= THRESHOLDS[RiskLevel.REVIEW]:
-            return RiskLevel.CONFIRM
-        if score >= THRESHOLDS[RiskLevel.SAFE]:
-            return RiskLevel.REVIEW
-        return RiskLevel.SAFE
+    def evaluate_plan(self, plan: dict) -> RiskResult:
+        """Convenience: evaluate a full plan dict as produced by the planner."""
+        steps = plan.get("steps", [])
+        actions = []
+        for step in steps:
+            if isinstance(step, dict):
+                action = step.get("action", step.get("type", ""))
+                if action:
+                    actions.append(action)
+        return self.evaluate(actions)
 

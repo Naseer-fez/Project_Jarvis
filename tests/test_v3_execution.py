@@ -84,3 +84,4 @@ def test_serial_controller_disabled_by_default(v3_config):
     serial = SerialController(config=v3_config)
     with pytest.raises(NotImplementedError):
         serial.send("LED_ON")
+

@@ -161,3 +161,4 @@ def test_dispatcher_vision_click_blocked_when_gui_disabled(phase_cfg):
     )
     assert results[0].success is False
     assert "disabled by config" in (results[0].error or "")
+

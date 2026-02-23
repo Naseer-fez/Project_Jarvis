@@ -181,3 +181,4 @@ class TTS:
             print(f"\n{Fore.CYAN}Jarvis:{Style.RESET_ALL} {text}")
         else:
             print(f"\n{Fore.CYAN}Jarvis ({label}):{Style.RESET_ALL} {text}")
+

@@ -56,3 +56,4 @@ class CommandSafetyGate:
         # Unknown command — allow but log
         logger.info(f"SAFETY: Unknown command '{first_word}' — allowing with log")
         return {"allowed": True, "reason": "passed safety check"}
+

@@ -28,3 +28,4 @@ class LLMClientV2:
             return "LLM Offline."
         except requests.exceptions.RequestException:
             return "LLM Offline."
+

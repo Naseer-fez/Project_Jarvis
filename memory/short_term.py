@@ -41,3 +41,4 @@ class ShortTermMemory:
 
     def __len__(self):
         return len(self._buffer)
+

@@ -90,3 +90,4 @@ class ProfileSynthesizer:
         except Exception as e:
             logger.error(f"Synthesis failed: {e}")
             return None
+

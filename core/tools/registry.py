@@ -67,3 +67,4 @@ class ToolRegistry:
 
     def list_specs(self) -> list[ToolSpec]:
         return [self._tools[name] for name in sorted(self._tools.keys())]
+

@@ -215,3 +215,4 @@ class TestApiRegistry:
         from integrations import api_registry  # noqa: PLC0415
         tools = api_registry.list_tools()
         assert tools.get("get_current_weather") == "READ_ONLY_TOOLS"
+

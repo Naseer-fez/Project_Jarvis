@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/execution/dispatcher.py - Secure plan step dispatcher.
 
 Maps planner actions to explicit Python handlers. No dynamic eval/exec.
@@ -914,3 +914,4 @@ class ToolDispatcher:
         except Exception as exc:
             return f"Web search error: {exc}"
         return "\n".join(lines) if lines else "No web results found."
+

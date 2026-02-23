@@ -205,3 +205,4 @@ class WeatherIntegration(BaseIntegration):
             )
         except OSError as exc:
             logger.warning("weather_api: could not write cache — %s", exc)
+

@@ -102,3 +102,4 @@ class PermissionMatrix:
 
     def requires_confirmation(self, action: str) -> bool:
         return action.strip().lower() in self._confirm_actions
+

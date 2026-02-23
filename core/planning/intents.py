@@ -104,3 +104,4 @@ class IntentClassifierV2:
             return {"intent": Intent.META.value, "confidence": 0.9}
 
         return {"intent": Intent.CHAT.value, "confidence": 0.75}
+

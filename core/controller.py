@@ -26,7 +26,7 @@ from core.state_machine import IllegalTransitionError, State, StateMachine
 from core.tools.registry import ToolRegistry
 from core.tools.vision import VisionTool
 from core.trace_logger import TraceLogger
-from memory.short_term import ShortTermMemory
+from core.memory.short_term import ShortTermMemory
 
 try:
     from colorama import Fore, Style
@@ -1046,3 +1046,4 @@ Commands:
   quit              Shutdown
 """
         )
+
