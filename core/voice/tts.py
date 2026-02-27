@@ -1,184 +1,181 @@
 """
-core/voice/tts.py - Text-to-speech output layer.
+core/voice/tts.py
+-----------------
+Local Text-to-Speech using Piper TTS.
+Generates speech offline; plays via sounddevice.
+
+Piper model files (.onnx + .onnx.json) must be in:
+    D:\\AI\\Jarvis\\data\\piper\\<voice_model>\\
+
+Download voices from:
+    https://huggingface.co/rhasspy/piper-voices
 """
 
-from __future__ import annotations
-
 import logging
-import re
+import subprocess
+import tempfile
 import threading
 from pathlib import Path
 from typing import Optional
 
-log = logging.getLogger("jarvis.voice.tts")
+import sounddevice as sd
+import soundfile as sf
 
-try:
-    from colorama import Fore, Style
-except ImportError:
-    class _DummyColor:
-        CYAN = ""
-        RESET_ALL = ""
-
-    Fore = _DummyColor()
-    Style = _DummyColor()
-
-_SENT_PATTERN = re.compile(r"(?<=[.!?])\s+")
+logger = logging.getLogger(__name__)
 
 
-def _split_sentences(text: str) -> list[str]:
-    sentences = _SENT_PATTERN.split(text.strip())
-    return [s.strip() for s in sentences if s.strip()]
+class TextToSpeech:
+    """
+    Wraps Piper TTS for fully local voice synthesis.
 
+    Piper runs as a subprocess: text -> WAV bytes -> numpy array -> sounddevice playback.
+    This keeps the main thread unblocked during generation (async_speak).
+    """
 
-class TTS:
-    def __init__(self, config) -> None:
-        self._voice = config.get("voice", "tts_voice", fallback="en_US-lessac-medium")
-        self._streaming = config.getboolean("voice", "tts_streaming", fallback=True)
-        self._cli_fallback = config.getboolean("voice", "tts_fallback_cli", fallback=True)
-
-        self._stop_event = threading.Event()
-        self._speaking = False
-        self._lock = threading.Lock()
-        self._active_thread: Optional[threading.Thread] = None
-        self._backend = self._init_backend()
-
-    def _init_backend(self) -> str:
-        try:
-            from piper import PiperVoice
-
-            resolved_voice = self._resolve_piper_voice_path(self._voice)
-            self._piper_voice = PiperVoice.load(resolved_voice)
-            log.info(f"TTS backend: Piper ({resolved_voice})")
-            return "piper"
-        except ImportError:
-            log.warning("piper-tts not installed - trying pyttsx3 fallback")
-        except Exception as exc:
-            log.warning(f"Piper TTS init failed ({exc}) - trying pyttsx3 fallback")
-
-        try:
-            import pyttsx3
-
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 165)
-            self._pyttsx3_engine = engine
-            log.info("TTS backend: pyttsx3")
-            return "pyttsx3"
-        except Exception:
-            pass
-
-        log.warning("No TTS audio backend - using CLI fallback only")
-        return "cli"
-
-    def _resolve_piper_voice_path(self, voice: str) -> str:
+    def __init__(self, config: dict):
         """
-        Resolve voice model location for Piper.
-        Supports:
-        - Absolute/relative .onnx path
-        - Voice id stored under data/voices/<voice_id>.onnx
+        Args:
+            config: dict with keys:
+                piper_model_dir      (str) Directory containing .onnx voice models
+                voice_model          (str) e.g. 'en_US-lessac-medium'
+                speaker_id           (int) 0 for single-speaker models
+                output_device_index  (int) -1 for default playback device
         """
-        raw = Path(voice)
-        if raw.suffix.lower() == ".onnx" and raw.exists():
-            return str(raw)
+        self.model_dir = Path(config.get("piper_model_dir", r"D:\AI\Jarvis\data\piper"))
+        self.voice_model = config.get("voice_model", "en_US-lessac-medium")
+        self.speaker_id = int(config.get("speaker_id", 0))
+        self.output_device = int(config.get("output_device_index", -1))
 
-        if raw.exists():
-            return str(raw)
+        self._model_path: Optional[Path] = None
+        self._playback_lock = threading.Lock()
+        self._current_playback: Optional[threading.Thread] = None
 
-        local = Path("data/voices") / f"{voice}.onnx"
-        if local.exists():
-            return str(local)
+        self._resolve_model()
 
-        return voice
+    def _resolve_model(self):
+        """Locate the .onnx model file in the model directory."""
+        voice_dir = self.model_dir / self.voice_model
+        candidates = list(voice_dir.glob("*.onnx")) if voice_dir.exists() else []
 
-    def speak_async(self, text: str, emotion: str = "neutral") -> threading.Thread:
-        thread = threading.Thread(
-            target=self.speak,
-            kwargs={"text": text, "emotion": emotion},
-            daemon=True,
-            name="tts_speak",
-        )
-        thread.start()
-        self._active_thread = thread
-        return thread
+        if not candidates:
+            flat = self.model_dir / f"{self.voice_model}.onnx"
+            if flat.exists():
+                self._model_path = flat
+                logger.info("Piper model: %s", flat)
+                return
 
-    def speak(self, text: str, emotion: str = "neutral") -> None:
-        if not text.strip():
+            logger.warning(
+                "Piper model '%s' not found in %s.\n"
+                "Download from https://huggingface.co/rhasspy/piper-voices\n"
+                "and place the .onnx + .onnx.json files in:\n  %s",
+                self.voice_model, self.model_dir, voice_dir,
+            )
+            self._model_path = None
             return
 
-        with self._lock:
-            self._stop_event.clear()
-            self._speaking = True
+        self._model_path = candidates[0]
+        logger.info("Piper model resolved: %s", self._model_path)
+
+    def _synthesize_wav(self, text: str) -> Optional[Path]:
+        """
+        Call Piper subprocess to synthesize text -> WAV file.
+
+        Returns:
+            Path to temporary WAV file, or None on failure.
+        """
+        if self._model_path is None:
+            logger.error("No Piper model loaded. Cannot synthesize speech.")
+            return None
 
         try:
-            if self._streaming and self._backend != "cli":
-                for sentence in _split_sentences(text):
-                    if self._stop_event.is_set():
-                        log.debug("TTS interrupted")
-                        break
-                    self._speak_chunk(sentence, emotion=emotion)
-            else:
-                self._speak_chunk(text, emotion=emotion)
+            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            tmp.close()
+            tmp_path = Path(tmp.name)
+
+            cmd = [
+                "piper",
+                "--model", str(self._model_path),
+                "--speaker", str(self.speaker_id),
+                "--output_file", str(tmp_path),
+            ]
+
+            process = subprocess.run(
+                cmd,
+                input=text.encode("utf-8"),
+                capture_output=True,
+                timeout=30,
+            )
+
+            if process.returncode != 0:
+                logger.error("Piper error: %s", process.stderr.decode())
+                tmp_path.unlink(missing_ok=True)
+                return None
+
+            return tmp_path
+
+        except subprocess.TimeoutExpired:
+            logger.error("Piper TTS timed out for text: '%s'", text[:50])
+            return None
+        except FileNotFoundError:
+            logger.error(
+                "Piper executable not found. Install it and ensure it's on PATH.\n"
+                "See: https://github.com/rhasspy/piper/releases"
+            )
+            return None
+        except Exception as e:
+            logger.error("Piper synthesis error: %s", e, exc_info=True)
+            return None
+
+    def _play_wav(self, wav_path: Path):
+        """Load WAV and play via sounddevice (blocking within its own thread)."""
+        try:
+            with self._playback_lock:
+                data, samplerate = sf.read(str(wav_path), dtype="float32")
+                device = self.output_device if self.output_device >= 0 else None
+                sd.play(data, samplerate=samplerate, device=device)
+                sd.wait()
+        except Exception as e:
+            logger.error("Audio playback error: %s", e, exc_info=True)
         finally:
-            with self._lock:
-                self._speaking = False
+            wav_path.unlink(missing_ok=True)
 
-    def stop(self) -> None:
-        self._stop_event.set()
-        log.debug("TTS stop requested")
+    def speak(self, text: str):
+        """
+        Synthesize and play text synchronously (blocks until done).
+        Use async_speak for non-blocking behavior.
+        """
+        logger.info("[TTS] Speaking: '%s'", text[:80])
+        wav_path = self._synthesize_wav(text)
+        if wav_path:
+            self._play_wav(wav_path)
 
-    @property
+    def async_speak(self, text: str):
+        """
+        Synthesize and play text in a background thread.
+        Returns immediately; use is_speaking() to check state.
+        """
+        logger.info("[TTS] Async speaking: '%s'", text[:80])
+
+        def _run():
+            wav_path = self._synthesize_wav(text)
+            if wav_path:
+                self._play_wav(wav_path)
+
+        self._current_playback = threading.Thread(target=_run, name="TTSThread", daemon=True)
+        self._current_playback.start()
+
     def is_speaking(self) -> bool:
-        return self._speaking
+        """Returns True if async TTS playback is in progress."""
+        return self._current_playback is not None and self._current_playback.is_alive()
 
-    def _speak_chunk(self, text: str, emotion: str = "neutral") -> None:
-        if self._backend == "piper":
-            self._speak_piper(text, emotion=emotion)
-        elif self._backend == "pyttsx3":
-            self._speak_pyttsx3(text, emotion=emotion)
-        else:
-            self._speak_cli(text, emotion=emotion)
+    def wait_until_done(self):
+        """Block until current async_speak finishes."""
+        if self._current_playback:
+            self._current_playback.join()
 
-    def _speak_piper(self, text: str, emotion: str = "neutral") -> None:
+    def stop(self):
+        """Interrupt current playback immediately."""
         try:
-            import numpy as np
-            import sounddevice as sd
-
-            audio_stream = self._piper_voice.synthesize_stream_raw(text)
-            for audio_bytes in audio_stream:
-                if self._stop_event.is_set():
-                    break
-                audio = np.frombuffer(audio_bytes, dtype=np.int16).astype("float32") / 32768.0
-                sd.play(audio, samplerate=22050, blocking=True)
-        except Exception as exc:
-            log.warning(f"Piper speak error: {exc}")
-            if self._cli_fallback:
-                self._speak_cli(text, emotion=emotion)
-
-    def _speak_pyttsx3(self, text: str, emotion: str = "neutral") -> None:
-        try:
-            if not self._stop_event.is_set():
-                rate = self._emotion_to_rate(emotion)
-                self._pyttsx3_engine.setProperty("rate", rate)
-                self._pyttsx3_engine.say(text)
-                self._pyttsx3_engine.runAndWait()
-        except Exception as exc:
-            log.warning(f"pyttsx3 speak error: {exc}")
-            if self._cli_fallback:
-                self._speak_cli(text, emotion=emotion)
-
-    def _emotion_to_rate(self, emotion: str) -> int:
-        profile = {
-            "calm": 145,
-            "neutral": 165,
-            "happy": 180,
-            "serious": 155,
-            "urgent": 195,
-        }
-        return profile.get(emotion.strip().lower(), profile["neutral"])
-
-    def _speak_cli(self, text: str, emotion: str = "neutral") -> None:
-        label = emotion.strip().lower() or "neutral"
-        if label == "neutral":
-            print(f"\n{Fore.CYAN}Jarvis:{Style.RESET_ALL} {text}")
-        else:
-            print(f"\n{Fore.CYAN}Jarvis ({label}):{Style.RESET_ALL} {text}")
-
+            sd.stop()
+        except Exception:
+            pass

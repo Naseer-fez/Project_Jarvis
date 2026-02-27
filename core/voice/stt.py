@@ -1,255 +1,197 @@
 """
-core/voice/stt.py — Speech-to-text using Faster-Whisper.
-
-Design:
-  - Captures audio from microphone until silence detected (webrtcvad)
-  - Transcribes with faster-whisper (local, offline)
-  - Returns plain text transcript + audio SHA-256 hash for audit trail
-  - Hard timeout: stops capture after stt_max_duration_s regardless of silence
-
-Authority: L0_OBSERVE (capture + transcribe only — no action triggered)
+core/voice/stt.py
+-----------------
+Local Speech-to-Text using OpenAI Whisper (runs fully offline).
+Handles audio capture via PyAudio with dynamic energy thresholding
+and silence detection — no recording forever.
 """
 
-from __future__ import annotations
-
-import hashlib
-import io
 import logging
+import os
 import time
-from dataclasses import dataclass
-from typing import Callable, Optional
+from pathlib import Path
+from typing import Optional
 
-log = logging.getLogger("jarvis.voice.stt")
+import numpy as np
 
-# Silence detection constants
-_MIN_SPEECH_FRAMES = 3   # frames of speech required before we start accumulating
-_BYTES_PER_SAMPLE  = 2   # 16-bit PCM
+logger = logging.getLogger(__name__)
 
-
-@dataclass
-class TranscriptResult:
-    text: str
-    audio_hash: str          # SHA-256 of raw PCM bytes
-    duration_s: float
-    language: str
-    confidence: float        # average segment confidence [0.0–1.0]
+WHISPER_SAMPLE_RATE = 16000
+CHUNK_SIZE = 1024  # PyAudio frames per buffer
 
 
-class STT:
-    """Captures audio and transcribes it with Faster-Whisper."""
+class SpeechToText:
+    """
+    Records audio after wake word trigger, transcribes with Whisper.
 
-    def __init__(self, config) -> None:
-        self._model_name   = config.get("voice", "stt_model",          fallback="base.en")
-        self._device       = config.get("voice", "stt_device",         fallback="cpu")
-        self._compute_type = config.get("voice", "stt_compute_type",   fallback="int8")
-        self._sample_rate  = int(config.get("voice", "audio_sample_rate", fallback="16000"))
-        self._channels     = int(config.get("voice", "audio_channels",    fallback="1"))
-        self._chunk_ms     = int(config.get("voice", "audio_chunk_ms",    fallback="30"))
-        self._silence_ms   = int(config.get("voice", "stt_silence_ms",    fallback="500"))
-        self._max_dur_s    = int(config.get("voice", "stt_max_duration_s",fallback="30"))
-        self._vad_mode     = int(config.get("voice", "stt_vad_aggressiveness", fallback="2"))
+    The recorder uses a two-phase approach:
+      1. Wait for audio energy above threshold (speech onset).
+      2. Stop after `silence_timeout` seconds of low energy (speech end).
+    """
+
+    def __init__(self, config: dict):
+        """
+        Args:
+            config: dict with keys:
+                model_size              (str)   e.g. 'base.en'
+                whisper_cache_dir       (str)   D:\\AI\\Jarvis\\data\\whisper
+                language                (str)   'en'
+                record_timeout_seconds  (float) hard cap on recording duration
+                silence_threshold_secs  (float) silence duration to stop recording
+                energy_multiplier       (float) RMS multiplier to detect speech
+                sample_rate             (int)   16000
+                channels                (int)   1
+                microphone_index        (int)   -1 for default
+        """
+        self.model_size = config.get("model_size", "base.en")
+        self.cache_dir = Path(config.get("whisper_cache_dir", r"D:\AI\Jarvis\data\whisper"))
+        self.language = config.get("language", "en")
+        self.record_timeout = float(config.get("record_timeout_seconds", 8))
+        self.silence_timeout = float(config.get("silence_threshold_seconds", 1.5))
+        self.energy_multiplier = float(config.get("energy_multiplier", 2.5))
+        self.sample_rate = int(config.get("sample_rate", WHISPER_SAMPLE_RATE))
+        self.channels = int(config.get("channels", 1))
+        self.mic_index = int(config.get("microphone_index", -1))
 
         self._model = None
-        self._vad   = None
-        self._pa    = None
-        self._ready = False
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-        self._init()
+        # Tell Whisper where to cache model weights (keep off C:)
+        os.environ["XDG_CACHE_HOME"] = str(self.cache_dir.parent)
+        os.environ["WHISPER_CACHE_DIR"] = str(self.cache_dir)
 
-    def _init(self) -> None:
+    def _load_model(self):
+        if self._model is not None:
+            return
         try:
-            from faster_whisper import WhisperModel
-            self._model = WhisperModel(
-                self._model_name,
-                device=self._device,
-                compute_type=self._compute_type,
+            import whisper
+            logger.info("Loading Whisper model '%s' (may take a moment)...", self.model_size)
+            self._model = whisper.load_model(
+                self.model_size,
+                download_root=str(self.cache_dir),
             )
-            log.info(f"Whisper model loaded: {self._model_name}")
-        except ImportError:
-            log.error("faster-whisper not installed — STT unavailable")
-            return
-        except Exception as exc:
-            log.error(f"Whisper model load failed: {exc}")
-            return
+            logger.info("Whisper model loaded.")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load Whisper model '{self.model_size}': {e}") from e
 
-        try:
-            import webrtcvad
-            self._vad = webrtcvad.Vad(self._vad_mode)
-        except ImportError:
-            log.warning("webrtcvad not installed — using energy-based VAD fallback")
+    def _calibrate_ambient_rms(self, stream, num_chunks: int = 20) -> float:
+        """Sample ambient noise to set a dynamic energy threshold."""
+        frames = []
+        for _ in range(num_chunks):
+            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+            audio_np = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+            frames.append(audio_np)
 
+        ambient = np.concatenate(frames)
+        rms = float(np.sqrt(np.mean(ambient ** 2))) + 1e-6
+        threshold = rms * self.energy_multiplier
+        logger.debug("Ambient RMS=%.1f | Speech threshold=%.1f", rms, threshold)
+        return threshold
+
+    def _record_audio(self) -> Optional[np.ndarray]:
+        """
+        Open microphone, calibrate energy, record until silence or timeout.
+
+        Returns:
+            numpy float32 array at 16kHz, or None on failure.
+        """
         try:
             import pyaudio
-            self._pa = pyaudio.PyAudio()
-        except Exception as exc:
-            log.error(f"PyAudio init failed: {exc}")
-            return
+        except ImportError:
+            raise RuntimeError("pyaudio not installed. Run: pip install pyaudio")
 
-        self._ready = True
-
-    @property
-    def is_ready(self) -> bool:
-        return self._ready
-
-    @property
-    def is_offline(self) -> bool:
-        return True
-
-    def capture_and_transcribe(self) -> Optional[TranscriptResult]:
-        """
-        Open mic, capture speech, transcribe.
-        Returns None if STT unavailable or no speech detected.
-        """
-        if not self._ready:
-            log.warning("STT not ready — cannot capture")
-            return None
+        pa = pyaudio.PyAudio()
+        stream = None
 
         try:
-            pcm_bytes = self._capture_audio()
-        except Exception as exc:
-            log.error(f"Audio capture failed: {exc}")
+            device_index = self.mic_index if self.mic_index >= 0 else None
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=self.channels,
+                rate=self.sample_rate,
+                input=True,
+                input_device_index=device_index,
+                frames_per_buffer=CHUNK_SIZE,
+            )
+
+            logger.info("Calibrating ambient noise...")
+            threshold = self._calibrate_ambient_rms(stream)
+            logger.info("Listening... (threshold=%.0f, timeout=%.1fs)", threshold, self.record_timeout)
+
+            frames = []
+            speech_started = False
+            silence_start: Optional[float] = None
+            record_start = time.monotonic()
+
+            while True:
+                elapsed = time.monotonic() - record_start
+                if elapsed > self.record_timeout:
+                    logger.warning("Recording timeout reached (%.1fs).", self.record_timeout)
+                    break
+
+                data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                audio_chunk = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+                rms = float(np.sqrt(np.mean(audio_chunk ** 2)))
+
+                if rms > threshold:
+                    speech_started = True
+                    silence_start = None
+                    frames.append(data)
+                elif speech_started:
+                    frames.append(data)
+                    if silence_start is None:
+                        silence_start = time.monotonic()
+                    elif time.monotonic() - silence_start >= self.silence_timeout:
+                        logger.debug("Silence detected — stopping recording.")
+                        break
+
+            if not frames:
+                logger.warning("No speech detected.")
+                return None
+
+            raw = b"".join(frames)
+            audio_np = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            return audio_np
+
+        except Exception as e:
+            logger.error("Audio recording error: %s", e, exc_info=True)
             return None
-
-        if not pcm_bytes:
-            log.debug("No audio captured")
-            return None
-
-        audio_hash = hashlib.sha256(pcm_bytes).hexdigest()
-        return self._transcribe(pcm_bytes, audio_hash)
-
-    def capture_and_transcribe_stream(
-        self,
-        on_partial: Optional[Callable[[str, bool], None]] = None,
-    ) -> Optional[TranscriptResult]:
-        """
-        Compatibility streaming API.
-        Returns a final transcript and optionally emits partial text segments.
-        """
-        result = self.capture_and_transcribe()
-        if result is None or on_partial is None:
-            return result
-
-        words = result.text.split()
-        if not words:
-            return result
-        if len(words) == 1:
-            on_partial(words[0], True)
-            return result
-
-        for idx in range(1, len(words)):
-            on_partial(" ".join(words[:idx]), False)
-        on_partial(result.text, True)
-        return result
-
-    def _capture_audio(self) -> bytes:
-        """Capture until silence or max duration. Returns raw PCM bytes."""
-        import pyaudio
-
-        chunk_size = int(self._sample_rate * self._chunk_ms / 1000)
-        frames: list[bytes] = []
-        silence_frames_needed = int(self._silence_ms / self._chunk_ms)
-        max_frames = int(self._max_dur_s * 1000 / self._chunk_ms)
-
-        stream = self._pa.open(
-            format=pyaudio.paInt16,
-            channels=self._channels,
-            rate=self._sample_rate,
-            input=True,
-            frames_per_buffer=chunk_size,
-        )
-
-        consecutive_silence = 0
-        speech_started = False
-        speech_frame_count = 0
-        total_frames = 0
-
-        try:
-            while total_frames < max_frames:
-                pcm = stream.read(chunk_size, exception_on_overflow=False)
-                total_frames += 1
-
-                is_speech = self._is_speech(pcm, chunk_size)
-
-                if is_speech:
-                    speech_frame_count += 1
-                    consecutive_silence = 0
-                    if speech_frame_count >= _MIN_SPEECH_FRAMES:
-                        speech_started = True
-                    if speech_started:
-                        frames.append(pcm)
-                else:
-                    if speech_started:
-                        frames.append(pcm)  # include trailing silence frames
-                        consecutive_silence += 1
-                        if consecutive_silence >= silence_frames_needed:
-                            break  # end of utterance
         finally:
-            stream.stop_stream()
-            stream.close()
+            if stream:
+                stream.stop_stream()
+                stream.close()
+            pa.terminate()
 
-        return b"".join(frames)
+    def transcribe(self) -> Optional[str]:
+        """
+        Record from microphone and return transcribed text.
 
-    def _is_speech(self, pcm: bytes, chunk_size: int) -> bool:
-        """VAD or energy-based speech detection."""
-        if self._vad is not None:
-            try:
-                expected = chunk_size * _BYTES_PER_SAMPLE
-                if len(pcm) == expected:
-                    return self._vad.is_speech(pcm, self._sample_rate)
-            except Exception:
-                pass
+        Returns:
+            Transcribed string, or None if recording/transcription failed.
+        """
+        self._load_model()
 
-        # Energy-based fallback
-        import struct
-        samples = struct.unpack(f"{len(pcm) // 2}h", pcm)
-        rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
-        return rms > 500  # threshold tuned for typical mic levels
+        logger.info("[STT] Recording...")
+        audio_np = self._record_audio()
 
-    def _transcribe(self, pcm_bytes: bytes, audio_hash: str) -> Optional[TranscriptResult]:
-        """Run Faster-Whisper on raw PCM bytes."""
-        try:
-            import numpy as np
-            import soundfile as sf
-
-            # Convert PCM bytes to float32 numpy array
-            audio_np = (
-                np.frombuffer(pcm_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-            )
-
-            t0 = time.time()
-            segments, info = self._model.transcribe(
-                audio_np,
-                beam_size=5,
-                language="en",
-                vad_filter=True,
-            )
-
-            seg_list = list(segments)
-            if not seg_list:
-                return None
-
-            full_text = " ".join(s.text.strip() for s in seg_list).strip()
-            if not full_text:
-                return None
-
-            avg_conf = sum(
-                max(s.avg_logprob, -5.0) for s in seg_list
-            ) / len(seg_list)
-            # Convert log-prob to rough 0–1 confidence
-            confidence = min(1.0, max(0.0, 1.0 + avg_conf / 5.0))
-
-            duration_s = time.time() - t0
-
-            log.info(f"Transcribed ({duration_s:.1f}s): \"{full_text}\"")
-            return TranscriptResult(
-                text=full_text,
-                audio_hash=audio_hash,
-                duration_s=duration_s,
-                language=info.language if info else "en",
-                confidence=confidence,
-            )
-
-        except Exception as exc:
-            log.error(f"Transcription failed: {exc}")
+        if audio_np is None or len(audio_np) < self.sample_rate * 0.3:
             return None
 
+        logger.info("[STT] Transcribing %d samples (%.1fs)...",
+                    len(audio_np), len(audio_np) / self.sample_rate)
+
+        try:
+            import whisper
+            result = self._model.transcribe(
+                audio_np,
+                language=self.language,
+                fp16=False,
+                verbose=False,
+            )
+            text = result.get("text", "").strip()
+            logger.info("[STT] Transcribed: '%s'", text)
+            return text if text else None
+
+        except Exception as e:
+            logger.error("Whisper transcription error: %s", e, exc_info=True)
+            return None

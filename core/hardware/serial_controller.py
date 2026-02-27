@@ -1,86 +1,168 @@
 """
-core/hardware/serial_controller.py - Optional serial bridge for V3 hardware actions.
+core/hardware/serial_controller.py
+-----------------------------------
+Manages serial communication with external hardware (e.g., Arduino).
 
-Safe default: disabled unless explicitly enabled in config or constructor.
+Protocol (simple text-based):
+  JARVIS -> Arduino: "CMD:<command>:<value>\n"
+  Arduino -> JARVIS: "ACK:<command>:<result>\n"  |  "ERR:<message>\n"
+
+Falls back to simulation mode gracefully if hardware is absent.
 """
 
-from __future__ import annotations
+import logging
+import threading
+import time
 
-from typing import Any
+logger = logging.getLogger(__name__)
+
+CMD_PREFIX = "CMD"
+ACK_PREFIX = "ACK"
+ERR_PREFIX = "ERR"
+SENSOR_READ_CMD = "SENSOR_READ"
+ACTUATE_CMD = "ACTUATE"
 
 
 class SerialController:
-    def __init__(self, config=None, enabled: bool | None = None) -> None:
+    """
+    Thread-safe serial controller with simulation fallback.
+
+    In simulation mode, commands are logged but not sent to hardware.
+    This ensures the JARVIS loop never crashes due to missing hardware.
+    """
+
+    def __init__(self, config: dict):
+        """
+        Args:
+            config: dict with keys:
+                com_port         (str)   e.g. 'COM7'
+                baud_rate        (int)   115200
+                timeout_seconds  (float) read timeout
+                require_hardware (bool)  if False, silently fall back to sim mode
+        """
+        self.port = config.get("com_port", "COM7")
+        self.baud_rate = int(config.get("baud_rate", 115200))
+        self.timeout = float(config.get("timeout_seconds", 2))
+        self.require_hardware = config.get("require_hardware", "false").lower() == "true"
+
         self._serial = None
-        self._port: str | None = None
-        self._baud_rate: int = 9600
-        self._default_port: str | None = None
+        self._lock = threading.Lock()
+        self._simulation_mode = False
+        self._connected = False
 
-        config_enabled = False
-        if config is not None:
-            try:
-                config_enabled = config.getboolean("hardware", "enabled", fallback=False)
-                self._default_port = config.get("hardware", "default_port", fallback="").strip() or None
-                self._baud_rate = int(config.get("hardware", "baud_rate", fallback="9600"))
-            except Exception:
-                config_enabled = False
+        self._connect()
 
-        self._enabled = config_enabled if enabled is None else bool(enabled)
-
-    def _require_enabled(self) -> None:
-        if not self._enabled:
-            raise NotImplementedError(
-                "SerialController is disabled. Set [hardware] enabled=true to unblock V3 serial commands."
-            )
-
-    def connect(self, port: str | None = None, baud_rate: int | None = None, timeout_s: float = 1.0) -> None:
-        self._require_enabled()
-        port = (port or self._default_port or "").strip()
-        if not port:
-            raise ValueError("Serial port is required.")
-        if baud_rate is None:
-            baud_rate = self._baud_rate
-
+    def _connect(self):
+        """Attempt to open the serial port. Falls back to simulation if unavailable."""
         try:
             import serial
-        except ImportError as exc:
-            raise RuntimeError("pyserial is required for SerialController.") from exc
+            self._serial = serial.Serial(
+                port=self.port,
+                baudrate=self.baud_rate,
+                timeout=self.timeout,
+            )
+            # Give Arduino time to reset after serial connection
+            time.sleep(2.0)
+            self._connected = True
+            self._simulation_mode = False
+            logger.info(
+                "Serial connected | port=%s baud=%d", self.port, self.baud_rate
+            )
 
-        if self._serial and self._serial.is_open:
-            self.disconnect()
+        except Exception as e:
+            if self.require_hardware:
+                raise RuntimeError(
+                    f"Hardware required but serial connection failed on {self.port}: {e}"
+                ) from e
 
-        self._serial = serial.Serial(port=port, baudrate=int(baud_rate), timeout=timeout_s)
-        self._port = port
-        self._baud_rate = int(baud_rate)
+            logger.warning(
+                "Serial port %s unavailable (%s). "
+                "Running in SIMULATION mode — hardware commands will be logged only.",
+                self.port, e,
+            )
+            self._simulation_mode = True
+            self._connected = False
 
-    def send(self, command: str) -> str:
-        self._require_enabled()
-        if not command:
-            raise ValueError("Serial command cannot be empty.")
-        if not self._serial or not self._serial.is_open:
-            raise RuntimeError("Serial port is not connected.")
-
-        payload = (command.strip() + "\n").encode("utf-8")
-        self._serial.write(payload)
-        self._serial.flush()
-
-        try:
-            reply = self._serial.readline().decode("utf-8", errors="replace").strip()
-        except Exception:
-            reply = ""
-        return reply or "ok"
-
-    def disconnect(self) -> None:
-        if self._serial and self._serial.is_open:
-            self._serial.close()
-        self._serial = None
-        self._port = None
-
-    @property
     def is_connected(self) -> bool:
-        return bool(self._serial and self._serial.is_open)
+        return self._connected and not self._simulation_mode
 
-    @property
-    def enabled(self) -> bool:
-        return self._enabled
+    def send_command(self, command: str, value: str = "") -> str:
+        """
+        Send a command to the hardware and return the response.
 
+        Args:
+            command: Command name (e.g., 'LIGHT', 'FAN')
+            value:   Command value (e.g., 'ON', 'OFF', 'READ')
+
+        Returns:
+            Response string from device, or simulated response.
+        """
+        msg = f"{CMD_PREFIX}:{command}:{value}\n"
+
+        if self._simulation_mode:
+            simulated = f"{ACK_PREFIX}:{command}:SIMULATED"
+            logger.info("[SIM] TX: %s | RX: %s", msg.strip(), simulated)
+            return simulated
+
+        with self._lock:
+            try:
+                self._serial.reset_input_buffer()
+                self._serial.write(msg.encode("utf-8"))
+                self._serial.flush()
+
+                response = self._serial.readline().decode("utf-8").strip()
+                logger.debug("Serial TX: %s | RX: %s", msg.strip(), response)
+
+                if not response:
+                    return f"{ERR_PREFIX}:TIMEOUT"
+                return response
+
+            except Exception as e:
+                logger.error("Serial communication error: %s", e)
+                return f"{ERR_PREFIX}:{e}"
+
+    def actuate(self, device: str, state: str) -> dict:
+        """
+        Send an actuation command (e.g., turn light on/off).
+
+        Args:
+            device: Target device name (e.g., 'LIGHT', 'FAN', 'LOCK')
+            state:  Desired state (e.g., 'ON', 'OFF', 'TOGGLE')
+
+        Returns:
+            dict with 'success' (bool) and 'response' (str)
+        """
+        logger.info("Actuate: %s -> %s", device, state)
+        response = self.send_command(ACTUATE_CMD, f"{device}:{state}")
+        success = response.startswith(ACK_PREFIX)
+        return {"success": success, "response": response, "device": device, "state": state}
+
+    def read_sensor(self, sensor: str) -> dict:
+        """
+        Request a sensor reading.
+
+        Args:
+            sensor: Sensor identifier (e.g., 'TEMPERATURE', 'HUMIDITY', 'MOTION')
+
+        Returns:
+            dict with 'success' (bool), 'sensor', and 'value' (str)
+        """
+        logger.info("Sensor read: %s", sensor)
+        response = self.send_command(SENSOR_READ_CMD, sensor)
+
+        if response.startswith(ACK_PREFIX):
+            parts = response.split(":")
+            value = parts[2] if len(parts) > 2 else "UNKNOWN"
+            return {"success": True, "sensor": sensor, "value": value, "raw": response}
+
+        return {"success": False, "sensor": sensor, "value": None, "raw": response}
+
+    def close(self):
+        """Clean up serial connection."""
+        if self._serial and self._serial.is_open:
+            try:
+                self._serial.close()
+                logger.info("Serial port %s closed.", self.port)
+            except Exception as e:
+                logger.warning("Error closing serial port: %s", e)
+        self._connected = False

@@ -1,200 +1,159 @@
 """
-core/voice/wake_word.py — Wake word detection.
-
-Primary:  OpenWakeWord (open-source, local, MIT licensed)
-Fallback: Simple energy + keyword heuristic (when OpenWakeWord unavailable)
-
-Design invariants:
-  - Runs in a dedicated daemon thread — NEVER in the main async loop
-  - Only signals via asyncio.Event — never modifies state directly
-  - Fires two event types: WAKE (detected keyword) and CANCEL (cancel/stop word)
-  - CPU usage < 2% at idle
-
-Authority: L0_OBSERVE
+core/voice/wake_word.py
+-----------------------
+Local wake word detection using Picovoice Porcupine.
+Runs in its own thread; signals main loop via threading.Event.
 """
 
-from __future__ import annotations
-
-import asyncio
 import logging
 import threading
-import time
-from typing import Callable, Optional
+from pathlib import Path
 
-log = logging.getLogger("jarvis.voice.wake_word")
+logger = logging.getLogger(__name__)
 
 
 class WakeWordDetector:
     """
-    Listens on the default microphone for a wake word.
+    Wraps pvporcupine + pvrecorder for fully local wake word detection.
 
     Usage:
-        detector = WakeWordDetector(config, loop, on_wake_cb, on_cancel_cb)
-        detector.start()
+        detector = WakeWordDetector(config)
+        detector.start(callback=on_wake)   # non-blocking
         ...
         detector.stop()
     """
 
-    def __init__(
-        self,
-        config,
-        loop: asyncio.AbstractEventLoop,
-        on_wake: Callable[[], None],
-        on_cancel: Callable[[], None],
-    ) -> None:
-        self._config     = config
-        self._loop       = loop
-        self._on_wake    = on_wake
-        self._on_cancel  = on_cancel
-        self._running    = False
-        self._thread: Optional[threading.Thread] = None
+    def __init__(self, config: dict):
+        """
+        Args:
+            config: dict with keys:
+                access_key       (str)   Porcupine AccessKey
+                keyword_path     (str)   Path to .ppn keyword file
+                sensitivity      (float) 0.0–1.0
+                microphone_index (int)   -1 for default
+        """
+        self.access_key = config["access_key"]
+        self.keyword_path = Path(config["keyword_path"])
+        self.sensitivity = float(config.get("sensitivity", 0.5))
+        self.mic_index = int(config.get("microphone_index", -1))
 
-        # Config
-        self._wake_word    = config.get("voice", "wake_word",    fallback="hey jarvis").lower()
-        self._cancel_words = [
-            w.strip().lower()
-            for w in config.get("voice", "cancel_words", fallback="cancel,stop").split(",")
-        ]
-        self._threshold = float(config.get("voice", "wakeword_threshold", fallback="0.5"))
-        self._sample_rate = int(config.get("voice", "audio_sample_rate", fallback="16000"))
-        self._chunk_ms    = int(config.get("voice", "audio_chunk_ms",    fallback="30"))
-        self._debounce_s  = float(config.get("voice", "wakeword_debounce_s", fallback="1.0"))
+        self._porcupine = None
+        self._recorder = None
+        self._thread: threading.Thread | None = None
+        self._stop_event = threading.Event()
+        self._callback = None
 
-        self._backend = self._init_backend()
+        self._validate_keyword_path()
 
-    def _init_backend(self) -> str:
+    def _validate_keyword_path(self):
+        if not self.keyword_path.exists():
+            raise FileNotFoundError(
+                f"Porcupine keyword file not found: {self.keyword_path}\n"
+                "Download it from https://console.picovoice.ai/ and place it in "
+                "D:\\AI\\Jarvis\\data\\porcupine\\"
+            )
+
+    def _init_porcupine(self):
         try:
-            import openwakeword
-            from openwakeword.model import Model as OWWModel
-            self._oww_model = OWWModel(inference_framework="onnx")
-            log.info("Wake word backend: OpenWakeWord")
-            return "openwakeword"
-        except ImportError:
-            log.warning("OpenWakeWord not installed — using energy+STT fallback backend")
-        except Exception as exc:
-            log.warning(f"OpenWakeWord init failed ({exc}) — using fallback backend")
+            import pvporcupine
+            self._porcupine = pvporcupine.create(
+                access_key=self.access_key,
+                keyword_paths=[str(self.keyword_path)],
+                sensitivities=[self.sensitivity],
+            )
+            logger.info(
+                "Porcupine initialized | frame_length=%d sample_rate=%d",
+                self._porcupine.frame_length,
+                self._porcupine.sample_rate,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize Porcupine: {e}") from e
 
+    def _init_recorder(self):
         try:
-            import vosk  # noqa: F401
-            log.info("Wake word backend: Vosk fallback")
-            return "vosk"
-        except ImportError:
-            pass
+            from pvrecorder import PvRecorder
+            device_index = self.mic_index if self.mic_index >= 0 else -1
+            self._recorder = PvRecorder(
+                frame_length=self._porcupine.frame_length,
+                device_index=device_index,
+            )
+            logger.info("PvRecorder initialized | device_index=%d", device_index)
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize PvRecorder: {e}") from e
 
-        log.warning("No wake word backend available — using dummy (always fires on audio)")
-        return "dummy"
+    def _listen_loop(self):
+        """Background thread: continuously read audio frames and check for wake word."""
+        try:
+            self._recorder.start()
+            logger.info("Wake word detection active — say 'Jarvis' to activate.")
 
-    def start(self) -> None:
-        if self._running:
+            while not self._stop_event.is_set():
+                pcm_frame = self._recorder.read()
+                result = self._porcupine.process(pcm_frame)
+
+                if result >= 0:
+                    logger.info("Wake word detected! (keyword index=%d)", result)
+                    if self._callback:
+                        self._callback()
+
+        except Exception as e:
+            logger.error("Wake word listener error: %s", e, exc_info=True)
+        finally:
+            if self._recorder:
+                self._recorder.stop()
+
+    def start(self, callback=None):
+        """
+        Start wake word detection in a background daemon thread.
+
+        Args:
+            callback: Callable invoked (from background thread) when wake word fires.
+                      Should be thread-safe (e.g., set a threading.Event).
+        """
+        if self._thread and self._thread.is_alive():
+            logger.warning("Wake word detector already running.")
             return
-        self._running = True
+
+        self._callback = callback
+        self._stop_event.clear()
+
+        self._init_porcupine()
+        self._init_recorder()
+
         self._thread = threading.Thread(
-            target=self._run_loop, daemon=True, name="wakeword"
+            target=self._listen_loop,
+            name="WakeWordThread",
+            daemon=True,
         )
         self._thread.start()
-        log.info(f"Wake word detector started (backend={self._backend}, word='{self._wake_word}')")
 
-    def stop(self) -> None:
-        self._running = False
-        if self._thread and self._thread.is_alive():
+    def stop(self):
+        """Signal the background thread to stop and clean up resources."""
+        self._stop_event.set()
+        if self._thread:
             self._thread.join(timeout=3.0)
 
-    @property
-    def is_running(self) -> bool:
-        return self._running
+        if self._recorder:
+            try:
+                self._recorder.delete()
+            except Exception:
+                pass
+        if self._porcupine:
+            try:
+                self._porcupine.delete()
+            except Exception:
+                pass
 
-    # ── Detection loop ────────────────────────────────────────────────────────
+        logger.info("Wake word detector stopped.")
 
-    def _run_loop(self) -> None:
-        if self._backend == "openwakeword":
-            self._run_openwakeword()
-        elif self._backend == "vosk":
-            self._run_vosk()
-        else:
-            self._run_dummy()
-
-    def _fire_wake(self) -> None:
-        log.info(f"Wake word detected: '{self._wake_word}'")
-        self._loop.call_soon_threadsafe(self._on_wake)
-
-    def _fire_cancel(self) -> None:
-        log.info("Cancel word detected")
-        self._loop.call_soon_threadsafe(self._on_cancel)
-
-    def _run_openwakeword(self) -> None:
+    @staticmethod
+    def list_audio_devices():
+        """Utility: print all available audio input devices with their indices."""
         try:
-            import pyaudio
-            chunk_size = int(self._sample_rate * self._chunk_ms / 1000)
-            pa = pyaudio.PyAudio()
-            stream = pa.open(
-                rate=self._sample_rate,
-                channels=1,
-                format=pyaudio.paInt16,
-                input=True,
-                frames_per_buffer=chunk_size,
-            )
-            import numpy as np
-            while self._running:
-                pcm = stream.read(chunk_size, exception_on_overflow=False)
-                audio = np.frombuffer(pcm, dtype=np.int16)
-                predictions = self._oww_model.predict(audio)
-
-                for model_name, score in predictions.items():
-                    keyword = model_name.lower().replace("_", " ")
-                    if any(cw in keyword for cw in self._cancel_words) and score > self._threshold:
-                        self._fire_cancel()
-                        break
-                    elif score > self._threshold:
-                        self._fire_wake()
-                        time.sleep(self._debounce_s)
-                        break
-
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
-        except Exception as exc:
-            log.error(f"OpenWakeWord loop error: {exc}")
-
-    def _run_vosk(self) -> None:
-        """Vosk-based keyword detection fallback."""
-        try:
-            import vosk
-            import pyaudio
-            import json as _json
-
-            model = vosk.Model(lang="en-us")
-            rec = vosk.KaldiRecognizer(model, self._sample_rate)
-            chunk_size = int(self._sample_rate * self._chunk_ms / 1000)
-            pa = pyaudio.PyAudio()
-            stream = pa.open(
-                rate=self._sample_rate, channels=1,
-                format=pyaudio.paInt16, input=True,
-                frames_per_buffer=chunk_size,
-            )
-            while self._running:
-                pcm = stream.read(chunk_size, exception_on_overflow=False)
-                if rec.AcceptWaveform(pcm):
-                    result = _json.loads(rec.Result()).get("text", "").lower()
-                    if any(cw in result for cw in self._cancel_words):
-                        self._fire_cancel()
-                    elif self._wake_word in result:
-                        self._fire_wake()
-                        time.sleep(self._debounce_s)
-
-            stream.stop_stream()
-            stream.close()
-            pa.terminate()
-        except Exception as exc:
-            log.error(f"Vosk wake word loop error: {exc}")
-
-    def _run_dummy(self) -> None:
-        """
-        Dummy backend — used when no real wake word lib is available.
-        Fires WAKE every 60 seconds for testing purposes.
-        """
-        while self._running:
-            time.sleep(60)
-            if self._running:
-                log.debug("Dummy wake word backend: firing synthetic wake event")
-                self._fire_wake()
-
+            from pvrecorder import PvRecorder
+            devices = PvRecorder.get_available_devices()
+            print("Available audio input devices:")
+            for i, device in enumerate(devices):
+                print(f"  [{i}] {device}")
+        except ImportError:
+            print("pvrecorder not installed. Run: pip install pvrecorder")
