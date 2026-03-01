@@ -1,136 +1,208 @@
-"""
+﻿"""
 core/execution/dispatcher.py
------------------------------
-Routes intents to the appropriate handler.
-Updated in Phase 5 to support physical_actuate and sensor_read
-via the SerialController.
+Jarvis V3 - Execution Dispatcher
+
+Flow:
+  Planner JSON action
+      → Dispatcher.dispatch()
+          → _check_policy()       # AutonomyPolicy gate
+              → ask_confirm()     # Voice confirmation if REQUIRE_CONFIRM
+          → _execute_tool()       # Actual tool call
+          → ReflectionEngine      # Feed result back
 """
 
 import logging
+from typing import Any
+
+from core.agentic.autonomy_policy import AutonomyPolicy, PolicyDecision
+from core.tools.system_automation import (
+    TOOL_REGISTRY,
+    ToolResult,
+    async_list_directory,
+    async_read_file,
+    async_write_file,
+    async_delete_file,
+    async_launch_application,
+    async_execute_shell,
+)
 
 logger = logging.getLogger(__name__)
 
+# Risk threshold above which we REQUIRE_CONFIRM regardless of policy mode
+CONFIRM_THRESHOLD = 0.5
+
+
+class DispatchError(Exception):
+    pass
+
 
 class Dispatcher:
-    """
-    Maps classified intents to execution logic.
+    def __init__(
+        self,
+        autonomy_policy: AutonomyPolicy,
+        reflection_engine,          # ReflectionEngine instance
+        voice_layer=None,           # Optional; must expose ask_confirm(prompt: str) -> bool
+    ):
+        self.policy = autonomy_policy
+        self.reflection = reflection_engine
+        self.voice = voice_layer
 
-    Supported intents:
-        general_query       -> LLM via Ollama
-        physical_actuate    -> SerialController.actuate()
-        sensor_read         -> SerialController.read_sensor()
-        memory_store        -> HybridMemory store
-        memory_recall       -> HybridMemory search
-        system_command      -> OS-level action
-    """
-
-    def __init__(self, controller, memory, serial_controller=None):
-        """
-        Args:
-            controller:        LLM controller (e.g. OllamaController from Phase 4)
-            memory:            HybridMemory instance from Phase 4
-            serial_controller: SerialController instance (optional; graceful if None)
-        """
-        self.controller = controller
-        self.memory = memory
-        self.serial = serial_controller
-
-        self._handlers = {
-            "general_query":    self._handle_general_query,
-            "physical_actuate": self._handle_physical_actuate,
-            "sensor_read":      self._handle_sensor_read,
-            "memory_store":     self._handle_memory_store,
-            "memory_recall":    self._handle_memory_recall,
-            "system_command":   self._handle_system_command,
+        # Map action names to their async callables
+        self._tool_map = {
+            "list_directory":     self._run_list_directory,
+            "read_file":          self._run_read_file,
+            "write_file":         self._run_write_file,
+            "delete_file":        self._run_delete_file,
+            "launch_application": self._run_launch_application,
+            "execute_shell":      self._run_execute_shell,
         }
 
-    def dispatch(self, intent: str, user_input: str, entities: dict = None) -> str:
-        """
-        Route intent to handler and return a response string.
+    # ─────────────────────────────────────────
+    # Public entry point
+    # ─────────────────────────────────────────
 
-        Args:
-            intent:     Classified intent label
-            user_input: Raw user utterance
-            entities:   Extracted entities dict (optional)
-
-        Returns:
-            Response string to be spoken/displayed.
+    async def dispatch(self, action: dict[str, Any]) -> ToolResult:
         """
-        entities = entities or {}
-        handler = self._handlers.get(intent, self._handle_general_query)
-        logger.info("Dispatching intent='%s' | input='%s'", intent, user_input[:60])
+        Dispatch a planner-generated action dict.
+
+        Expected shape:
+            {
+                "tool": "execute_shell",
+                "args": {"command": "dir C:\\", "working_dir": null},
+                "rationale": "User asked for directory listing"   # optional
+            }
+        """
+        tool_name: str = action.get("tool", "")
+        args: dict = action.get("args", {})
+        rationale: str = action.get("rationale", "")
+
+        if tool_name not in self._tool_map:
+            result = ToolResult(False, error=f"Unknown tool: '{tool_name}'")
+            await self._feed_reflection(tool_name, args, result)
+            return result
+
+        risk_score = TOOL_REGISTRY.get(tool_name, 1.0)
+        logger.info("Dispatching tool='%s' risk=%.2f rationale='%s'", tool_name, risk_score, rationale)
+
+        # ── Policy gate ───────────────────────
+        allowed = await self._check_policy(tool_name, args, risk_score)
+        if not allowed:
+            result = ToolResult(False, error=f"Action '{tool_name}' blocked by AutonomyPolicy or user rejected.")
+            await self._feed_reflection(tool_name, args, result)
+            return result
+
+        # ── Execute ───────────────────────────
+        try:
+            result = await self._tool_map[tool_name](args)
+        except Exception as exc:
+            logger.exception("Unexpected error executing tool '%s'", tool_name)
+            result = ToolResult(False, error=f"Dispatcher internal error: {exc}")
+
+        logger.info("Tool '%s' finished success=%s", tool_name, result.success)
+        await self._feed_reflection(tool_name, args, result)
+        return result
+
+    # ─────────────────────────────────────────
+    # Policy & Confirmation
+    # ─────────────────────────────────────────
+
+    async def _check_policy(self, tool_name: str, args: dict, risk_score: float) -> bool:
+        """
+        Returns True if execution is permitted.
+        Order of checks:
+          1. AutonomyPolicy decides based on its current state.
+          2. If risk_score >= CONFIRM_THRESHOLD, override to REQUIRE_CONFIRM.
+          3. If REQUIRE_CONFIRM, ask the voice layer; block if rejected or unavailable.
+        """
+        decision: PolicyDecision = self.policy.evaluate(tool_name, risk_score=risk_score, args=args)
+
+        if decision == PolicyDecision.BLOCK:
+            logger.warning("Policy BLOCKED tool='%s'", tool_name)
+            return False
+
+        if decision == PolicyDecision.ALLOW and risk_score < CONFIRM_THRESHOLD:
+            return True
+
+        # Anything with risk >= threshold or explicit REQUIRE_CONFIRM
+        logger.info("Policy REQUIRE_CONFIRM for tool='%s'", tool_name)
+        return await self._ask_voice_confirm(tool_name, args)
+
+    async def _ask_voice_confirm(self, tool_name: str, args: dict) -> bool:
+        """Delegate to the Voice Layer's ask_confirm(). Returns False if unavailable."""
+        if self.voice is None:
+            logger.warning("No voice layer attached; blocking high-risk tool '%s' by default.", tool_name)
+            return False
+
+        # Build a human-readable summary for TTS
+        summary = _summarise_action(tool_name, args)
+        prompt = f"I need your approval. I am about to {summary}. Should I proceed?"
 
         try:
-            return handler(user_input, entities)
-        except Exception as e:
-            logger.error("Dispatch error for intent '%s': %s", intent, e, exc_info=True)
-            return "I encountered an error processing that request."
+            confirmed: bool = await self.voice.ask_confirm(prompt)
+            if not confirmed:
+                logger.info("User rejected action '%s' via voice.", tool_name)
+            return confirmed
+        except Exception as exc:
+            logger.error("Voice confirmation failed: %s — blocking action '%s'.", exc, tool_name)
+            return False
 
-    # ── Handlers ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────
+    # ReflectionEngine integration
+    # ─────────────────────────────────────────
 
-    def _handle_general_query(self, user_input: str, entities: dict) -> str:
-        """Pass through to LLM with memory context injection."""
-        context = self.memory.get_context(user_input)
-        augmented = f"{context}\nUser: {user_input}" if context else user_input
-        return self.controller.query(augmented)
+    async def _feed_reflection(self, tool_name: str, args: dict, result: ToolResult):
+        """Push execution result into the ReflectionEngine asynchronously."""
+        try:
+            payload = {
+                "tool": tool_name,
+                "args": args,
+                **result.to_reflection_payload(),
+            }
+            # Support both sync and async reflection interfaces
+            if hasattr(self.reflection, "record_action"):
+                import asyncio, inspect
+                fn = self.reflection.record_action
+                if inspect.iscoroutinefunction(fn):
+                    await fn(payload)
+                else:
+                    await asyncio.to_thread(fn, payload)
+        except Exception as exc:
+            logger.warning("ReflectionEngine update failed: %s", exc)
 
-    def _handle_physical_actuate(self, user_input: str, entities: dict) -> str:
-        """
-        Execute a physical device actuation.
+    # ─────────────────────────────────────────
+    # Private tool runners (unpack args dicts)
+    # ─────────────────────────────────────────
 
-        Expects entities:
-            device (str): e.g. 'LIGHT', 'FAN'
-            state  (str): e.g. 'ON', 'OFF'
-        """
-        if not self.serial:
-            return "Hardware controller is not available."
+    async def _run_list_directory(self, args: dict) -> ToolResult:
+        return await async_list_directory(args["path"])
 
-        device = entities.get("device", "UNKNOWN").upper()
-        state = entities.get("state", "TOGGLE").upper()
+    async def _run_read_file(self, args: dict) -> ToolResult:
+        return await async_read_file(args["path"])
 
-        result = self.serial.actuate(device, state)
+    async def _run_write_file(self, args: dict) -> ToolResult:
+        return await async_write_file(args["path"], args["content"], args.get("overwrite", False))
 
-        if result["success"]:
-            return f"Done. {device} is now {state}."
-        else:
-            return f"Failed to actuate {device}. Hardware responded: {result['response']}"
+    async def _run_delete_file(self, args: dict) -> ToolResult:
+        return await async_delete_file(args["path"])
 
-    def _handle_sensor_read(self, user_input: str, entities: dict) -> str:
-        """
-        Read a sensor value and return a natural language response.
+    async def _run_launch_application(self, args: dict) -> ToolResult:
+        return await async_launch_application(args["target"], args.get("args"))
 
-        Expects entities:
-            sensor (str): e.g. 'TEMPERATURE', 'HUMIDITY'
-        """
-        if not self.serial:
-            return "Hardware controller is not available."
+    async def _run_execute_shell(self, args: dict) -> ToolResult:
+        return await async_execute_shell(args["command"], args.get("working_dir"))
 
-        sensor = entities.get("sensor", "TEMPERATURE").upper()
-        result = self.serial.read_sensor(sensor)
 
-        if result["success"]:
-            value = result["value"]
-            if sensor == "TEMPERATURE":
-                return f"The current temperature is {value} degrees Celsius."
-            elif sensor == "HUMIDITY":
-                return f"Current humidity is {value} percent."
-            else:
-                return f"{sensor} reading: {value}."
-        else:
-            return f"Could not read {sensor} sensor. Check hardware connection."
+# ─────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────
 
-    def _handle_memory_store(self, user_input: str, entities: dict) -> str:
-        content = entities.get("content", user_input)
-        self.memory.store(content)
-        return "Got it. I've stored that in memory."
-
-    def _handle_memory_recall(self, user_input: str, entities: dict) -> str:
-        query = entities.get("query", user_input)
-        results = self.memory.search(query)
-        if results:
-            return f"I found this in memory: {results[0]}"
-        return "I don't have anything relevant in memory about that."
-
-    def _handle_system_command(self, user_input: str, entities: dict) -> str:
-        """Placeholder for OS-level commands (Phase 6)."""
-        return "System commands will be available in the next update."
+def _summarise_action(tool_name: str, args: dict) -> str:
+    summaries = {
+        "execute_shell":      lambda a: f"run the shell command: {a.get('command', '?')}",
+        "write_file":         lambda a: f"write to the file: {a.get('path', '?')}",
+        "delete_file":        lambda a: f"permanently delete: {a.get('path', '?')}",
+        "launch_application": lambda a: f"launch: {a.get('target', '?')}",
+        "read_file":          lambda a: f"read: {a.get('path', '?')}",
+        "list_directory":     lambda a: f"list directory: {a.get('path', '?')}",
+    }
+    return summaries.get(tool_name, lambda a: tool_name)(args)

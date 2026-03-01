@@ -71,9 +71,10 @@ class JarvisVoiceLoop:
         """Load Phase 4 HybridMemory + LLM controller."""
         self.logger.info("Initializing memory and LLM brain...")
         try:
+            # FIXED IMPORT PATHS HERE
             from core.memory.hybrid_memory import HybridMemory
-            from core.llm.controller import Controller
-            from core.intent.classifier import IntentClassifier
+            from core.controller_v2 import Controller
+            from core.planning.intents import IntentClassifier
 
             self.memory = HybridMemory(self.config)
             self.controller = Controller(self.config)
