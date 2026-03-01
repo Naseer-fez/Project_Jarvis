@@ -1,20 +1,12 @@
 ﻿"""
 core/execution/dispatcher.py
 Jarvis V3 - Execution Dispatcher
-
-Flow:
-  Planner JSON action
-      → Dispatcher.dispatch()
-          → _check_policy()       # AutonomyPolicy gate
-              → ask_confirm()     # Voice confirmation if REQUIRE_CONFIRM
-          → _execute_tool()       # Actual tool call
-          → ReflectionEngine      # Feed result back
 """
 
 import logging
 from typing import Any
 
-from core.agentic.autonomy_policy import AutonomyPolicy, PolicyDecision
+from core.agentic.autonomy_policy import AutonomyPolicy, PolicyDecision, PolicyVerdict
 from core.tools.system_automation import (
     TOOL_REGISTRY,
     ToolResult,
@@ -57,21 +49,7 @@ class Dispatcher:
             "execute_shell":      self._run_execute_shell,
         }
 
-    # ─────────────────────────────────────────
-    # Public entry point
-    # ─────────────────────────────────────────
-
     async def dispatch(self, action: dict[str, Any]) -> ToolResult:
-        """
-        Dispatch a planner-generated action dict.
-
-        Expected shape:
-            {
-                "tool": "execute_shell",
-                "args": {"command": "dir C:\\", "working_dir": null},
-                "rationale": "User asked for directory listing"   # optional
-            }
-        """
         tool_name: str = action.get("tool", "")
         args: dict = action.get("args", {})
         rationale: str = action.get("rationale", "")
@@ -102,38 +80,38 @@ class Dispatcher:
         await self._feed_reflection(tool_name, args, result)
         return result
 
-    # ─────────────────────────────────────────
-    # Policy & Confirmation
-    # ─────────────────────────────────────────
-
     async def _check_policy(self, tool_name: str, args: dict, risk_score: float) -> bool:
         """
-        Returns True if execution is permitted.
-        Order of checks:
-          1. AutonomyPolicy decides based on its current state.
-          2. If risk_score >= CONFIRM_THRESHOLD, override to REQUIRE_CONFIRM.
-          3. If REQUIRE_CONFIRM, ask the voice layer; block if rejected or unavailable.
+        Returns True if execution is permitted by the AutonomyPolicy.
         """
-        decision: PolicyDecision = self.policy.evaluate(tool_name, risk_score=risk_score, args=args)
+        # Create a mock context compatible with your AutonomyPolicy rules
+        class MinimalContext:
+            interrupt_flag = False
+            paused = False
+            risk_score = risk_score
+            confidence_score = 0.99
+            def snapshot(self): return {"risk_score": risk_score}
 
-        if decision == PolicyDecision.BLOCK:
-            logger.warning("Policy BLOCKED tool='%s'", tool_name)
+        ctx = MinimalContext()
+
+        decision: PolicyDecision = self.policy.check(context=ctx, action_name=tool_name, params=args)
+
+        if decision.verdict == PolicyVerdict.DENY:
+            logger.warning("Policy DENIED tool='%s'. Reason: %s", tool_name, decision.reason)
             return False
 
-        if decision == PolicyDecision.ALLOW and risk_score < CONFIRM_THRESHOLD:
+        if decision.verdict == PolicyVerdict.ALLOW and risk_score < CONFIRM_THRESHOLD:
             return True
 
-        # Anything with risk >= threshold or explicit REQUIRE_CONFIRM
-        logger.info("Policy REQUIRE_CONFIRM for tool='%s'", tool_name)
+        # If REQUIRE_APPROVAL or risk >= CONFIRM_THRESHOLD
+        logger.info("Policy REQUIRE_APPROVAL for tool='%s'", tool_name)
         return await self._ask_voice_confirm(tool_name, args)
 
     async def _ask_voice_confirm(self, tool_name: str, args: dict) -> bool:
-        """Delegate to the Voice Layer's ask_confirm(). Returns False if unavailable."""
         if self.voice is None:
             logger.warning("No voice layer attached; blocking high-risk tool '%s' by default.", tool_name)
             return False
 
-        # Build a human-readable summary for TTS
         summary = _summarise_action(tool_name, args)
         prompt = f"I need your approval. I am about to {summary}. Should I proceed?"
 
@@ -146,19 +124,13 @@ class Dispatcher:
             logger.error("Voice confirmation failed: %s — blocking action '%s'.", exc, tool_name)
             return False
 
-    # ─────────────────────────────────────────
-    # ReflectionEngine integration
-    # ─────────────────────────────────────────
-
     async def _feed_reflection(self, tool_name: str, args: dict, result: ToolResult):
-        """Push execution result into the ReflectionEngine asynchronously."""
         try:
             payload = {
                 "tool": tool_name,
                 "args": args,
                 **result.to_reflection_payload(),
             }
-            # Support both sync and async reflection interfaces
             if hasattr(self.reflection, "record_action"):
                 import asyncio, inspect
                 fn = self.reflection.record_action
@@ -168,10 +140,6 @@ class Dispatcher:
                     await asyncio.to_thread(fn, payload)
         except Exception as exc:
             logger.warning("ReflectionEngine update failed: %s", exc)
-
-    # ─────────────────────────────────────────
-    # Private tool runners (unpack args dicts)
-    # ─────────────────────────────────────────
 
     async def _run_list_directory(self, args: dict) -> ToolResult:
         return await async_list_directory(args["path"])
@@ -190,11 +158,6 @@ class Dispatcher:
 
     async def _run_execute_shell(self, args: dict) -> ToolResult:
         return await async_execute_shell(args["command"], args.get("working_dir"))
-
-
-# ─────────────────────────────────────────────
-# Helpers
-# ─────────────────────────────────────────────
 
 def _summarise_action(tool_name: str, args: dict) -> str:
     summaries = {
