@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section>
+    <div id="state-badge" class="state-badge state-{{ state.state }}">{{ state.state }}</div>
+    <div class="last-input-line">Last input: <span id="last-input">{{ state.last_input or "..." }}</span></div>
+    <div id="last-response" class="response-panel">{{ state.last_response }}</div>
+
+    <form id="command-form" class="command-row">
+      <input id="command-input" class="cmd-input" type="text" placeholder="Enter command..." autocomplete="off">
+      <button class="btn" type="submit">Send</button>
+      <span id="cmd-spinner" class="spinner hidden" aria-hidden="true"></span>
+    </form>
+
+    <div id="session-info" class="info-bar">
+      Session {{ state.session_id or "n/a" }} | Model {{ state.model }} | Uptime 0.0s |
+      Memory {{ state.memory_count }} | Active goals {{ state.active_goals }} |
+      Ollama {% if state.ollama_online %}●{% else %}○{% endif %}
+    </div>
+  </section>
+{% endblock %}
