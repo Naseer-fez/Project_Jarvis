@@ -17,11 +17,30 @@ from dataclasses import dataclass, field
 from typing import Optional
 import httpx
 
-from core.state_machine import StateMachine, AgentState
-from core.task_planner import TaskPlanner, Plan, PlanStep
-from core.tool_router import ToolRouter, ToolObservation
-from core.risk_evaluator import RiskEvaluator, RiskLevel
-from core.autonomy_governor import AutonomyGovernor
+from core.agent.state_machine import StateMachine, AgentState
+from core.llm.task_planner import TaskPlanner
+from core.tools.tool_router import ToolRouter, ToolObservation
+from core.autonomy.risk_evaluator import RiskEvaluator, RiskLevel
+from core.autonomy.autonomy_governor import AutonomyGovernor
+
+# --- Compatibility stubs (Plan/PlanStep not exported by task_planner) ---
+try:
+    from core.llm.task_planner import Plan, PlanStep  # type: ignore[attr-defined]
+except ImportError:
+    from dataclasses import dataclass, field as _field
+    from typing import List as _List
+
+    @dataclass
+    class PlanStep:
+        tool: str = ""
+        args: dict = _field(default_factory=dict)
+        description: str = ""
+
+    @dataclass
+    class Plan:
+        goal: str = ""
+        steps: _List[PlanStep] = _field(default_factory=list)
+# --- End stubs ---
 
 logger = logging.getLogger("Jarvis.AgentLoop")
 

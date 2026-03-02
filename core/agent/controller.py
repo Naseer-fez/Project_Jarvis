@@ -33,7 +33,10 @@ from core.autonomy.autonomy_governor import AutonomyGovernor
 
 # 5. Memory & Audit
 from core.memory.memory_engine import MemoryEngine
-from audit.audit_logger import AuditLogger
+try:
+    from audit.audit_logger import AuditLogger
+except ImportError:
+    from core.logging.audit_logger import AuditLogger
 
 # Optional / External Tools
 try:

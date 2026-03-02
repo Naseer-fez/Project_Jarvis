@@ -5,11 +5,7 @@ All writes are append-only JSON files in outputs/.
 """
 
 import json
-import importlib as _importlib
-import sys as _sys
-_stdlib_logging = _importlib.import_module("logging")
-
-logging = _stdlib_logging
+import logging
 import time
 from pathlib import Path
 from typing import Any

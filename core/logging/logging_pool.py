@@ -14,7 +14,11 @@
 """A thread pool that logs exceptions raised by tasks executed within it."""
 
 from concurrent import futures
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 
 _LOGGER = logging.getLogger(__name__)
 

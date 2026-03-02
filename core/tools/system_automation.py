@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/tools/system_automation.py
 Jarvis V3 - System Automation Tools
 All tools are synchronous internally; the dispatcher awaits them via asyncio.to_thread.

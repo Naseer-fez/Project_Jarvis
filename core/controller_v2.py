@@ -8,8 +8,15 @@ from core.memory.hybrid_memory import HybridMemory
 from core.llm.llm_v2 import LLMClientV2
 
 class JarvisControllerV2:
-    def __init__(self, db_path="memory/memory.db", chroma_path="data/chroma", model_name="deepseek-r1:8b", embedding_model="all-MiniLM-L6-v2"):
-        self.session_id = uuid.uuid4().hex[:8]
+    def __init__(self, config=None, voice=False, db_path="memory/memory.db", chroma_path="data/chroma", model_name="deepseek-r1:8b", embedding_model="all-MiniLM-L6-v2"):
+        self.voice_enabled = voice
+        if config is not None:
+            import configparser
+            if isinstance(config, configparser.ConfigParser):
+                db_path = config.get("memory", "db_path", fallback=db_path)
+                chroma_path = config.get("memory", "chroma_path", fallback=chroma_path)
+                model_name = config.get("llm", "model", fallback=model_name)
+        self.session_id = __import__("uuid").uuid4().hex[:8]
         self.memory = HybridMemory(db_path=db_path, chroma_path=chroma_path, model_name=embedding_model)
         self.llm = LLMClientV2(model_name=model_name)
         self.exchanges = 0
@@ -66,3 +73,31 @@ class JarvisControllerV2:
     def session_summary(self):
         return {"session_id": self.session_id, "exchanges": self.exchanges}
 
+
+
+
+    async def start(self):
+        """Initialize and start the controller."""
+        self.initialize()
+
+    async def run_cli(self):
+        """Interactive CLI loop."""
+        import asyncio
+        print(f"Jarvis V2 ready (session {self.session_id}). Type 'exit' to quit.")
+        loop = asyncio.get_event_loop()
+        while True:
+            try:
+                user_input = await loop.run_in_executor(None, input, "You: ")
+            except EOFError:
+                break
+            if user_input.strip().lower() in ("exit", "quit"):
+                break
+            response = self.process(user_input)
+            print(f"Jarvis: {response}")
+
+    async def shutdown(self):
+        """Graceful shutdown."""
+        pass
+
+# Alias for backward-compatible import in main.py
+Controller = JarvisControllerV2

@@ -27,7 +27,11 @@ These streams may be configured independently using the standard library's
 `logging` module.  For example, you may wish to send ``tornado.access`` logs
 to a separate file for analysis.
 """
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 import logging.handlers
 import sys
 

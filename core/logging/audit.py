@@ -7,7 +7,11 @@ Must be inspectable by humans at any time.
 """
 
 import json
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path

@@ -26,7 +26,11 @@ from chromadb.telemetry.opentelemetry import (
 from overrides import override
 from typing import Sequence, Optional, cast
 from uuid import UUID
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 
 logger = logging.getLogger(__name__)
 

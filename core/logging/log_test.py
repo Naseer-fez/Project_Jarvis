@@ -14,7 +14,11 @@
 # under the License.
 import contextlib
 import glob
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 import os
 import re
 import subprocess

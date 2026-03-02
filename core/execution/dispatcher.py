@@ -1,4 +1,4 @@
-﻿"""
+"""
 core/execution/dispatcher.py
 Jarvis V3 - Execution Dispatcher
 """

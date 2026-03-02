@@ -1,6 +1,10 @@
 import datetime
 import functools
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 import os
 import re
 import time as time_mod

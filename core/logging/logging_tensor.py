@@ -4,7 +4,11 @@ import torch
 from torch.utils._pytree import tree_map
 from typing import Optional
 from collections.abc import Iterator
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 import contextlib
 import itertools
 from torch.utils._dtype_abbrs import dtype_abbrs as _dtype_abbrs

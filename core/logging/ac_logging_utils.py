@@ -1,5 +1,9 @@
 import json
-import logging
+import importlib as _importlib
+import sys as _sys
+_stdlib_logging = _importlib.import_module("logging")
+
+logging = _stdlib_logging
 from typing import Any
 
 from torch._logging import trace_structured
