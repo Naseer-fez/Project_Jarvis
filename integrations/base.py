@@ -3,10 +3,31 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any
 
 
 IntegrationResult = dict[str, Any]
+
+
+@dataclass
+class ToolResult:
+    """Standardised return type for all Jarvis tool functions.
+
+    Attributes:
+        success: True if the tool call succeeded.
+        data:    Payload on success (arbitrary dict).
+        error:   Human-readable error message on failure.
+    """
+
+    success: bool
+    data: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+
+    def __repr__(self) -> str:
+        if self.success:
+            return f"ToolResult(success=True, data={self.data})"
+        return f"ToolResult(success=False, error={self.error!r})"
 
 
 class BaseIntegration(ABC):
@@ -39,4 +60,5 @@ class BaseIntegration(ABC):
         """
 
 
-__all__ = ["BaseIntegration", "IntegrationResult"]
+__all__ = ["BaseIntegration", "IntegrationResult", "ToolResult"]
+

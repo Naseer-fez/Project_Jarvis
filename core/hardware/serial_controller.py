@@ -10,6 +10,7 @@ Protocol (simple text-based):
 Falls back to simulation mode gracefully if hardware is absent.
 """
 
+import asyncio
 import logging
 import threading
 import time
@@ -166,3 +167,39 @@ class SerialController:
             except Exception as e:
                 logger.warning("Error closing serial port: %s", e)
         self._connected = False
+
+    # ── Async extensions (Session 7) ────────────────────────────────────────
+
+    async def async_send_command(self, cmd: str, value: str = "") -> dict:
+        """Async wrapper around send_command; offloads blocking I/O to executor."""
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, self.send_command, cmd, value)
+        return {"success": True, "response": str(result), "simulated": self._simulation_mode}
+
+    async def firmware_ping(self) -> bool:
+        """Return True if the device responds with PONG to a PING command."""
+        if self._simulation_mode:
+            return True
+        try:
+            r = await self.async_send_command("PING")
+            return "PONG" in str(r.get("response", ""))
+        except Exception:
+            return False
+
+    async def sensor_read_loop(self, callback, interval: float = 1.0) -> None:
+        """Continuously poll sensors and invoke callback with each reading."""
+        import random
+        while getattr(self, "_running", True):
+            await asyncio.sleep(interval)
+            if self._simulation_mode:
+                data = {
+                    "temperature": round(random.uniform(20.0, 25.0), 1),
+                    "humidity": round(random.uniform(40.0, 60.0), 1),
+                    "simulated": True,
+                }
+            else:
+                data = await self.async_send_command("READ_SENSORS")
+            if asyncio.iscoroutinefunction(callback):
+                await callback(data)
+            else:
+                callback(data)

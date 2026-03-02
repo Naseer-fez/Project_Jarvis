@@ -101,6 +101,142 @@ SYSTEM_TOOL_SCHEMA: dict[str, Any] = {
             },
             "required_args": ["command"],
         },
+        # ── Hardware tools (Session 7) ──────────────────────────────────────
+        {
+            "name": "send_hardware_command",
+            "description": "Send a command to a registered Arduino/hardware device.",
+            "risk": "confirm",
+            "args": {
+                "device_name": {"type": "string", "description": "Registered device name (e.g. 'main_arduino')."},
+                "command": {"type": "string", "description": "Command string (e.g. 'LIGHT')."},
+                "value": {"type": "string", "description": "Optional value string (e.g. 'ON').", "default": ""},
+            },
+            "required_args": ["device_name", "command"],
+        },
+        {
+            "name": "read_sensor",
+            "description": "Read sensor data from a registered hardware device.",
+            "risk": "low",
+            "args": {
+                "device_name": {"type": "string", "description": "Registered device name."},
+                "sensor_type": {"type": "string", "description": "Sensor identifier (e.g. 'TEMPERATURE'). Defaults to 'all'.", "default": "all"},
+            },
+            "required_args": ["device_name"],
+        },
+        {
+            "name": "list_hardware_devices",
+            "description": "List all registered hardware devices and their connection status.",
+            "risk": "low",
+            "args": {},
+            "required_args": [],
+        },
+        {
+            "name": "ping_device",
+            "description": "Ping a hardware device to check if its firmware is responsive.",
+            "risk": "low",
+            "args": {
+                "device_name": {"type": "string", "description": "Registered device name."},
+            },
+            "required_args": ["device_name"],
+        },
+        # ── Screen tools (Session 7) ────────────────────────────────────────
+        {
+            "name": "capture_screen",
+            "description": "Take a full-screen screenshot and save it to outputs/screenshots/.",
+            "risk": "low",
+            "args": {},
+            "required_args": [],
+        },
+        {
+            "name": "capture_region",
+            "description": "Screenshot a specific screen region.",
+            "risk": "low",
+            "args": {
+                "x": {"type": "integer", "description": "Left edge in pixels."},
+                "y": {"type": "integer", "description": "Top edge in pixels."},
+                "width": {"type": "integer", "description": "Region width in pixels."},
+                "height": {"type": "integer", "description": "Region height in pixels."},
+            },
+            "required_args": ["x", "y", "width", "height"],
+        },
+        {
+            "name": "find_text_on_screen",
+            "description": "Search for a text string on screen using OCR and return bounding boxes.",
+            "risk": "low",
+            "args": {
+                "text": {"type": "string", "description": "Text to search for (case-insensitive)."},
+            },
+            "required_args": ["text"],
+        },
+        {
+            "name": "describe_screen",
+            "description": "Describe screen contents via vision LLM or OCR fallback.",
+            "risk": "low",
+            "args": {},
+            "required_args": [],
+        },
+        # ── GUI control tools (Session 7) ───────────────────────────────────
+        {
+            "name": "click",
+            "description": "Click at the given screen coordinates. Includes mandatory 300ms safety delay.",
+            "risk": "confirm",
+            "args": {
+                "x": {"type": "integer", "description": "X coordinate in pixels."},
+                "y": {"type": "integer", "description": "Y coordinate in pixels."},
+                "button": {"type": "string", "description": "Mouse button: 'left', 'right', or 'middle'.", "default": "left"},
+            },
+            "required_args": ["x", "y"],
+        },
+        {
+            "name": "double_click",
+            "description": "Double-click at the given screen coordinates.",
+            "risk": "confirm",
+            "args": {
+                "x": {"type": "integer", "description": "X coordinate in pixels."},
+                "y": {"type": "integer", "description": "Y coordinate in pixels."},
+            },
+            "required_args": ["x", "y"],
+        },
+        {
+            "name": "right_click",
+            "description": "Right-click at the given screen coordinates.",
+            "risk": "confirm",
+            "args": {
+                "x": {"type": "integer", "description": "X coordinate in pixels."},
+                "y": {"type": "integer", "description": "Y coordinate in pixels."},
+            },
+            "required_args": ["x", "y"],
+        },
+        {
+            "name": "type_text",
+            "description": "Type text at the current cursor position. Refuses sensitive keywords.",
+            "risk": "confirm",
+            "args": {
+                "text": {"type": "string", "description": "Text to type."},
+                "interval": {"type": "number", "description": "Delay between keystrokes in seconds.", "default": 0.05},
+            },
+            "required_args": ["text"],
+        },
+        {
+            "name": "hotkey",
+            "description": "Press a keyboard shortcut (e.g. Ctrl+C).",
+            "risk": "confirm",
+            "args": {
+                "keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of key names to press simultaneously (e.g. ['ctrl', 'c']).",
+                },
+            },
+            "required_args": ["keys"],
+        },
+        {
+            "name": "get_active_window",
+            "description": "Return the title and geometry of the currently focused window.",
+            "risk": "low",
+            "args": {},
+            "required_args": [],
+        },
     ]
 }
 

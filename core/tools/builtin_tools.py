@@ -134,6 +134,7 @@ async def log_event(content: str, category: str = "general") -> str:
 
 def register_all_tools(router):
     """Register all built-in tools with a ToolRouter instance."""
+    # ── Core tools ─────────────────────────────────────────────────────────
     router.register("get_time", get_time)
     router.register("get_system_stats", get_system_stats)
     router.register("list_directory", list_directory)
@@ -141,6 +142,59 @@ def register_all_tools(router):
     router.register("write_file_safe", write_file_safe)
     router.register("search_memory", search_memory)
     router.register("log_event", log_event)
-    logger.info(f"Registered {len(router.registered_tools())} tools: {router.registered_tools()}")
+
+    # ── Hardware tools (Session 7) ─────────────────────────────────────────
+    try:
+        from core.tools.hardware_tools import (
+            send_hardware_command,
+            read_sensor,
+            list_hardware_devices,
+            ping_device,
+        )
+        router.register("send_hardware_command", send_hardware_command)
+        router.register("read_sensor", read_sensor)
+        router.register("list_hardware_devices", list_hardware_devices)
+        router.register("ping_device", ping_device)
+        logger.info("Hardware tools registered (Session 7)")
+    except Exception as e:
+        logger.warning("Hardware tools unavailable: %s", e)
+
+    # ── Screen tools (Session 7) ───────────────────────────────────────────
+    try:
+        from core.tools.screen import (
+            capture_screen,
+            capture_region,
+            find_text_on_screen,
+            describe_screen,
+        )
+        router.register("capture_screen", capture_screen)
+        router.register("capture_region", capture_region)
+        router.register("find_text_on_screen", find_text_on_screen)
+        router.register("describe_screen", describe_screen)
+        logger.info("Screen tools registered (Session 7)")
+    except Exception as e:
+        logger.warning("Screen tools unavailable: %s", e)
+
+    # ── GUI control tools (Session 7) ──────────────────────────────────────
+    try:
+        from core.tools.gui_control import (
+            click,
+            double_click,
+            right_click,
+            type_text,
+            hotkey,
+            get_active_window,
+        )
+        router.register("click", click)
+        router.register("double_click", double_click)
+        router.register("right_click", right_click)
+        router.register("type_text", type_text)
+        router.register("hotkey", hotkey)
+        router.register("get_active_window", get_active_window)
+        logger.info("GUI control tools registered (Session 7)")
+    except Exception as e:
+        logger.warning("GUI control tools unavailable: %s", e)
+
+    logger.info("Registered %d tools total: %s", len(router.registered_tools()), router.registered_tools())
 
 

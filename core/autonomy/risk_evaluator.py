@@ -82,6 +82,13 @@ class RiskEvaluator:
             "send_whatsapp",
             "add_event",
             "add_calendar_event",
+            # Session 7 — GUI / hardware actions that need user confirmation
+            "click",
+            "double_click",
+            "right_click",
+            "type_text",
+            "hotkey",
+            "send_hardware_command",
         }
     )
 
@@ -146,6 +153,15 @@ class RiskEvaluator:
             "read_file",
             "search_code",
             "run_linter",
+            # Session 7 — read-only screen + hardware tools
+            "capture_screen",
+            "capture_region",
+            "find_text_on_screen",
+            "describe_screen",
+            "get_active_window",
+            "list_hardware_devices",
+            "ping_device",
+            "read_sensor",
         }
     )
 
