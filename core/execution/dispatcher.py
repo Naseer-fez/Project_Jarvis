@@ -69,7 +69,7 @@ class Dispatcher:
             return await self._dispatch_core_tool(tool_name, args, risk_score)
 
         # 2) Dynamic integrations second.
-        if integration_registry is not None and tool_name in self._integration_tool_names():
+        if self._has_integration_tool(tool_name):
             risk_score = float(INTEGRATION_RISK_REGISTRY.get(tool_name, 0.6))
             logger.info(
                 "Dispatch integration tool='%s' risk=%.2f rationale='%s'",
@@ -95,6 +95,19 @@ class Dispatcher:
             }
         except Exception:  # noqa: BLE001
             return set()
+
+    def _has_integration_tool(self, tool_name: str) -> bool:
+        if integration_registry is None:
+            return False
+
+        getter = getattr(integration_registry, "get_tool", None)
+        if callable(getter):
+            try:
+                return getter(tool_name) is not None
+            except Exception:  # noqa: BLE001
+                pass
+
+        return tool_name in self._integration_tool_names()
 
     async def _dispatch_core_tool(self, tool_name: str, args: dict[str, Any], risk_score: float) -> ToolResult:
         allowed = await self._check_policy(tool_name, args, risk_score)

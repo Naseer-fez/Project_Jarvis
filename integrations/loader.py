@@ -1,4 +1,4 @@
-﻿"""Auto-loader for integration clients under integrations/clients."""
+"""Auto-loader for integration clients under integrations/clients."""
 
 from __future__ import annotations
 
@@ -9,112 +9,64 @@ from pathlib import Path
 from typing import Any
 
 from integrations.base import BaseIntegration
-from integrations.registry import IntegrationRegistry
 
 logger = logging.getLogger(__name__)
 
 
-def _discover_modules() -> list[str]:
-    clients_dir = Path(__file__).resolve().parent / "clients"
-    if not clients_dir.exists():
-        return []
+class IntegrationLoader:
+    def load_all(self, config: Any, registry: Any) -> dict[str, list[str]]:
+        del config  # Kept for callsite compatibility; integrations use env-only config.
 
-    modules: list[str] = []
-    for file_path in sorted(clients_dir.glob("*.py")):
-        if file_path.name == "__init__.py":
-            continue
-        modules.append(f"integrations.clients.{file_path.stem}")
-    return modules
+        loaded: list[str] = []
+        skipped: list[str] = []
 
+        clients_dir = Path(__file__).parent / "clients"
+        if not clients_dir.exists():
+            return {"loaded": [], "skipped": ["clients/ dir not found"]}
 
-def _integration_classes(module: Any) -> list[type[BaseIntegration]]:
-    classes: list[type[BaseIntegration]] = []
-    for _, member in inspect.getmembers(module, inspect.isclass):
-        if member is BaseIntegration:
-            continue
-        if not issubclass(member, BaseIntegration):
-            continue
-        if member.__module__ != module.__name__:
-            continue
-        classes.append(member)
-    return classes
+        for py_file in sorted(clients_dir.glob("*.py")):
+            if py_file.name.startswith("_"):
+                continue
 
-
-def _build_instance(cls: type[BaseIntegration], config: Any) -> BaseIntegration:
-    for ctor in (
-        lambda: cls(config=config),
-        lambda: cls(config),
-        lambda: cls(),
-    ):
-        try:
-            return ctor()
-        except TypeError:
-            continue
-    return cls()
-
-
-def load_all(config: Any, registry: IntegrationRegistry) -> dict[str, list[str]]:
-    """Discover all clients and register available integrations."""
-    summary: dict[str, list[str]] = {
-        "loaded": [],
-        "skipped": [],
-        "errors": [],
-    }
-
-    for module_name in _discover_modules():
-        try:
-            module = importlib.import_module(module_name)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Integration module import failed: %s (%s)", module_name, exc)
-            summary["errors"].append(f"{module_name}: {exc}")
-            continue
-
-        classes = _integration_classes(module)
-        if not classes:
-            logger.info("No BaseIntegration subclass found in %s", module_name)
-            summary["skipped"].append(f"{module_name}: no integration class")
-            continue
-
-        for cls in classes:
-            fqcn = f"{module_name}.{cls.__name__}"
+            module_name = f"integrations.clients.{py_file.stem}"
             try:
-                instance = _build_instance(cls, config)
+                module = importlib.import_module(module_name)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Integration instantiation failed: %s (%s)", fqcn, exc)
-                summary["errors"].append(f"{fqcn}: {exc}")
+                skipped.append(f"{py_file.stem} (import error: {exc})")
+                logger.warning("Integration import failed %s: %s", py_file.stem, exc)
                 continue
 
-            try:
-                available = bool(instance.is_available())
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Availability check failed: %s (%s)", fqcn, exc)
-                summary["errors"].append(f"{fqcn}: {exc}")
-                continue
+            for _, cls in inspect.getmembers(module, inspect.isclass):
+                if cls is BaseIntegration or not issubclass(cls, BaseIntegration):
+                    continue
+                if cls.__module__ != module_name:
+                    continue
 
-            if not available:
-                reason = (getattr(instance, "unavailable_reason", "") or "unavailable").strip()
-                logger.info("Integration skipped: %s (%s)", fqcn, reason)
-                summary["skipped"].append(f"{fqcn}: {reason}")
-                continue
+                try:
+                    instance = cls()
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append(f"{cls.__name__} (init error: {exc})")
+                    logger.warning("Integration init failed %s: %s", cls.__name__, exc)
+                    continue
 
-            try:
-                registry.register(instance)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Integration register failed: %s (%s)", fqcn, exc)
-                summary["errors"].append(f"{fqcn}: {exc}")
-                continue
+                try:
+                    if bool(instance.is_available()):
+                        registry.register(instance)
+                        loaded.append(instance.name or cls.__name__)
+                        logger.info("Integration loaded: %s", instance.name or cls.__name__)
+                    else:
+                        skipped.append(f"{cls.__name__} (not available)")
+                        logger.debug("Integration skipped: %s", cls.__name__)
+                except Exception as exc:  # noqa: BLE001
+                    skipped.append(f"{cls.__name__} (availability/register error: {exc})")
+                    logger.warning("Integration registration failed %s: %s", cls.__name__, exc)
 
-            loaded_name = instance.name or cls.__name__
-            summary["loaded"].append(loaded_name)
-            logger.info("Integration loaded: %s", loaded_name)
-
-    logger.info(
-        "Integration load complete | loaded=%d skipped=%d errors=%d",
-        len(summary["loaded"]),
-        len(summary["skipped"]),
-        len(summary["errors"]),
-    )
-    return summary
+        return {"loaded": loaded, "skipped": skipped}
 
 
-__all__ = ["load_all"]
+def load_all(config: Any, registry: Any) -> dict[str, list[str]]:
+    """Backward-compatible function wrapper for older callsites."""
+    return IntegrationLoader().load_all(config=config, registry=registry)
+
+
+__all__ = ["IntegrationLoader", "load_all"]

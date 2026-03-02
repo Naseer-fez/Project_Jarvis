@@ -19,8 +19,8 @@ from core.memory.memory_engine import MemoryEngine
 from core.planning.intents import Intent, IntentClassifierV2
 from core.tools.builtin_tools import register_all_tools
 from core.tools.tool_router import ToolRouter
-from integrations.loader import load_all
-from integrations.registry import integration_registry
+from integrations.loader import IntegrationLoader
+from integrations.registry import integration_registry as api_registry
 
 try:
     from audit.audit_logger import AuditLogger
@@ -103,10 +103,11 @@ class MainController:
         if HAS_VISION:
             self.router.register("see", analyze_image)
 
-        self.integration_registry = integration_registry
+        self.integration_registry = api_registry
         try:
-            summary = load_all(self.config, self.integration_registry)
-            logger.info("Integration load summary: %s", summary)
+            self.integration_loader = IntegrationLoader()
+            result = self.integration_loader.load_all(self.config, self.integration_registry)
+            logger.info("Integrations: %s loaded, %d skipped", result["loaded"], len(result["skipped"]))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Integration loader failed: %s", exc)
 

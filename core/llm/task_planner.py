@@ -11,9 +11,9 @@ from typing import Any
 from core.planning.plan_schema import build_unknown_plan, normalize_plan
 
 try:
-    from integrations.registry import integration_registry
+    from integrations.registry import api_registry
 except Exception:  # noqa: BLE001
-    integration_registry = None  # type: ignore[assignment]
+    api_registry = None  # type: ignore[assignment]
 
 
 SYSTEM_TOOL_SCHEMA: dict[str, Any] = {
@@ -137,11 +137,14 @@ Return this structure:
 def _build_tool_schema() -> dict[str, Any]:
     merged = deepcopy(SYSTEM_TOOL_SCHEMA)
 
-    if integration_registry is None:
+    if api_registry is None:
         return merged
 
     try:
-        dynamic_tools = integration_registry.get_tools()
+        if hasattr(api_registry, "list_schemas"):
+            dynamic_tools = api_registry.list_schemas()  # type: ignore[assignment]
+        else:
+            dynamic_tools = api_registry.get_tools()  # type: ignore[assignment]
     except Exception:
         dynamic_tools = []
 

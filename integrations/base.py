@@ -14,6 +14,7 @@ class BaseIntegration(ABC):
 
     name: str = ""
     description: str = ""
+    required_config: list[str] = []
 
     def __init__(self, config: Any | None = None) -> None:
         self.config = config
@@ -21,11 +22,14 @@ class BaseIntegration(ABC):
 
     @abstractmethod
     def is_available(self) -> bool:
-        """Return True when the integration is fully configured and usable."""
+        """
+        Return True if dependencies are installed and required env vars are set.
+        Never raise from this method; return False silently when unavailable.
+        """
 
     @abstractmethod
     def get_tools(self) -> list[dict[str, Any]]:
-        """Return planner-visible tool definitions owned by this integration."""
+        """Return tool schema dicts in the planner SYSTEM_TOOL_SCHEMA format."""
 
     @abstractmethod
     async def execute(self, tool_name: str, args: dict[str, Any]) -> IntegrationResult:

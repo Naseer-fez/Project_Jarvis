@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any
 
@@ -59,6 +60,20 @@ class IntegrationRegistry:
                     merged.append(dict(tool))
         return merged
 
+    def list_schemas(self) -> list[dict[str, Any]]:
+        """Compatibility alias for planner-facing tool schemas."""
+        return self.get_tools()
+
+    def get_tool(self, tool_name: str) -> BaseIntegration | None:
+        owner = self._tool_owner.get(str(tool_name).strip())
+        if not owner:
+            return None
+        return self._integrations.get(owner)
+
+    def list_tools(self) -> dict[str, str]:
+        """Return tool name -> integration owner mapping."""
+        return dict(self._tool_owner)
+
     async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         owner = self._tool_owner.get(tool_name)
         if not owner:
@@ -77,22 +92,34 @@ class IntegrationRegistry:
             }
 
         try:
-            result = await integration.execute(tool_name, args or {})
+            execute_fn = getattr(integration, "execute")
+            params = list(inspect.signature(execute_fn).parameters.values())
+            call_args = args or {}
+
+            if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params):
+                result = execute_fn(tool_name, **call_args)
+            else:
+                result = execute_fn(tool_name, call_args)
+
+            if inspect.isawaitable(result):
+                result = await result
         except Exception as exc:  # noqa: BLE001
             logger.exception("Integration '%s' execution failed for tool '%s'", owner, tool_name)
             return {"success": False, "data": None, "error": str(exc)}
 
-        if not isinstance(result, dict):
-            return {
-                "success": False,
-                "data": None,
-                "error": f"Integration '{owner}' returned non-dict result",
+        if isinstance(result, dict):
+            payload = result
+        else:
+            payload = {
+                "success": bool(getattr(result, "success", False)),
+                "data": getattr(result, "data", None),
+                "error": getattr(result, "error", f"Integration '{owner}' returned unsupported result"),
             }
 
         return {
-            "success": bool(result.get("success", False)),
-            "data": result.get("data"),
-            "error": result.get("error"),
+            "success": bool(payload.get("success", False)),
+            "data": payload.get("data"),
+            "error": payload.get("error"),
         }
 
     def list_active(self) -> list[str]:
@@ -100,6 +127,7 @@ class IntegrationRegistry:
 
 
 integration_registry = IntegrationRegistry()
+api_registry = integration_registry
 
 
-__all__ = ["IntegrationRegistry", "integration_registry"]
+__all__ = ["IntegrationRegistry", "integration_registry", "api_registry"]
