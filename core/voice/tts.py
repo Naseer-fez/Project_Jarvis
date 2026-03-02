@@ -58,16 +58,27 @@ class TTS:
     # ── Backend selection (patchable) ─────────────────────────────────────
 
     def _init_backend(self, config: Any) -> str:
-        """Detect the best available backend. Returns 'pyttsx3', 'edge', or 'cli'."""
-        # Try pyttsx3 first (works offline)
-        if pyttsx3 is not None:
-            try:
-                eng = pyttsx3.init()
-                eng.stop()
-                return "pyttsx3"
-            except Exception:  # noqa: BLE001
+        """Detect the best available backend based on configured priority."""
+        try:
+            engines_raw = config.get("voice", "tts_engine", fallback="edge-tts, pyttsx3, cli")
+            engines = [e.strip().lower() for e in engines_raw.split(",")]
+        except Exception:
+            engines = ["edge-tts", "pyttsx3", "cli"]
+
+        for engine in engines:
+            if engine in {"pyttsx3"} and pyttsx3 is not None:
+                try:
+                    eng = pyttsx3.init()
+                    eng.stop()
+                    return "pyttsx3"
+                except Exception:
+                    pass
+            elif engine in {"edge", "edge-tts"}:
+                # Sync TTS doesn't support edge-tts directly yet, but we allow it in the config list
                 pass
-        # CLI / print fallback — always available
+            elif engine in {"cli", "print"}:
+                return "cli"
+
         return "cli"
 
     # ── Properties ────────────────────────────────────────────────────────
@@ -166,11 +177,24 @@ try:
             print(f"Jarvis: {text}")
 
         def _engine_chain(self) -> list[str]:
-            if self.preferred_engine in {"edge", "edge-tts"}:
-                return ["edge", "pyttsx3", "print"]
-            if self.preferred_engine in {"pyttsx3", "offline"}:
-                return ["pyttsx3", "edge", "print"]
-            return ["edge", "pyttsx3", "print"]
+            try:
+                engines_raw = self._config.get("voice", "tts_engine", fallback="edge-tts, pyttsx3, cli")
+                engines = [e.strip().lower() for e in engines_raw.split(",")]
+            except Exception:
+                engines = ["edge", "pyttsx3", "print"]
+
+            chain = []
+            for e in engines:
+                if e in {"edge", "edge-tts"}:
+                    chain.append("edge")
+                elif e in {"pyttsx3", "offline"}:
+                    chain.append("pyttsx3")
+                elif e in {"print", "cli"}:
+                    chain.append("print")
+            
+            if "print" not in chain:
+                chain.append("print")
+            return chain
 
         async def _speak_edge(self, text: str) -> bool:
             if _edge_tts is None:

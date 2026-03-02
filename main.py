@@ -20,6 +20,14 @@ import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+try:
+    from dotenv import load_dotenv
+    # Load .env file from PROJECT_ROOT
+    _env_path = Path(__file__).resolve().parent / ".env"
+    load_dotenv(dotenv_path=_env_path)
+except ImportError:
+    pass
+
 
 def _uprint(msg: str, *, file=None) -> None:
     """Print msg safely regardless of terminal encoding (e.g. cp1252 on Windows)."""

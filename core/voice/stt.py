@@ -187,13 +187,35 @@ class SpeechToText:
             return default
 
     def _choose_backend(self) -> str:
-        if WhisperModel is not None and np is not None and sd is not None:
-            return "faster-whisper"
+        # Initial parsing of priority list
+        try:
+            engines_raw = self._config.get("voice", "stt_engine", fallback="whisper, google, input")
+            engines = [e.strip().lower() for e in engines_raw.split(",")]
+        except Exception:
+            engines = ["whisper", "google", "input"]
+
+        for engine in engines:
+            if engine in {"whisper", "faster-whisper"} and WhisperModel is not None and np is not None and sd is not None:
+                return "faster-whisper"
+            if engine in {"google"} and sd is not None:
+                try:
+                    import speech_recognition as sr
+                    return "google"
+                except ImportError:
+                    logger.debug("SpeechRecognition not installed. Google STT fallback disabled.")
+            if engine in {"input", "cli"}:
+                return "input"
+
         return "input"
 
     async def transcribe(self) -> str:
         if self._backend == "input":
             return await self._read_from_input()
+        if self._backend == "google":
+            loop = asyncio.get_running_loop()
+            text = await loop.run_in_executor(None, self._record_and_transcribe_google)
+            return text.strip() or await self._read_from_input()
+
         loop = asyncio.get_running_loop()
         text = await loop.run_in_executor(None, self._record_and_transcribe)
         return text.strip() or await self._read_from_input()
@@ -214,7 +236,27 @@ class SpeechToText:
             segments, _ = self._model.transcribe(recording.flatten(), language=self.language)
             return " ".join(s.text.strip() for s in segments if s.text).strip()
         except Exception as exc:  # noqa: BLE001
-            logger.warning("STT failed: %s", exc)
+            logger.warning("STT whisper failed: %s", exc)
+            return ""
+
+    def _record_and_transcribe_google(self) -> str:
+        try:
+            import speech_recognition as sr
+            if sd is None: return ""
+            
+            # Record via sounddevice to match exact duration/sample rate cleanly
+            frames = int(self.max_duration_s * self.sample_rate)
+            recording = sd.rec(frames, samplerate=self.sample_rate, channels=1, dtype="int16")
+            sd.wait()
+            
+            # Convert to AudioData
+            audio_data = recording.tobytes()
+            audio = sr.AudioData(audio_data, self.sample_rate, 2)
+            
+            r = sr.Recognizer()
+            return str(r.recognize_google(audio, language=self.language))
+        except Exception as exc:
+            logger.warning("STT google failed: %s", exc)
             return ""
 
 

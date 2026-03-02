@@ -37,3 +37,10 @@ types-setuptools
 sounddevice
 soundfile
 whispercpp
+
+# ---- Automation integrations (Path B) ----
+python-telegram-bot>=20.0
+google-auth
+google-auth-oauthlib
+notion-client
+spotipy

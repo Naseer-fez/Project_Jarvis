@@ -39,9 +39,10 @@ import urllib.error
 
 from core.planning.plan_schema import build_unknown_plan, normalize_plan
 
-# ── System tool definitions ───────────────────────────────────────────────────
+# ── System tool definitions ────────────────────────────────────────────────────
 SYSTEM_TOOL_SCHEMA = {
     "tools": [
+        # ── Local Filesystem ─────────────────────────────────────────────
         {
             "name": "list_directory",
             "description": "List the contents of a directory on the local filesystem.",
@@ -99,7 +100,185 @@ SYSTEM_TOOL_SCHEMA = {
                 "working_dir": {"type": "string", "description": "Optional working directory path.", "default": None}
             },
             "required_args": ["command"]
-        }
+        },
+        # ── Telegram ─────────────────────────────────────────────
+        {
+            "name": "send_telegram",
+            "description": "Send a Telegram message to the configured chat. Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "message": {"type": "string", "description": "Message text (supports HTML)."}
+            },
+            "required_args": ["message"]
+        },
+        {
+            "name": "get_updates",
+            "description": "Fetch the latest incoming Telegram messages for the bot.",
+            "risk": "low",
+            "args": {
+                "limit": {"type": "integer", "default": 10}
+            },
+            "required_args": []
+        },
+        # ── Google Calendar ──────────────────────────────────────
+        {
+            "name": "create_event",
+            "description": "Create a Google Calendar event. Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "summary":  {"type": "string", "description": "Event title."},
+                "start":    {"type": "string", "description": "Start datetime ISO-8601."},
+                "end":      {"type": "string", "description": "End datetime ISO-8601."},
+                "timezone": {"type": "string", "default": "UTC"}
+            },
+            "required_args": ["summary", "start", "end"]
+        },
+        {
+            "name": "list_events",
+            "description": "List upcoming Google Calendar events.",
+            "risk": "low",
+            "args": {
+                "days_ahead":  {"type": "integer", "default": 7},
+                "max_results": {"type": "integer", "default": 10}
+            },
+            "required_args": []
+        },
+        {
+            "name": "delete_event",
+            "description": "Delete a Google Calendar event by ID. Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "event_id": {"type": "string", "description": "Google Calendar event ID."}
+            },
+            "required_args": ["event_id"]
+        },
+        {
+            "name": "find_free_slot",
+            "description": "Find the next available free time slot on Google Calendar.",
+            "risk": "low",
+            "args": {
+                "duration_minutes": {"type": "integer", "default": 60},
+                "days_ahead":       {"type": "integer", "default": 7}
+            },
+            "required_args": []
+        },
+        # ── Gmail ───────────────────────────────────────────────
+        {
+            "name": "list_unread",
+            "description": "List unread Gmail messages.",
+            "risk": "low",
+            "args": {"max_results": {"type": "integer", "default": 10}},
+            "required_args": []
+        },
+        {
+            "name": "send_gmail",
+            "description": "Send an email via Gmail. Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "to":      {"type": "string", "description": "Recipient email."},
+                "subject": {"type": "string"},
+                "body":    {"type": "string"}
+            },
+            "required_args": ["to", "subject", "body"]
+        },
+        {
+            "name": "summarize_unread",
+            "description": "Fetch unread Gmail snippets for LLM summarization (content auto-truncated).",
+            "risk": "low",
+            "args": {"max_results": {"type": "integer", "default": 5}},
+            "required_args": []
+        },
+        {
+            "name": "mark_as_read",
+            "description": "Mark a Gmail message as read. Requires confirmation.",
+            "risk": "confirm",
+            "args": {"message_id": {"type": "string"}},
+            "required_args": ["message_id"]
+        },
+        # ── Notion ──────────────────────────────────────────────
+        {
+            "name": "create_page",
+            "description": "Create a Notion page. Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "parent_id": {"type": "string"},
+                "title":     {"type": "string"},
+                "content":   {"type": "string", "default": ""}
+            },
+            "required_args": ["parent_id", "title"]
+        },
+        {
+            "name": "query_database",
+            "description": "Query a Notion database.",
+            "risk": "low",
+            "args": {
+                "database_id": {"type": "string"},
+                "page_size":   {"type": "integer", "default": 10}
+            },
+            "required_args": ["database_id"]
+        },
+        {
+            "name": "append_block",
+            "description": "Append a text block to a Notion page. Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "page_id": {"type": "string"},
+                "text":    {"type": "string"}
+            },
+            "required_args": ["page_id", "text"]
+        },
+        {
+            "name": "get_page",
+            "description": "Get metadata and blocks from a Notion page.",
+            "risk": "low",
+            "args": {"page_id": {"type": "string"}},
+            "required_args": ["page_id"]
+        },
+        # ── Spotify ─────────────────────────────────────────────
+        {
+            "name": "play_track",
+            "description": "Play a Spotify track (by URI or search query). Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "query":     {"type": "string", "description": "Search query if no URI.", "default": ""},
+                "track_uri": {"type": "string", "default": ""}
+            },
+            "required_args": []
+        },
+        {
+            "name": "pause",
+            "description": "Pause the current Spotify playback.",
+            "risk": "low",
+            "args": {},
+            "required_args": []
+        },
+        {
+            "name": "search_track",
+            "description": "Search Spotify for tracks.",
+            "risk": "low",
+            "args": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 5}
+            },
+            "required_args": ["query"]
+        },
+        {
+            "name": "get_current_track",
+            "description": "Get what's currently playing on Spotify.",
+            "risk": "low",
+            "args": {},
+            "required_args": []
+        },
+        {
+            "name": "create_playlist",
+            "description": "Create a new Spotify playlist. Requires confirmation.",
+            "risk": "confirm",
+            "args": {
+                "name": {"type": "string"},
+                "description": {"type": "string", "default": ""}
+            },
+            "required_args": ["name"]
+        },
     ]
 }
 
@@ -159,7 +338,20 @@ Valid actions:
 memory_read, memory_write, speak, display, status, recall, store_fact, health_check, vision_analyze,
 file_read, file_write, system_stats, app_open, web_search, screen_capture, screen_understand,
 vision_click, gui_click, gui_type, gui_hotkey, serial_connect, serial_send, serial_disconnect,
-physical_actuate, sensor_read
+physical_actuate, sensor_read,
+send_telegram, get_updates,
+create_event, list_events, delete_event, find_free_slot,
+list_unread, send_gmail, summarize_unread, mark_as_read,
+create_page, query_database, append_block, get_page,
+play_track, pause, search_track, get_current_track, create_playlist
+
+For multi-step requests (e.g. 'summarize emails AND add to Notion'), emit a workflow plan:
+{
+  "workflow": [
+    {"tool": "<tool_name>", "args": {<args>}},
+    {"tool": "<tool_name>", "args": {<args>}}
+  ]
+}
 
 Never output these forbidden actions:
 shell_exec, file_delete, registry_write, format_disk, wipe_disk

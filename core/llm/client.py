@@ -94,6 +94,9 @@ class LLMClientV2:
         else:
             model_to_use = self.model
 
+        if model_to_use.startswith("gemini-"):
+            return await self._complete_gemini(model_to_use, prompt, system, temperature)
+
         payload = {
             "model": model_to_use,
             "prompt": prompt,
@@ -121,6 +124,43 @@ class LLMClientV2:
             return ""
         except Exception as exc:  # noqa: BLE001
             logger.error("LLM completion failed: %s", exc)
+            return ""
+
+    async def _complete_gemini(self, model: str, prompt: str, system: str, temperature: float) -> str:
+        """Text completion via Google Gemini API."""
+        import os
+        try:
+            from google import genai
+            from google.genai import types
+        except ImportError:
+            logger.error("google-genai not installed: pip install google-genai")
+            return ""
+
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            logger.error("GEMINI_API_KEY environment variable not set")
+            return ""
+
+        try:
+            client = genai.Client(api_key=api_key)
+            config = types.GenerateContentConfig(
+                temperature=temperature,
+                system_instruction=system if system else None,
+            )
+            # Run the synchronous SDK call in an executor since google-genai handles its own threads better this way
+            loop = asyncio.get_running_loop()
+            
+            def _call():
+                return client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                    config=config
+                )
+                
+            response = await loop.run_in_executor(None, _call)
+            return getattr(response, "text", "") or ""
+        except Exception as exc:
+            logger.error("Gemini completion failed: %s", exc)
             return ""
 
     async def complete_json(

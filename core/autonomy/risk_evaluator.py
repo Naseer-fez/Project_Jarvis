@@ -98,6 +98,16 @@ class RiskEvaluator:
             "type_text",
             "hotkey",
             "send_hardware_command",
+            # Path B — Automation integrations (irreversible / outbound actions)
+            "send_telegram",
+            "create_event",
+            "delete_event",
+            "send_gmail",
+            "mark_as_read",
+            "create_page",
+            "append_block",
+            "play_track",
+            "create_playlist",
         }
     )
 
@@ -166,6 +176,17 @@ class RiskEvaluator:
             "list_hardware_devices",
             "ping_device",
             "read_sensor",
+            # Path B — read-only automation tool calls
+            "get_updates",
+            "list_events",
+            "find_free_slot",
+            "list_unread",
+            "summarize_unread",
+            "query_database",
+            "get_page",
+            "pause",
+            "search_track",
+            "get_current_track",
         }
     )
 
