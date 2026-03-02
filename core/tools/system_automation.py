@@ -154,12 +154,21 @@ def execute_shell(command: str, working_dir: str | None = None) -> ToolResult:
     """
     Execute a shell command and capture stdout/stderr.
     Hard timeout of SHELL_TIMEOUT seconds – never blocks the event loop.
+    Uses shell=False (shlex split) to satisfy security policy (no B602).
     """
+    import shlex
     try:
         cwd = Path(working_dir).expanduser().resolve() if working_dir else None
-        proc = subprocess.run(
-            command,
-            shell=True,           # convenience; command is already confirmed by policy
+        # Split command string into a token list — avoids shell=True (B602).
+        # On Windows, shlex still works correctly for typical commands.
+        try:
+            cmd_tokens = shlex.split(command, posix=(os.name != "nt"))
+        except ValueError:
+            return ToolResult(False, error=f"Invalid shell command syntax: {command}")
+
+        proc = subprocess.run(  # nosec B603
+            cmd_tokens,
+            shell=False,
             capture_output=True,
             text=True,
             timeout=SHELL_TIMEOUT,
@@ -174,6 +183,8 @@ def execute_shell(command: str, working_dir: str | None = None) -> ToolResult:
         )
     except subprocess.TimeoutExpired:
         return ToolResult(False, error=f"Command timed out after {SHELL_TIMEOUT}s: {command}")
+    except FileNotFoundError:
+        return ToolResult(False, error=f"Executable not found in command: {command}")
     except Exception as exc:
         return ToolResult(False, error=str(exc))
 

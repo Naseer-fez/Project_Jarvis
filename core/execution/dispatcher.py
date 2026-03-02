@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from core.agentic.autonomy_policy import AutonomyPolicy, PolicyDecision, PolicyVerdict
@@ -48,6 +49,11 @@ class Dispatcher:
         self.reflection = reflection_engine
         self.voice = voice_layer
 
+        # Rate limiting — 30 tool calls per 60-second window per instance
+        self._call_count: int = 0
+        self._call_window_start: float = time.time()
+        self.MAX_CALLS_PER_MINUTE: int = 30
+
         self._core_tools = {
             "list_directory": self._run_list_directory,
             "read_file": self._run_read_file,
@@ -57,10 +63,33 @@ class Dispatcher:
             "execute_shell": self._run_execute_shell,
         }
 
+    def _sanitize_args(self, args: dict) -> dict:
+        """Strip null bytes and truncate oversized string values."""
+        sanitized = {}
+        for key, val in args.items():
+            if isinstance(val, str):
+                val = val.replace("\x00", "")   # strip null bytes
+                if len(val) > 4096:
+                    val = val[:4096]            # truncate oversized
+            sanitized[key] = val
+        return sanitized
+
     async def dispatch(self, action: dict[str, Any]) -> ToolResult:
         tool_name = str(action.get("tool", "")).strip()
         args = action.get("args", {}) or {}
         rationale = str(action.get("rationale", "")).strip()
+
+        # Rate limiting — reset window if 60 s have elapsed
+        now = time.time()
+        if now - self._call_window_start > 60:
+            self._call_count = 0
+            self._call_window_start = now
+        self._call_count += 1
+        if self._call_count > self.MAX_CALLS_PER_MINUTE:
+            return ToolResult(False, error="Rate limit exceeded: 30 tool calls/minute")
+
+        # Sanitize args before dispatching
+        args = self._sanitize_args(args)
 
         # 1) Built-in core tool registry first.
         if tool_name in TOOL_REGISTRY and tool_name in self._core_tools:

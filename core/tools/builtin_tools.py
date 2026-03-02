@@ -4,6 +4,7 @@ All tools are async coroutines and sandboxed to allowed directories.
 """
 
 import asyncio
+import gzip
 import json
 import logging
 import os
@@ -19,10 +20,31 @@ ALLOWED_DIRECTORIES = [
     Path("./outputs").resolve(),
 ]
 
+# Project root sandbox — all resolved paths must stay inside here.
+_SANDBOX_ROOT = Path("D:/AI/Jarvis").resolve()
+
 
 def _assert_safe_path(path_str: str) -> Path:
-    """Raise ValueError if path is outside the sandbox."""
-    target = Path(path_str).resolve()
+    """Raise PermissionError / ValueError if path is outside the sandbox."""
+    # Block path traversal sequences before resolution
+    if ".." in str(Path(path_str)):
+        raise PermissionError(f"Path traversal blocked: {path_str}")
+
+    resolved = Path(path_str).resolve()
+    sandbox = _SANDBOX_ROOT
+
+    # Must be inside project sandbox
+    if not str(resolved).startswith(str(sandbox)):
+        raise PermissionError(f"Path outside sandbox: {resolved}")
+
+    # Symlink must not escape sandbox
+    if resolved.is_symlink():
+        link_target = resolved.resolve()
+        if not str(link_target).startswith(str(sandbox)):
+            raise PermissionError(f"Symlink escapes sandbox: {link_target}")
+
+    # Also check legacy ALLOWED_DIRECTORIES for backward compatibility
+    target = resolved
     for allowed in ALLOWED_DIRECTORIES:
         try:
             target.relative_to(allowed)
@@ -80,7 +102,9 @@ async def read_file(path: str) -> str:
         return f"File '{path}' not found."
     if not safe.is_file():
         return f"'{path}' is not a file."
-    size = safe.stat().st_size
+    size = os.path.getsize(safe)
+    if size > 10 * 1024 * 1024:   # 10 MB hard limit
+        raise ValueError(f"File too large: {size} bytes (max 10MB)")
     if size > 100_000:
         return f"File too large ({size} bytes). Max 100KB."
     return safe.read_text(encoding="utf-8", errors="replace")

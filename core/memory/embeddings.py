@@ -109,7 +109,7 @@ class EmbeddingManager:
             raise RuntimeError("EmbeddingManager not initialized. Call initialize() first.")
 
         # Cache key: MD5 hash of (model + text) for safety
-        cache_key = hashlib.md5(f"{self.model_name}::{text}".encode()).hexdigest()
+        cache_key = hashlib.md5(f"{self.model_name}::{text}".encode(), usedforsecurity=False).hexdigest()
 
         if use_cache and cache_key in self._cache:
             return self._cache[cache_key]
