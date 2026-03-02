@@ -20,6 +20,20 @@ import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+
+def _uprint(msg: str, *, file=None) -> None:
+    """Print msg safely regardless of terminal encoding (e.g. cp1252 on Windows)."""
+    import io
+    target = file or sys.stdout
+    try:
+        print(msg, file=target)
+    except UnicodeEncodeError:
+        raw = getattr(target, "buffer", None)
+        if raw:
+            raw.write((msg + "\n").encode("utf-8", errors="replace"))
+        else:
+            print(msg.encode("ascii", errors="replace").decode("ascii"), file=target)
+
 if TYPE_CHECKING:
     from core.controller_v2 import Controller
 
@@ -204,17 +218,17 @@ async def async_main(args: argparse.Namespace) -> int:
             msg = f"{count} entries verified"
 
             if ok:
-                log.info(f"Audit OK — {msg}")
-                print(f"✅ Audit OK — {msg}")
+                log.info("Audit OK — %s", msg)
+                _uprint(f"[OK] Audit OK — {msg}")
                 return ExitCode.OK
             else:
-                log.error(f"Audit FAILED — {err}")
-                print(f"❌ Audit FAILED — {err}", file=sys.stderr)
+                log.error("Audit FAILED — %s", err)
+                _uprint(f"[FAIL] Audit FAILED — {err}", file=sys.stderr)
                 return ExitCode.AUDIT_FAILED
 
         except Exception as exc:
             log.exception("Unexpected error during audit verification")
-            print(f"❌ Audit error: {exc}", file=sys.stderr)
+            _uprint(f"[ERROR] Audit error: {exc}", file=sys.stderr)
             return ExitCode.GENERIC_ERROR
 
     # ── Resolve voice flag ───────────────────────────────────

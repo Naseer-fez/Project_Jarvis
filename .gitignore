@@ -74,5 +74,17 @@ temp/
 *.jsonl
 data/
 
-# Archives
+# Archives — never commit dead code directories
 archive_legacy/
+archive_*/
+Failed/
+
+# Scripts — Windows binaries and one-shot scripts
+scripts/
+*.exe
+*.dll
+
+# Runtime artifacts — generated at run time, not source
+runtime/
+bench/
+workspace/

@@ -13,7 +13,8 @@ from typing import Optional
 
 logger = logging.getLogger("Jarvis.MemoryEngine")
 
-MEMORY_FILE = Path("./outputs/memory_snapshot.jsonl")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+MEMORY_FILE = PROJECT_ROOT / "runtime" / "memory_snapshot.jsonl"
 MAX_SESSION_ENTRIES = 200
 
 

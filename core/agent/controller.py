@@ -26,7 +26,13 @@ from integrations.registry import integration_registry as api_registry
 try:
     from audit.audit_logger import AuditLogger
 except Exception:  # noqa: BLE001
-    from core.logging.audit_logger import AuditLogger
+    from core.logging.audit_logger import AuditLogger  # type: ignore[import]
+
+# Canonical audit function from core.logger (used as fallback telemetry)
+try:
+    from core import logger as _core_logger  # noqa: F401
+except Exception:  # noqa: BLE001
+    _core_logger = None  # type: ignore[assignment]
 
 logger = logging.getLogger("Jarvis.Controller")
 
@@ -125,8 +131,9 @@ class MainController:
         except Exception as exc:  # noqa: BLE001
             logger.warning("Integration loader failed: %s", exc)
 
-        Path("./workspace").mkdir(exist_ok=True)
-        Path("./outputs").mkdir(exist_ok=True)
+        _proj_root = Path(__file__).resolve().parents[2]
+        (_proj_root / "workspace").mkdir(exist_ok=True)
+        (_proj_root / "runtime").mkdir(exist_ok=True)
 
         self._running = False
 
