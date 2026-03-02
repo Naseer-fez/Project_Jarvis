@@ -12,10 +12,14 @@ Contract:
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Optional
-import httpx
+try:
+    import httpx
+except ImportError:  # optional dependency
+    httpx = None  # type: ignore[assignment]
 
 from core.agent.state_machine import StateMachine, AgentState
 from core.llm.task_planner import TaskPlanner
@@ -44,12 +48,36 @@ except ImportError:
 
 logger = logging.getLogger("Jarvis.AgentLoop")
 
-MAX_ITERATIONS = 5
+_DEFAULT_MAX_ITERATIONS = 10
+_CODING_MAX_ITERATIONS = 15
 
-REFLECT_SYSTEM_PROMPT = """You are Jarvis, a helpful AI assistant. 
-Given the user's goal, the plan executed, and observations collected, 
-produce a brief reflection and final response to the user.
-Be concise, factual, and helpful. Speak directly to the user."""
+REFLECT_SYSTEM_PROMPT = """You are an expert software engineer and AI assistant named Jarvis.
+
+Review the executed plan and all tool observations carefully.
+
+If any tool returned an error or failure:
+- State the technical root cause clearly before anything else
+- Explain what went wrong (file not found, permission denied, syntax error, etc.)
+- Propose the specific fix needed
+
+If the task succeeded:
+- Summarize what was accomplished concisely
+- Include any important output values the user needs to see
+
+Rules:
+- Be direct and technical
+- Do not apologize or add filler phrases
+- Speak directly to the user in second person
+- If code was written, show the key part
+"""
+
+
+def _truncate_observation(text: str, max_chars: int = 800) -> str:
+    """Keep first 400 and last 400 chars of long tool output."""
+    if len(text) <= max_chars:
+        return text
+    half = max_chars // 2
+    return text[:half] + f"\n...[{len(text) - max_chars} chars truncated]...\n" + text[-half:]
 
 
 @dataclass
@@ -59,6 +87,7 @@ class ExecutionTrace:
     plan: Optional[dict] = None
     observations: list[dict] = field(default_factory=list)
     risk_scores: list[dict] = field(default_factory=list)
+    think_blocks: list[str] = field(default_factory=list)
     reflection: Optional[str] = None
     final_response: str = ""
     success: bool = False
@@ -78,6 +107,7 @@ class ExecutionTrace:
             "plan": self.plan,
             "observations": self.observations,
             "risk_scores": self.risk_scores,
+            "think_blocks": self.think_blocks,
             "reflection": self.reflection,
             "final_response": self.final_response,
             "success": self.success,
@@ -105,6 +135,7 @@ class AgentLoopEngine:
         self.model = model
         self.ollama_url = ollama_url
         self._interrupt = asyncio.Event()
+        self.max_iterations: int = _DEFAULT_MAX_ITERATIONS
 
     def request_interrupt(self):
         """Signal the loop to stop at next checkpoint."""
@@ -155,7 +186,7 @@ class AgentLoopEngine:
         observations: list[ToolObservation] = []
 
         for iteration, step in enumerate(plan.steps):
-            if trace.iterations >= MAX_ITERATIONS:
+            if trace.iterations >= self.max_iterations:
                 return self._stop(trace, "iteration_limit_reached")
 
             if self._check_interrupt():
@@ -210,7 +241,7 @@ class AgentLoopEngine:
                     approved = await confirm_callback(prompt)
                 else:
                     # Fallback: blocking input in async context
-                    answer = await asyncio.get_event_loop().run_in_executor(None, input, prompt)
+                    answer = await asyncio.get_running_loop().run_in_executor(None, input, prompt)
                     approved = answer.strip().lower() in ("y", "yes")
 
                 if not approved:
@@ -238,7 +269,7 @@ class AgentLoopEngine:
 
         # ── PHASE 3: REFLECT & RESPOND ────────────────────────────────────────
         self.sm.transition(AgentState.REFLECTING)
-        response = await self._reflect(goal, plan, observations)
+        response = await self._reflect(goal, plan, observations, trace)
         trace.reflection = response
         trace.final_response = response
         trace.close(True, "goal_completed")
@@ -263,9 +294,15 @@ class AgentLoopEngine:
         self.sm.force_idle()
         return trace
 
-    async def _reflect(self, goal: str, plan: Plan, observations: list[ToolObservation]) -> str:
+    async def _reflect(
+        self,
+        goal: str,
+        plan: Plan,
+        observations: list[ToolObservation],
+        trace: ExecutionTrace,
+    ) -> str:
         obs_text = "\n".join(
-            f"- {o.tool_name}: {o.output_summary}" for o in observations
+            f"- {o.tool_name}: {_truncate_observation(o.output_summary or '')}" for o in observations
         ) or "No tools were executed (reasoning/suggest-only mode)."
 
         user_prompt = (
@@ -284,12 +321,22 @@ class AgentLoopEngine:
             "stream": False,
         }
 
+        if httpx is None:
+            logger.error("httpx not installed; cannot call reflection model.")
+            return "I completed the task. Install httpx to enable reflection responses."
+
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(f"{self.ollama_url}/api/chat", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
-                return data["message"]["content"].strip()
+                raw_response = data["message"]["content"].strip()
+
+                think_matches = re.findall(r"<think>(.*?)</think>", raw_response, re.DOTALL)
+                if think_matches:
+                    trace.think_blocks.extend(think_matches)
+
+                return re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
         except Exception as e:
             logger.error(f"Reflection LLM call failed: {e}")
             return "I completed the task. Check the execution trace for details."

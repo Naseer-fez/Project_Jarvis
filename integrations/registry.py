@@ -1,141 +1,95 @@
-"""
-integrations/api_registry.py
-
-Central registry for all Jarvis external-API integrations.
-
-How it works
-------------
-1.  Each integration subclasses BaseIntegration and is imported here.
-2.  ``register()`` validates the class and adds it to the in-memory registry.
-3.  ``tool_router.py`` calls ``get_tool(name)`` or ``list_schemas()`` — zero
-    changes needed to core/ to add a new API.
-
-Adding a new integration
-------------------------
-    # In your new module:
-    class MyApiIntegration(BaseIntegration):
-        tool_name  = "my_api_action"
-        risk_level = RiskLevel.READ_ONLY
-        ...
-
-    # Then here:
-    from integrations.my_api.client import MyApiIntegration
-    register(MyApiIntegration)
-"""
+﻿"""Dynamic integration registry for Jarvis plugins."""
 
 from __future__ import annotations
 
 import logging
-from typing import Type
+from typing import Any
 
-from integrations.base_integration import BaseIntegration, RiskLevel
+from integrations.base import BaseIntegration
 
-# ---------------------------------------------------------------------------
-# Try to import core logger; fall back gracefully if running standalone
-# ---------------------------------------------------------------------------
-try:
-    from core.logger import get_logger          # type: ignore
-    logger = get_logger(__name__)
-except ImportError:
-    logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Registry store
-# ---------------------------------------------------------------------------
-
-_REGISTRY: dict[str, BaseIntegration] = {}
+logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
+class IntegrationRegistry:
+    """Holds active integration instances and routes tool execution."""
 
-def register(cls: Type[BaseIntegration]) -> None:
-    """
-    Instantiate and register an integration class.
+    def __init__(self) -> None:
+        self._integrations: dict[str, BaseIntegration] = {}
+        self._tool_map: dict[str, BaseIntegration] = {}
 
-    Raises
-    ------
-    TypeError  – if cls doesn't subclass BaseIntegration.
-    ValueError – if tool_name or risk_level are not set.
-    """
-    if not (isinstance(cls, type) and issubclass(cls, BaseIntegration)):
-        raise TypeError(f"{cls} must subclass BaseIntegration")
+    def register(self, integration: BaseIntegration) -> None:
+        """Register one integration and all declared tools."""
+        if not isinstance(integration, BaseIntegration):
+            raise TypeError("integration must be an instance of BaseIntegration")
 
-    instance = cls()
+        integration_name = (integration.name or integration.__class__.__name__).strip()
+        tools = integration.get_tools() or []
 
-    if instance.tool_name is NotImplemented or not instance.tool_name:
-        raise ValueError(f"{cls.__name__} must define a non-empty tool_name")
+        if not tools:
+            logger.warning("Integration '%s' has no tools and will still be tracked", integration_name)
 
-    if instance.risk_level is NotImplemented:
-        raise ValueError(f"{cls.__name__} must define a risk_level")
+        for tool in tools:
+            tool_name = str(tool.get("name", "")).strip()
+            if not tool_name:
+                logger.warning(
+                    "Integration '%s' declared a tool without a name; skipping entry", integration_name
+                )
+                continue
 
-    if instance.tool_name in _REGISTRY:
-        logger.warning(
-            "api_registry: overwriting existing tool '%s'", instance.tool_name
-        )
+            owner = self._tool_map.get(tool_name)
+            if owner is not None and owner is not integration:
+                logger.warning(
+                    "Tool name collision '%s': replacing integration '%s' with '%s'",
+                    tool_name,
+                    owner.name,
+                    integration_name,
+                )
+            self._tool_map[tool_name] = integration
 
-    _REGISTRY[instance.tool_name] = instance
-    logger.info(
-        "api_registry: registered tool '%s' [%s]",
-        instance.tool_name,
-        instance.risk_level.value,
-    )
+        self._integrations[integration_name] = integration
+        logger.info("Integration registered: %s (%d tools)", integration_name, len(tools))
 
+    def get_tools(self) -> list[dict]:
+        """Return all tool definitions from all active integrations."""
+        merged: list[dict] = []
+        for integration in self._integrations.values():
+            merged.extend(integration.get_tools() or [])
+        return merged
 
-def get_tool(name: str) -> BaseIntegration | None:
-    """Return the integration instance for *name*, or None if not found."""
-    return _REGISTRY.get(name)
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Route tool execution to the owning integration."""
+        integration = self._tool_map.get(tool_name)
+        if integration is None:
+            return {
+                "success": False,
+                "data": None,
+                "error": f"No integration registered for tool '{tool_name}'",
+            }
 
-
-def list_schemas() -> list[dict]:
-    """
-    Return all tool schemas — used by task_planner to populate the LLM's
-    available-tools context.
-    """
-    return [tool.tool_schema for tool in _REGISTRY.values()]
-
-
-def list_tools() -> dict[str, str]:
-    """Return {tool_name: risk_level} for every registered integration."""
-    return {name: tool.risk_level.value for name, tool in _REGISTRY.items()}
-
-
-# ---------------------------------------------------------------------------
-# Auto-registration — import integrations here so they self-register on import
-# ---------------------------------------------------------------------------
-
-def _load_integrations() -> None:
-    """
-    Import all integration modules.  Failures are logged but do NOT crash
-    Jarvis — an unavailable plugin should degrade gracefully.
-    """
-    _plugins = [
-        ("integrations.weather_api.client", "WeatherIntegration"),
-        # ("integrations.custom_api_2.client", "CustomApi2Integration"),  # add next plugin here
-    ]
-
-    for module_path, class_name in _plugins:
         try:
-            import importlib
-            mod = importlib.import_module(module_path)
-            cls = getattr(mod, class_name)
-            register(cls)
-        except ImportError as exc:
-            logger.warning(
-                "api_registry: could not import '%s.%s' — %s",
-                module_path,
-                class_name,
-                exc,
-            )
+            result = await integration.execute(tool_name, args or {})
         except Exception as exc:  # noqa: BLE001
-            logger.error(
-                "api_registry: failed to register '%s.%s' — %s",
-                module_path,
-                class_name,
-                exc,
-            )
+            logger.exception("Integration '%s' crashed for tool '%s'", integration.name, tool_name)
+            return {"success": False, "data": None, "error": str(exc)}
+
+        if not isinstance(result, dict):
+            return {
+                "success": False,
+                "data": None,
+                "error": f"Integration '{integration.name}' returned non-dict result",
+            }
+
+        return {
+            "success": bool(result.get("success", False)),
+            "data": result.get("data"),
+            "error": result.get("error"),
+        }
+
+    def list_active(self) -> list[str]:
+        """Return names of active integrations."""
+        return sorted(self._integrations.keys())
 
 
-_load_integrations()
+integration_registry = IntegrationRegistry()
 
+__all__ = ["IntegrationRegistry", "integration_registry"]

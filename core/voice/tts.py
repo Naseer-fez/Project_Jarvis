@@ -1,181 +1,110 @@
-"""
-core/voice/tts.py
------------------
-Local Text-to-Speech using Piper TTS.
-Generates speech offline; plays via sounddevice.
+﻿"""Text-to-speech helpers with graceful fallback chain."""
 
-Piper model files (.onnx + .onnx.json) must be in:
-    D:\\AI\\Jarvis\\data\\piper\\<voice_model>\\
+from __future__ import annotations
 
-Download voices from:
-    https://huggingface.co/rhasspy/piper-voices
-"""
-
+import asyncio
 import logging
-import subprocess
+import os
 import tempfile
-import threading
 from pathlib import Path
-from typing import Optional
-
-import sounddevice as sd
-import soundfile as sf
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
+try:
+    import edge_tts
+except ImportError:  # optional dependency
+    edge_tts = None  # type: ignore[assignment]
+
+try:
+    import pyttsx3
+except ImportError:  # optional dependency
+    pyttsx3 = None  # type: ignore[assignment]
+
 
 class TextToSpeech:
-    """
-    Wraps Piper TTS for fully local voice synthesis.
+    """TTS engine chain: edge-tts -> pyttsx3 -> print."""
 
-    Piper runs as a subprocess: text -> WAV bytes -> numpy array -> sounddevice playback.
-    This keeps the main thread unblocked during generation (async_speak).
-    """
+    def __init__(self, config: Any) -> None:
+        self._config = config
+        self.preferred = self._get("tts_engine", "edge-tts").lower()
+        self.voice_name = self._get("tts_voice", "en-US-GuyNeural")
+        self._pyttsx3_engine = None
 
-    def __init__(self, config: dict):
-        """
-        Args:
-            config: dict with keys:
-                piper_model_dir      (str) Directory containing .onnx voice models
-                voice_model          (str) e.g. 'en_US-lessac-medium'
-                speaker_id           (int) 0 for single-speaker models
-                output_device_index  (int) -1 for default playback device
-        """
-        self.model_dir = Path(config.get("piper_model_dir", r"D:\AI\Jarvis\data\piper"))
-        self.voice_model = config.get("voice_model", "en_US-lessac-medium")
-        self.speaker_id = int(config.get("speaker_id", 0))
-        self.output_device = int(config.get("output_device_index", -1))
+        if pyttsx3 is not None:
+            try:
+                self._pyttsx3_engine = pyttsx3.init()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pyttsx3 init failed: %s", exc)
+                self._pyttsx3_engine = None
 
-        self._model_path: Optional[Path] = None
-        self._playback_lock = threading.Lock()
-        self._current_playback: Optional[threading.Thread] = None
+    def _get(self, key: str, default: str) -> str:
+        try:
+            return str(self._config.get("voice", key, fallback=default))
+        except Exception:  # noqa: BLE001
+            return default
 
-        self._resolve_model()
-
-    def _resolve_model(self):
-        """Locate the .onnx model file in the model directory."""
-        voice_dir = self.model_dir / self.voice_model
-        candidates = list(voice_dir.glob("*.onnx")) if voice_dir.exists() else []
-
-        if not candidates:
-            flat = self.model_dir / f"{self.voice_model}.onnx"
-            if flat.exists():
-                self._model_path = flat
-                logger.info("Piper model: %s", flat)
-                return
-
-            logger.warning(
-                "Piper model '%s' not found in %s.\n"
-                "Download from https://huggingface.co/rhasspy/piper-voices\n"
-                "and place the .onnx + .onnx.json files in:\n  %s",
-                self.voice_model, self.model_dir, voice_dir,
-            )
-            self._model_path = None
+    async def speak(self, text: str) -> None:
+        """Speak text with configured fallback order."""
+        if not text:
             return
 
-        self._model_path = candidates[0]
-        logger.info("Piper model resolved: %s", self._model_path)
+        if self.preferred == "edge-tts":
+            if await self._speak_edge(text):
+                return
+            if await self._speak_pyttsx3(text):
+                return
+            print(f"Jarvis: {text}")
+            return
 
-    def _synthesize_wav(self, text: str) -> Optional[Path]:
-        """
-        Call Piper subprocess to synthesize text -> WAV file.
+        if self.preferred in {"pyttsx3", "offline"}:
+            if await self._speak_pyttsx3(text):
+                return
+            if await self._speak_edge(text):
+                return
+            print(f"Jarvis: {text}")
+            return
 
-        Returns:
-            Path to temporary WAV file, or None on failure.
-        """
-        if self._model_path is None:
-            logger.error("No Piper model loaded. Cannot synthesize speech.")
-            return None
+        # Unknown engine setting: still try both sensible options.
+        if await self._speak_edge(text):
+            return
+        if await self._speak_pyttsx3(text):
+            return
+        print(f"Jarvis: {text}")
+
+    async def _speak_edge(self, text: str) -> bool:
+        if edge_tts is None:
+            return False
 
         try:
-            tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-            tmp.close()
-            tmp_path = Path(tmp.name)
+            tmp_path = Path(tempfile.gettempdir()) / f"jarvis_tts_{abs(hash(text))}.mp3"
+            communicator = edge_tts.Communicate(text=text, voice=self.voice_name)
+            await communicator.save(str(tmp_path))
 
-            cmd = [
-                "piper",
-                "--model", str(self._model_path),
-                "--speaker", str(self.speaker_id),
-                "--output_file", str(tmp_path),
-            ]
+            if os.name == "nt":
+                os.startfile(str(tmp_path))  # type: ignore[attr-defined]
+            return True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("edge-tts failed, falling back: %s", exc)
+            return False
 
-            process = subprocess.run(
-                cmd,
-                input=text.encode("utf-8"),
-                capture_output=True,
-                timeout=30,
-            )
+    async def _speak_pyttsx3(self, text: str) -> bool:
+        if self._pyttsx3_engine is None:
+            return False
 
-            if process.returncode != 0:
-                logger.error("Piper error: %s", process.stderr.decode())
-                tmp_path.unlink(missing_ok=True)
-                return None
+        def _run() -> bool:
+            try:
+                self._pyttsx3_engine.say(text)
+                self._pyttsx3_engine.runAndWait()
+                return True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("pyttsx3 speak failed: %s", exc)
+                return False
 
-            return tmp_path
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _run)
 
-        except subprocess.TimeoutExpired:
-            logger.error("Piper TTS timed out for text: '%s'", text[:50])
-            return None
-        except FileNotFoundError:
-            logger.error(
-                "Piper executable not found. Install it and ensure it's on PATH.\n"
-                "See: https://github.com/rhasspy/piper/releases"
-            )
-            return None
-        except Exception as e:
-            logger.error("Piper synthesis error: %s", e, exc_info=True)
-            return None
 
-    def _play_wav(self, wav_path: Path):
-        """Load WAV and play via sounddevice (blocking within its own thread)."""
-        try:
-            with self._playback_lock:
-                data, samplerate = sf.read(str(wav_path), dtype="float32")
-                device = self.output_device if self.output_device >= 0 else None
-                sd.play(data, samplerate=samplerate, device=device)
-                sd.wait()
-        except Exception as e:
-            logger.error("Audio playback error: %s", e, exc_info=True)
-        finally:
-            wav_path.unlink(missing_ok=True)
+TTS = TextToSpeech
 
-    def speak(self, text: str):
-        """
-        Synthesize and play text synchronously (blocks until done).
-        Use async_speak for non-blocking behavior.
-        """
-        logger.info("[TTS] Speaking: '%s'", text[:80])
-        wav_path = self._synthesize_wav(text)
-        if wav_path:
-            self._play_wav(wav_path)
-
-    def async_speak(self, text: str):
-        """
-        Synthesize and play text in a background thread.
-        Returns immediately; use is_speaking() to check state.
-        """
-        logger.info("[TTS] Async speaking: '%s'", text[:80])
-
-        def _run():
-            wav_path = self._synthesize_wav(text)
-            if wav_path:
-                self._play_wav(wav_path)
-
-        self._current_playback = threading.Thread(target=_run, name="TTSThread", daemon=True)
-        self._current_playback.start()
-
-    def is_speaking(self) -> bool:
-        """Returns True if async TTS playback is in progress."""
-        return self._current_playback is not None and self._current_playback.is_alive()
-
-    def wait_until_done(self):
-        """Block until current async_speak finishes."""
-        if self._current_playback:
-            self._current_playback.join()
-
-    def stop(self):
-        """Interrupt current playback immediately."""
-        try:
-            sd.stop()
-        except Exception:
-            pass
+__all__ = ["TextToSpeech", "TTS"]

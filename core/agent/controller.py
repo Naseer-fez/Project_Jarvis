@@ -6,6 +6,7 @@ Now strictly enforces the StateMachine lifecycle.
 """
 
 import asyncio
+import configparser
 import logging
 import time
 import sys
@@ -19,7 +20,7 @@ from core.agent.state_machine import StateMachine, AgentState
 from core.agent.agent_loop import AgentLoopEngine
 
 # 2. Intelligence & Planning
-from core.planning.task_planner import TaskPlanner
+from core.llm.task_planner import TaskPlanner
 from core.llm.ollama_llm import OllamaLLM
 from core.planning.intents import IntentClassifierV2, Intent
 
@@ -33,6 +34,8 @@ from core.autonomy.autonomy_governor import AutonomyGovernor
 
 # 5. Memory & Audit
 from core.memory.memory_engine import MemoryEngine
+from integrations.loader import load_all
+from integrations.registry import integration_registry
 try:
     from audit.audit_logger import AuditLogger
 except ImportError:
@@ -57,12 +60,14 @@ AGENT_TRIGGER_KEYWORDS = {
 class MainController:
     def __init__(
         self,
+        config: Optional[configparser.ConfigParser] = None,
         voice_enabled: bool = False,
         autonomy_level: int = 1,
         model: str = "mistral",
         ollama_url: str = "http://localhost:11434",
     ):
         self.session_id = f"session_{int(time.time())}"
+        self.config = config or configparser.ConfigParser()
         
         # 1. Initialize Foundation
         self.model = model
@@ -76,9 +81,10 @@ class MainController:
         # 3. Initialize Intelligence
         self.llm = OllamaLLM(model=model, base_url=ollama_url)
         self.classifier = IntentClassifierV2(self.llm)
-        self.planner = TaskPlanner(model=model, ollama_url=ollama_url)
-        self.risk = RiskEvaluator(autonomy_level=autonomy_level)
+        self.planner = TaskPlanner(self.config)
+        self.risk = RiskEvaluator(config=self.config if self.config.sections() else None)
         self.gov = AutonomyGovernor(level=autonomy_level)
+        self.integration_registry = integration_registry
         
         # 4. Initialize Memory & Audit
         self.memory = MemoryEngine(session_id=self.session_id)
@@ -102,7 +108,14 @@ class MainController:
         else:
             logger.warning("Vision tool not loaded (missing dependency or file).")
 
-        # 7. Ensure Environment
+        # 7. Dynamic integrations (non-fatal if nothing loads)
+        try:
+            load_summary = load_all(self.config, self.integration_registry)
+            logger.info("Integration load summary: %s", load_summary)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Integration loading failed; continuing without plugins: %s", exc)
+
+        # 8. Ensure Environment
         Path("./workspace").mkdir(exist_ok=True)
         Path("./outputs").mkdir(exist_ok=True)
         
@@ -151,7 +164,7 @@ class MainController:
             
         self.sm.transition(AgentState.LISTENING)
         
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             # Non-blocking input
             prompt = "\n(Listening) 👤 You: "
@@ -283,7 +296,7 @@ class MainController:
         self.sm.transition(AgentState.AWAITING_CONFIRMATION)
         
         print(f"\n🛑  PERMISSION REQUIRED: {prompt}")
-        choice = await asyncio.get_event_loop().run_in_executor(None, input, "    Allow? [y/N]: ")
+        choice = await asyncio.get_running_loop().run_in_executor(None, input, "    Allow? [y/N]: ")
         allowed = choice.strip().lower().startswith('y')
         
         # Return to previous state (usually RISK_EVALUATION or PLANNING)
