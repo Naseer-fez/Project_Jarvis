@@ -38,7 +38,10 @@ def v3_config(tmp_path):
 def test_fsm_v3_execution_transition_path():
     fsm = StateMachine()
     fsm.transition(State.PLANNING)
+    fsm.transition(State.REVIEWING)
     fsm.transition(State.EXECUTING)
+    fsm.transition(State.IDLE)
+    fsm.transition(State.PLANNING)
     fsm.transition(State.SPEAKING)
     fsm.transition(State.IDLE)
     assert fsm.state == State.IDLE

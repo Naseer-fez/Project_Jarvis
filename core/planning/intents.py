@@ -64,13 +64,13 @@ class IntentClassifierV2:
         """Synchronous LLM call for classification."""
         try:
             import asyncio
+            import concurrent.futures
             prompt = f"Classify this message:\n\n{text}"
-            # Run async in sync context
-            loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(
-                self.llm.complete_json(prompt, system=CLASSIFY_SYSTEM, temperature=0.0)
-            )
-            loop.close()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(
+                    asyncio.run,
+                    self.llm.complete_json(prompt, system=CLASSIFY_SYSTEM, temperature=0.0)
+                ).result(timeout=30)
 
             if result and "intent" in result:
                 intent_str = result["intent"].lower()

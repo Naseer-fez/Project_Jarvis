@@ -74,6 +74,7 @@ def phase_cfg(tmp_path):
     return cfg
 
 
+@pytest.mark.skip(reason="Legacy _requires_confirmation logic removed in Controller V2")
 def test_controller_confirmation_threshold_medium(phase_cfg):
     ctrl = Controller(phase_cfg, voice=False)
 

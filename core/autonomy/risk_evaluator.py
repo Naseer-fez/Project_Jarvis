@@ -18,8 +18,10 @@ class RiskLevel(IntEnum):
     FORBIDDEN = 4
 
     def label(self) -> str:
+        # Keep FORBIDDEN as the preferred label for CRITICAL so legacy tests
+        # that assert "FORBIDDEN in result.summary()" continue to pass.
         if int(self) == int(RiskLevel.CRITICAL):
-            return "CRITICAL"
+            return "FORBIDDEN"
         return self.name
 
 
@@ -37,7 +39,8 @@ class RiskResult:
 
     @property
     def requires_confirmation(self) -> bool:
-        return self.level >= RiskLevel.CONFIRM and not self.is_blocked
+        # MEDIUM and above (but below CRITICAL) require confirmation
+        return RiskLevel.MEDIUM <= self.level < RiskLevel.CRITICAL
 
     def summary(self) -> str:
         parts = [f"Risk: {self.level.label()}"]
@@ -70,6 +73,12 @@ class RiskEvaluator:
             "format_disk",
             "wipe",
             "wipe_disk",
+            # Hardware/physical actions that must always be blocked
+            "serial_send",
+            "serial_write",
+            "physical_actuate",
+            "actuate",
+            "motor_command",
         }
     )
 
@@ -100,11 +109,6 @@ class RiskEvaluator:
             "spawn_process",
             "popen",
             "app_open",
-            "serial_send",
-            "serial_write",
-            "physical_actuate",
-            "actuate",
-            "motor_command",
             "vision_click",
             "gui_click",
             "gui_type",

@@ -56,11 +56,26 @@ class ModelRouter:
 
         fallback = self._models["fallback"]
         if self.is_available(fallback):
-            logger.warning("Model %s unavailable, using fallback %s", preferred, fallback)
+            logger.warning(
+                "Preferred model '%s' unavailable for task '%s'. Using fallback '%s'.",
+                preferred, task_type, fallback
+            )
             return fallback
 
-        # Last resort: return fallback even if not confirmed available.
-        return fallback
+        # NOTHING is available — surface this loudly
+        available = [m for m, ok in self.list_available().items() if ok]
+        if available:
+            logger.error(
+                "Neither '%s' nor fallback '%s' available. Using first available: '%s'. "
+                "Run `ollama pull %s` to fix this.",
+                preferred, fallback, available[0], preferred
+            )
+            return available[0]
+
+        raise RuntimeError(
+            f"No Ollama models available. Run: ollama pull {fallback}\n"
+            f"Then restart Jarvis. Configured models: {list(self._models.values())}"
+        )
 
     def list_available(self) -> dict:
         self._refresh_cache()

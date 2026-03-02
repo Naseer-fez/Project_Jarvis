@@ -5,10 +5,19 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-    - uses: actions/checkout@v3
-    - uses: actions/setup-python@v4
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-    - run: pip install -r requirements.txt
-    - run: pytest -q
+        cache: 'pip'
+    - name: Install core deps (no audio/GPU)
+      run: |
+        pip install pydantic fastapi uvicorn requests aiohttp python-dotenv rich
+        pip install chromadb numpy cryptography
+        pip install pytest pytest-asyncio pytest-mock icalendar python-dateutil
+    - name: Run tests
+      run: pytest tests/ -q --timeout=30 --tb=short
+      env:
+        JARVIS_ENV: test

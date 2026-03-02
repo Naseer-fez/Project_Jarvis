@@ -140,6 +140,22 @@ class LLMClientV2:
             logger.error("JSON parse failed: %s", exc)
             return None
 
+    async def chat_async(
+        self,
+        messages: list[dict[str, Any]],
+        query_for_memory: str = "",
+        profile_summary: str = "",
+        workspace_path: str = "",
+    ) -> str:
+        """Async version — use this inside any async context (agent loop, controller)."""
+        system = self._build_system(
+            query=query_for_memory,
+            profile=profile_summary,
+            workspace_path=workspace_path,
+        )
+        prompt = self._messages_to_prompt(messages)
+        return await self.complete(prompt, system=system) or ""
+
     def chat(
         self,
         messages: list[dict[str, Any]],
@@ -147,6 +163,7 @@ class LLMClientV2:
         profile_summary: str = "",
         workspace_path: str = "",
     ) -> str:
+        """Sync bridge — ONLY call from truly synchronous, non-async contexts."""
         system = self._build_system(
             query=query_for_memory,
             profile=profile_summary,
@@ -154,11 +171,13 @@ class LLMClientV2:
         )
         prompt = self._messages_to_prompt(messages)
 
-        loop = asyncio.new_event_loop()
-        try:
-            return loop.run_until_complete(self.complete(prompt, system=system)) or ""
-        finally:
-            loop.close()
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                asyncio.run,
+                self.chat_async(messages, query_for_memory, profile_summary, workspace_path)
+            )
+            return future.result()
 
     def chat_stream(
         self,
@@ -225,24 +244,26 @@ class LLMClientV2:
         return "\n".join(lines)
 
     def is_ollama_running(self) -> bool:
-        try:
-            import aiohttp
+        """Sync health check — runs in its own thread to avoid event loop conflicts."""
+        import concurrent.futures
+        import aiohttp
 
-            async def _check() -> bool:
+        async def _check() -> bool:
+            try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
                         OLLAMA_BASE_URL,
                         timeout=aiohttp.ClientTimeout(total=3),
                     ) as response:
                         return response.status == 200
+            except Exception:
+                return False
 
-            loop = asyncio.new_event_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             try:
-                return loop.run_until_complete(_check())
-            finally:
-                loop.close()
-        except Exception:
-            return False
+                return pool.submit(asyncio.run, _check()).result(timeout=5)
+            except Exception:
+                return False
 
 
 __all__ = ["LLMClientV2"]

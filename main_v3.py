@@ -11,6 +11,14 @@ Flow:
   5. Repeat forever; Ctrl+C to exit
 """
 
+import sys, warnings
+warnings.warn(
+    "main_v3.py is deprecated. Use: python main.py",
+    DeprecationWarning,
+    stacklevel=1
+)
+sys.exit(1)
+
 import configparser
 import logging
 import signal

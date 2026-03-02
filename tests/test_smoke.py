@@ -49,6 +49,8 @@ def _make_args(**kwargs) -> Any:
         config="config/jarvis.ini",
         log_level=None,
         session_name=None,
+        gui=False,
+        dashboard=False,
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -244,9 +246,9 @@ class TestAsyncMainAudit:
         logger_mod = _make_logger_mod()
         with patch.dict(
             "sys.modules",
-            {"core": MagicMock(), "core.logging": MagicMock(), "core.logging.logger": logger_mod},
+            {"core": MagicMock(logger=logger_mod), "core.logging": MagicMock(), "core.logging.logger": logger_mod},
         ):
-            with patch("main.async_main.__globals__", {**jarvis_main.async_main.__globals__}):
+            with patch.dict("main.async_main.__globals__", {}, clear=False):
                 pass
             yield logger_mod
 
@@ -272,7 +274,10 @@ class TestAsyncMainAudit:
 
         logger_mod = _make_logger_mod(audit_ok=False, audit_count=3, audit_err="hash mismatch")
 
-        with patch("builtins.__import__", side_effect=_make_import_hook(logger_mod)):
+        with patch.dict(
+            "sys.modules",
+            {"core": MagicMock(logger=logger_mod), "core.logging": MagicMock(), "core.logging.logger": logger_mod},
+        ):
             code = asyncio.run(async_main(_make_args(verify=True, config=str(ini))))
 
         assert code == ExitCode.AUDIT_FAILED
@@ -317,6 +322,8 @@ class TestAsyncMainController:
                 "core": MagicMock(),
                 "core.logging": MagicMock(logger=logger_mod),
                 "core.controller": MagicMock(Controller=MagicMock(return_value=controller)),
+                "core.controller_v2": MagicMock(Controller=MagicMock(return_value=controller)),
+                "core.introspection.health": MagicMock(HealthReport=MagicMock(), run_startup_health_check=MagicMock(return_value=MagicMock(ollama_reachable=True))),
             }):
                 return asyncio.run(async_main(args))
 
@@ -398,6 +405,10 @@ class TestAsyncMainController:
                     "core.controller": MagicMock(
                         Controller=MagicMock(return_value=controller)
                     ),
+                    "core.controller_v2": MagicMock(
+                        Controller=MagicMock(return_value=controller)
+                    ),
+                    "core.introspection.health": MagicMock(HealthReport=MagicMock(), run_startup_health_check=MagicMock(return_value=MagicMock(ollama_reachable=True))),
                 }):
                     return await async_main(_make_args(config=str(ini)))
 

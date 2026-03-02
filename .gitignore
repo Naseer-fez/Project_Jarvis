@@ -1,90 +1,78 @@
-# ===============================
-# Python bytecode / cache
-# ===============================
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
 
-# ===============================
 # Virtual environments
-# ===============================
-jarvis_env/
-venv/
-.env/
 .venv/
+venv/
+env/
+jarvis_env/
+ENV/
 
-# ===============================
-# IDE / Editor files
-# ===============================
-.vscode/
+# Secrets — NEVER commit these
+*.env
+config/settings.env
+!config/settings.env.template
+
+# Runtime outputs — generated, not source
+outputs/
+logs/
+*.jsonl
+*.log
+mnt/
+memory/*.db
+memory/*.ics
+data/chroma/
+workspace/
+data/
+# Windows binaries that snuck in
+scripts/*.exe
+scripts/*.dll
+scripts/*.bat
+
+# IDE
 .idea/
-*.swp
-*.swo
-
-# ===============================
-# OS generated files
-# ===============================
+.vscode/
+*.iml
 .DS_Store
 Thumbs.db
-desktop.ini
 
-# ===============================
-# Logs & runtime artifacts
-# ===============================
-*.log
-logs/
-*.out
-
-# ===============================
-# Local databases / memory stores
-# ===============================
-data/
-memory/*.db
-memory/*.sqlite
-memory/*.sqlite3
-
-# ===============================
-# Model files / embeddings / caches
-# ===============================
-models/
-embeddings/
-*.bin
-*.pt
-*.pth
-*.onnx
-
-# ===============================
-# Audio / large binary test files
-# ===============================
-*.wav
-*.mp3
-*.m4a
-*.flac
-
-# ===============================
-# Archives
-# ===============================
-*.zip
-*.tar
-*.tar.gz
-*.7z
-
-# ===============================
 # Test artifacts
-# ===============================
-coverage/
-htmlcov/
 .pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+pytest-of-*/
+.j.ini
+j.ini
+__pycache__/
+*.pyc
 
-# ===============================
-# Jupyter / experiments
-# ===============================
-.ipynb_checkpoints/
+# Data
+tmp/
+temp/
+*.sqlite3
+*.db
+*.log
+*.jsonl
+data/
 
-# ===============================
-# Secrets (JUST IN CASE)
-# ===============================
-.env.*
-*.key
-*.pem
-secrets/
+# Archives
+archive_legacy/

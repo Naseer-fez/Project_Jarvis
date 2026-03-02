@@ -110,27 +110,35 @@ class CalendarIntegration(BaseIntegration):
     def _list_events(self, days_ahead: int = 7) -> dict[str, Any]:
         if not CALENDAR_PATH.exists():
             return {"events": []}
-
-        content = CALENDAR_PATH.read_text(encoding="utf-8")
-        now = datetime.now()
-        cutoff = now + timedelta(days=days_ahead)
-        events: list[dict[str, Any]] = []
-
-        for block in re.findall(r"BEGIN:VEVENT(.*?)END:VEVENT", content, re.DOTALL):
-            summary = re.search(r"SUMMARY:(.*)", block)
-            dtstart = re.search(r"DTSTART:(.*)", block)
-            if not summary or not dtstart:
+        
+        from icalendar import Calendar
+        from dateutil.tz import tzlocal
+        import datetime as dt
+        
+        cal = Calendar.from_ical(CALENDAR_PATH.read_bytes())
+        now = dt.datetime.now(tz=tzlocal())
+        cutoff = now + dt.timedelta(days=days_ahead)
+        events = []
+        
+        for component in cal.walk():
+            if component.name != "VEVENT":
                 continue
-
-            try:
-                dt = datetime.strptime(dtstart.group(1).strip(), "%Y%m%dT%H%M%S")
-            except ValueError:
+            dtstart = component.get("DTSTART")
+            if dtstart is None:
                 continue
-
-            if now <= dt <= cutoff:
-                events.append({"title": summary.group(1).strip(), "datetime": str(dt)})
-
-        return {"events": sorted(events, key=lambda item: item["datetime"])}
+            start = dtstart.dt
+            # Handle date-only events
+            if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+                start = dt.datetime(start.year, start.month, start.day, tzinfo=tzlocal())
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=tzlocal())
+            if now <= start <= cutoff:
+                events.append({
+                    "title": str(component.get("SUMMARY", "Untitled")),
+                    "datetime": str(start),
+                })
+        
+        return {"events": sorted(events, key=lambda e: e["datetime"])}
 
 
 __all__ = ["CalendarIntegration"]

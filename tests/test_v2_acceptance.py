@@ -315,6 +315,7 @@ class TestVoiceLoop:
         from core.controller import Controller
         ctrl = Controller(tmp_config, voice=False)
         # Mock expensive components
+        ctrl.planner = MagicMock()
         ctrl.planner.plan = MagicMock(return_value={
             "intent": "test", "summary": "Test plan.", "confidence": 0.9,
             "steps": [{"id": 1, "action": "speak", "description": "Say hello", "params": {}}],

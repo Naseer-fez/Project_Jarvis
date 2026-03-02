@@ -1,76 +1,49 @@
 """
-JARVIS v2 - Session 5: Voice & Automation Loop
-Architecture: Trusted Core | Offline | Deterministic
-Author: Jarvis Project
+main_v2.py
+───────────────────
+Terminal interface for Jarvis Session 4 (Semantic Memory).
 """
-
-import asyncio
-import logging
-import sys
-from pathlib import Path
-
-# Ensure project root is in path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from core.state_machine import JarvisStateMachine, State
-from core.controller_v2 import JarvisController
-from memory.hybrid_memory import HybridMemory
-from voice.voice_layer import VoiceLayer
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    handlers=[
-        logging.FileHandler('logs/jarvis.log'),
-        logging.StreamHandler(sys.stdout)
-    ]
+import sys, warnings
+warnings.warn(
+    "main_v2.py is deprecated. Use: python main.py",
+    DeprecationWarning,
+    stacklevel=1
 )
+sys.exit(1)
 
-logger = logging.getLogger("JARVIS.Main")
+import sys
+from core.controller_v2 import JarvisControllerV2
 
-BANNER = """
-╔══════════════════════════════════════════════════════╗
-║          J.A.R.V.I.S  -  Session 5 Online           ║
-║   Just A Rather Very Intelligent System              ║
-║   Mode: VOICE-FIRST | LOCAL | OFFLINE | TRUSTED      ║
-╚══════════════════════════════════════════════════════╝
-"""
+def main():
+    print("="*50)
+    print("🤖 JARVIS V2 - SEMANTIC MEMORY MODE")
+    print("="*50)
+    
+    ctrl = JarvisControllerV2()
+    status = ctrl.initialize()
+    
+    print(f"✅ Initialized Session: {status.get('session_id')}")
+    print(f"🧠 Memory Mode: {status.get('memory_mode').upper()}")
+    print("Type 'help' for commands, or 'exit' to quit.\n")
 
+    while True:
+        try:
+            user_input = input("You: ").strip()
+            if not user_input: continue
+            
+            if user_input.lower() in ['exit', 'quit']:
+                break
+                
+            response = ctrl.process(user_input)
+            print(f"Jarvis: {response}\n")
+            
+        except KeyboardInterrupt:
+            break
 
-async def main():
-    print(BANNER)
-    logger.info("Initializing Jarvis...")
-
-    # Initialize core systems
-    memory = HybridMemory(db_path="jarvis_memory.db")
-    await memory.initialize()
-
-    state_machine = JarvisStateMachine()
-    controller = JarvisController(state_machine=state_machine, memory=memory)
-    await controller.initialize()
-
-    voice = VoiceLayer(controller=controller, memory=memory)
-
-    print("\nChoose interface mode:")
-    print("  [1] Voice Mode (Wake Word: 'Jarvis')")
-    print("  [2] CLI Mode (Text Input)")
-    print("  [3] Hybrid Mode (Both)")
-
-    mode = input("\nSelect mode [1/2/3]: ").strip()
-
-    if mode == "1":
-        logger.info("Starting Voice Mode...")
-        await voice.run_voice_loop()
-    elif mode == "2":
-        logger.info("Starting CLI Mode...")
-        await controller.run_cli_loop()
-    else:
-        logger.info("Starting Hybrid Mode...")
-        await asyncio.gather(
-            voice.run_voice_loop(),
-            controller.run_cli_loop()
-        )
-
+    print("\nSaving session and shutting down...")
+    summary = ctrl.session_summary()
+    print(f"Session closed. Exchanges: {summary['exchanges']}")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+

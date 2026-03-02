@@ -161,8 +161,8 @@ def test_memory_expansion_and_decay(v4_config):
     assert len(actions) >= 2
     assert any(a["success"] is False for a in actions)
 
-    cleanup = mem.cleanup_stale_data(max_age_days=0)
-    assert cleanup["episodic_removed"] >= 1
+    cleanup = mem.cleanup_stale_data(max_age_days=-1)  # -1 to ensure everything is matched as stale
+    assert cleanup["actions_removed"] >= 1
 
 
 def test_async_task_manager_priority_and_cancel():

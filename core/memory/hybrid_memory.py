@@ -25,16 +25,27 @@ class HybridMemory:
         config_or_db_path: Any = "memory/memory.db",
         chroma_path: str = "data/chroma",
         model_name: str = "all-MiniLM-L6-v2",
+        *,
+        db_path: str | None = None,
     ):
-        if _looks_like_config(config_or_db_path):
+        """
+        Accepts either:
+          - HybridMemory(config)         — ConfigParser / dict-like
+          - HybridMemory("path/to.db")   — positional path string
+          - HybridMemory(db_path="path/to.db", ...)  — explicit keyword (legacy tests)
+        """
+        # If db_path keyword is given, it takes precedence over positional arg
+        if db_path is not None:
+            resolved_db = db_path
+        elif _looks_like_config(config_or_db_path):
             cfg = config_or_db_path
-            db_path = cfg.get("memory", "sqlite_file", fallback=cfg.get("memory", "db_path", fallback="memory/memory.db"))
+            resolved_db = cfg.get("memory", "sqlite_file", fallback=cfg.get("memory", "db_path", fallback="memory/memory.db"))
             chroma_path = cfg.get("memory", "chroma_dir", fallback=cfg.get("memory", "chroma_path", fallback=chroma_path))
             model_name = cfg.get("memory", "embedding_model", fallback=model_name)
         else:
-            db_path = str(config_or_db_path)
+            resolved_db = str(config_or_db_path)
 
-        self.db_path = db_path
+        self.db_path = resolved_db
         self.chroma_path = chroma_path
         self.model_name = model_name
         self.mode = "sqlite-only"
@@ -42,6 +53,13 @@ class HybridMemory:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
         self.semantic = SemanticMemory(chroma_path=self.chroma_path, model_name=self.model_name)
+
+        from core.memory.sqlite_pool import SQLitePool
+        self._pool = SQLitePool(self.db_path, pool_size=3)
+
+        # Always create SQLite tables on construction so callers don't need
+        # to call initialize() before using store_fact / recall / etc.
+        self._init_sqlite()
 
     def initialize(self, index_path: str = "") -> dict[str, Any]:
         self._init_sqlite()
@@ -64,10 +82,8 @@ class HybridMemory:
 
         return result
 
-    def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    def _conn(self):
+        return self._pool.acquire()
 
     def _init_sqlite(self) -> None:
         with self._conn() as conn:
@@ -339,6 +355,145 @@ class HybridMemory:
             "sqlite": True,
             "semantic": self.mode == "hybrid",
         }
+
+    # ── Backward-compat fact API (used by legacy tests) ───────────────────
+
+    def store_fact(self, key: str, value: str, source: str = "user", **_kwargs) -> None:
+        """Store a key-value fact (alias for store_preference)."""
+        self.store_preference(key, value)
+
+    def get_fact(self, key: str):
+        """Return a simple object with .key and .value, or None if not found."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT key, value FROM preferences WHERE key=?", (key,)
+            ).fetchone()
+        if row is None:
+            return None
+
+        class _Fact:
+            def __init__(self, k, v):
+                self.key = k
+                self.value = v
+            def __repr__(self):
+                return f"Fact(key={self.key!r}, value={self.value!r})"
+
+        return _Fact(row["key"], row["value"])
+
+    def list_facts(self, limit: int = 50) -> list:
+        """Return recent facts as objects with .key and .value."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT key, value FROM preferences ORDER BY updated_at DESC LIMIT ?",
+                (max(1, limit),),
+            ).fetchall()
+
+        class _Fact:
+            def __init__(self, k, v):
+                self.key = k
+                self.value = v
+
+        return [_Fact(r["key"], r["value"]) for r in rows]
+
+    def count(self) -> int:
+        """Return number of stored facts/preferences."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM preferences").fetchone()
+        return row[0] if row else 0
+
+    # ── Extended action-tracking API (used by Session 4/5 tests) ─────────
+
+    def _ensure_actions_table(self) -> None:
+        """Create the actions table if it does not exist yet."""
+        with self._conn() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action TEXT NOT NULL,
+                    result TEXT,
+                    success INTEGER NOT NULL DEFAULT 1,
+                    metadata TEXT,
+                    timestamp TEXT NOT NULL
+                )
+                """
+            )
+
+    def store_action(self, action: str, result: str = "", success: bool = True, metadata: dict | None = None) -> None:
+        """Record a tool action in the actions table."""
+        import json as _json
+        self._ensure_actions_table()
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO actions (action, result, success, metadata, timestamp) VALUES (?, ?, ?, ?, ?)",
+                (action, result, int(success), _json.dumps(metadata or {}), datetime.now().isoformat()),
+            )
+
+    def store_failure(self, action: str, error: str = "", metadata: dict | None = None) -> None:
+        """Record a failed tool call."""
+        self.store_action(action, result=error, success=False, metadata=metadata)
+
+    def recent_actions(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Return recent actions, newest first."""
+        import json as _json
+        self._ensure_actions_table()
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT action, result, success, metadata, timestamp FROM actions ORDER BY id DESC LIMIT ?",
+                (max(1, limit),),
+            ).fetchall()
+        return [
+            {
+                "action": r["action"],
+                "result": r["result"],
+                "success": bool(r["success"]),
+                "metadata": _json.loads(r["metadata"] or "{}"),
+                "timestamp": r["timestamp"],
+            }
+            for r in rows
+        ]
+
+    def set_preference(self, key: str, value: str, category: str = "general", **_kwargs) -> None:
+        """Store a categorised preference (category stored as prefix key)."""
+        scoped_key = f"{category}::{key}" if category and category != "general" else key
+        self.store_preference(scoped_key, value)
+        # Also store the bare key for lookup without category prefix
+        self.store_preference(key, value)
+
+    def get_preferences(self, category: str = "") -> dict[str, str]:
+        """Return preferences matching the given category prefix."""
+        prefix = f"{category}::" if category else ""
+        with self._conn() as conn:
+            if prefix:
+                rows = conn.execute(
+                    "SELECT key, value FROM preferences WHERE key LIKE ? ORDER BY updated_at DESC",
+                    (f"{prefix}%",),
+                ).fetchall()
+                return {r["key"].removeprefix(prefix): r["value"] for r in rows}
+            rows = conn.execute(
+                "SELECT key, value FROM preferences ORDER BY updated_at DESC"
+            ).fetchall()
+            return {r["key"]: r["value"] for r in rows}
+
+    def cleanup_stale_data(self, max_age_days: int = 30) -> dict[str, int]:
+        """Remove episodes/actions older than max_age_days. Returns removal counts."""
+        import json as _json
+        from datetime import timedelta
+        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+
+        removed_episodes = 0
+        removed_actions = 0
+
+        with self._conn() as conn:
+            cur = conn.execute("DELETE FROM episodes WHERE timestamp < ?", (cutoff,))
+            removed_episodes = cur.rowcount
+
+        self._ensure_actions_table()
+        with self._conn() as conn:
+            cur = conn.execute("DELETE FROM actions WHERE timestamp < ?", (cutoff,))
+            removed_actions = cur.rowcount
+
+        return {"episodic_removed": removed_episodes, "actions_removed": removed_actions}
 
 
 __all__ = ["HybridMemory"]

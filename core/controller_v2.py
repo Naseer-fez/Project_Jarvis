@@ -15,7 +15,7 @@ from typing import Any
 from core.agentic.scheduler import Scheduler
 from core.autonomy.goal_manager import GoalManager
 from core.llm.model_router import ModelRouter
-from core.llm.llm_v2 import LLMClientV2
+from core.llm.client import LLMClientV2
 from core.memory.hybrid_memory import HybridMemory
 from core.profile import UserProfileEngine
 from core.proactive.background_monitor import BackgroundMonitor
@@ -51,8 +51,12 @@ class JarvisControllerV2:
         self.session_id = uuid.uuid4().hex[:8]
         self.memory = HybridMemory(db_path, chroma_path=chroma_path, model_name=embedding_model)
         self.model_router = ModelRouter(config=self.config)
-        self.llm = LLMClientV2(model_name=self.model_router.route("chat"))
         self.profile = UserProfileEngine()
+        self.llm = LLMClientV2(
+            hybrid_memory=self.memory,
+            model=self.model_router.route("chat"),
+            profile=self.profile,
+        )
         self.synthesizer = ProfileSynthesizer(self.llm)
         self._conversation_buffer: list[str] = []
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
@@ -190,14 +194,14 @@ class JarvisControllerV2:
         style_instruction = self.profile.get_communication_style()
         profile_guidance = f"{profile_injection}\n{style_instruction}".strip()
 
-        system_context = context
-        if profile_guidance:
-            system_context = f"{context}\n\nPROFILE GUIDANCE:\n{profile_guidance}".strip()
-
         self.llm.model_name = self.model_router.get_best_available("chat")
-        response = self.llm.chat(text, system_context=system_context)
 
-        if response == "LLM Offline.":
+        # LLMClientV2 builds its own system prompt internally using these args.
+        messages = [{"role": "user", "content": text}]
+        profile_summary = self.profile.get_communication_style() if self.profile else ""
+        response = self.llm.chat(messages, query_for_memory=text, profile_summary=profile_summary)
+
+        if not response or response == "LLM Offline.":
             prefs = self.memory.recall_preferences(text, top_k=1)
             if prefs and prefs[0].get("value"):
                 return _respond(f"Offline fallback from memory: {prefs[0]['value']}")

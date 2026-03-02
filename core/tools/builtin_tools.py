@@ -13,15 +13,17 @@ import time
 from pathlib import Path
 from typing import Optional
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 logger = logging.getLogger("Jarvis.Tools")
 
 ALLOWED_DIRECTORIES = [
-    Path("./workspace").resolve(),
-    Path("./outputs").resolve(),
+    (_PROJECT_ROOT / "workspace").resolve(),
+    (_PROJECT_ROOT / "outputs").resolve(),
 ]
 
 # Project root sandbox — all resolved paths must stay inside here.
-_SANDBOX_ROOT = Path("D:/AI/Jarvis").resolve()
+_SANDBOX_ROOT = _PROJECT_ROOT
 
 
 def _assert_safe_path(path_str: str) -> Path:

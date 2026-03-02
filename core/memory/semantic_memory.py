@@ -22,6 +22,7 @@ Author: Jarvis Session 4
 import uuid
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 try:
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_MODEL      = "all-MiniLM-L6-v2"   # 80 MB, fast, good quality
 DEFAULT_TOP_K      = 5
 DEFAULT_THRESHOLD  = 0.30                  # cosine similarity (0–1); lower = more results
-CHROMA_PATH        = "D:/AI/Jarvis/data/chroma"
+CHROMA_PATH        = str(Path(__file__).resolve().parent.parent.parent / "data" / "chroma")
 
 COLLECTION_PREFS   = "jarvis_preferences"
 COLLECTION_EPISODES= "jarvis_episodes"

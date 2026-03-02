@@ -32,19 +32,39 @@ class SerialController:
     This ensures the JARVIS loop never crashes due to missing hardware.
     """
 
-    def __init__(self, config: dict):
+    def __init__(self, config=None):
         """
         Args:
-            config: dict with keys:
-                com_port         (str)   e.g. 'COM7'
-                baud_rate        (int)   115200
-                timeout_seconds  (float) read timeout
-                require_hardware (bool)  if False, silently fall back to sim mode
+            config: dict, ConfigParser, or None.
+                When dict: keys are 'com_port', 'baud_rate', 'timeout_seconds', 'require_hardware'.
+                When ConfigParser: reads from [hardware] or [serial] section.
+                When None: defaults are used (simulation mode).
         """
-        self.port = config.get("com_port", "COM7")
-        self.baud_rate = int(config.get("baud_rate", 115200))
-        self.timeout = float(config.get("timeout_seconds", 2))
-        self.require_hardware = config.get("require_hardware", "false").lower() == "true"
+        import configparser as _configparser
+
+        if config is None:
+            cfg_dict: dict = {}
+        elif isinstance(config, _configparser.ConfigParser):
+            # Try [hardware] then [serial], fall back to empty
+            section = None
+            for sec in ("hardware", "serial", "execution"):
+                if config.has_section(sec):
+                    section = sec
+                    break
+            if section:
+                cfg_dict = dict(config[section])
+            else:
+                cfg_dict = {}
+        else:
+            cfg_dict = config  # assume dict-like
+
+        self.port = cfg_dict.get("com_port", "COM7")
+        self.baud_rate = int(cfg_dict.get("baud_rate", 115200))
+        self.timeout = float(cfg_dict.get("timeout_seconds", 2))
+        require_hw_raw = cfg_dict.get("require_hardware", "false")
+        self.require_hardware = (
+            require_hw_raw.lower() == "true" if isinstance(require_hw_raw, str) else bool(require_hw_raw)
+        )
 
         self._serial = None
         self._lock = threading.Lock()
@@ -84,8 +104,25 @@ class SerialController:
             self._simulation_mode = True
             self._connected = False
 
-    def is_connected(self) -> bool:
+    @property
+    def is_connected(self) -> bool:  # type: ignore[override]
         return self._connected and not self._simulation_mode
+
+    # ── Legacy stub API (used by V1/V2 acceptance tests) ─────────────────
+
+    def send(self, command: str) -> None:
+        """Legacy stub — raises NotImplementedError (serial controller unimplemented)."""
+        raise NotImplementedError(
+            "SerialController.send() is not implemented. "
+            "Use send_command() for real hardware or simulation."
+        )
+
+    def connect(self, port: str | None = None, baud_rate: int | None = None) -> None:
+        """Legacy stub — raises NotImplementedError."""
+        raise NotImplementedError(
+            f"SerialController.connect({port!r}) is not implemented. "
+            "The controller auto-connects in __init__."
+        )
 
     def send_command(self, command: str, value: str = "") -> str:
         """

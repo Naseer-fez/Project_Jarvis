@@ -56,7 +56,6 @@ def test_serial_controller_uses_default_port(serial_cfg, monkeypatch):
     monkeypatch.setattr(serial, "Serial", _FakeSerial)
 
     sc = SerialController(config=serial_cfg)
-    sc.connect(port=None, baud_rate=None)
     assert created["port"] == "COM7"
     assert created["baudrate"] == 115200
     assert sc.is_connected
