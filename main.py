@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from core.controller import Controller
+    from core.controller_v2 import Controller
 
 # ─────────────────────────────────────────────────────────────
 # Project root — never mutate cwd; use absolute paths instead
@@ -173,7 +173,7 @@ async def async_main(args: argparse.Namespace) -> int:
 
     # ── Set up structured logging ────────────────────────────
     try:
-        from core.logging import logger as logger_mod
+        from core import logger as logger_mod
 
         logger_mod.setup(config)
         log = logger_mod.get()
@@ -184,7 +184,7 @@ async def async_main(args: argparse.Namespace) -> int:
     # ── Audit verification mode ──────────────────────────────
     if args.verify:
         try:
-            from core.logging import logger as logger_mod  # noqa: F811
+            from core import logger as logger_mod  # noqa: F811
 
             ok, count, err = logger_mod.verify_audit()
             msg = f"{count} entries verified"
@@ -221,7 +221,7 @@ async def async_main(args: argparse.Namespace) -> int:
     controller: Optional[Controller] = None
 
     try:
-        from core.controller import Controller
+        from core.controller_v2 import Controller
 
         log.info(
             "Starting Jarvis V2 | voice=%s | session=%s",

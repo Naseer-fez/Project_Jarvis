@@ -35,7 +35,7 @@ class MemoryIntelligence:
     def __init__(self, llm=None):
         self.llm = llm
 
-    def evaluate_input(self, user_input: str) -> dict | None:
+    async def evaluate_input(self, user_input: str) -> dict | None:
         """
         Returns a storage decision dict or None.
         {"decision": "store", "key": ..., "value": ..., "category": ...}
@@ -46,24 +46,19 @@ class MemoryIntelligence:
             return None
 
         if self.llm:
-            result = self._llm_evaluate(user_input)
+            result = await self._llm_evaluate(user_input)
             if result:
                 return result
 
         return self._heuristic_evaluate(user_input)
 
-    def _llm_evaluate(self, text: str) -> dict | None:
+    async def _llm_evaluate(self, text: str) -> dict | None:
         try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(
-                self.llm.complete_json(
-                    f"Should I remember this?\n\n{text}",
-                    system=MEMORY_EVAL_SYSTEM,
-                    temperature=0.0
-                )
+            result = await self.llm.complete_json(
+                f"Should I remember this?\n\n{text}",
+                system=MEMORY_EVAL_SYSTEM,
+                temperature=0.0
             )
-            loop.close()
             if result and result.get("decision") == "store":
                 return result
             return {"decision": "ignore"}
