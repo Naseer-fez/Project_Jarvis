@@ -14,9 +14,12 @@ from typing import Any
 
 from core.agentic.scheduler import Scheduler
 from core.autonomy.goal_manager import GoalManager
+from core.llm.model_router import ModelRouter
 from core.llm.llm_v2 import LLMClientV2
 from core.memory.hybrid_memory import HybridMemory
 from core.profile import UserProfileEngine
+from core.proactive.background_monitor import BackgroundMonitor
+from core.proactive.notifier import NotificationManager
 from core.synthesis import ProfileSynthesizer
 
 logger = logging.getLogger(__name__)
@@ -38,12 +41,17 @@ class JarvisControllerV2:
         if isinstance(config, configparser.ConfigParser):
             db_path = config.get("memory", "db_path", fallback=config.get("memory", "sqlite_file", fallback=db_path))
             chroma_path = config.get("memory", "chroma_path", fallback=config.get("memory", "chroma_dir", fallback=chroma_path))
-            model_name = config.get("llm", "model", fallback=config.get("ollama", "planner_model", fallback=model_name))
+            model_name = config.get(
+                "models",
+                "chat_model",
+                fallback=config.get("llm", "model", fallback=config.get("ollama", "planner_model", fallback=model_name)),
+            )
             embedding_model = config.get("memory", "embedding_model", fallback=embedding_model)
 
         self.session_id = uuid.uuid4().hex[:8]
         self.memory = HybridMemory(db_path, chroma_path=chroma_path, model_name=embedding_model)
-        self.llm = LLMClientV2(model_name=model_name)
+        self.model_router = ModelRouter(config=self.config)
+        self.llm = LLMClientV2(model_name=self.model_router.route("chat"))
         self.profile = UserProfileEngine()
         self.synthesizer = ProfileSynthesizer(self.llm)
         self._conversation_buffer: list[str] = []
@@ -58,8 +66,14 @@ class JarvisControllerV2:
         self.goal_manager = GoalManager()
         self.scheduler = Scheduler()
         self._goal_check_task: asyncio.Task | None = None
+        self._goal_check_interval_seconds = 300
+        if isinstance(config, configparser.ConfigParser):
+            minutes = config.getint("proactive", "goal_check_interval_minutes", fallback=5)
+            self._goal_check_interval_seconds = max(1, minutes) * 60
         self._goals_file = Path("memory/goals.json")
         self._load_goal_state()
+        self.notifier = NotificationManager()
+        self.monitor = BackgroundMonitor(self.notifier, self.config)
 
         self.voice_enabled = voice
         self._voice_layer = None
@@ -180,6 +194,7 @@ class JarvisControllerV2:
         if profile_guidance:
             system_context = f"{context}\n\nPROFILE GUIDANCE:\n{profile_guidance}".strip()
 
+        self.llm.model_name = self.model_router.get_best_available("chat")
         response = self.llm.chat(text, system_context=system_context)
 
         if response == "LLM Offline.":
@@ -200,11 +215,13 @@ class JarvisControllerV2:
     async def start(self) -> None:
         self._runtime_loop = asyncio.get_running_loop()
         self.initialize()
+        asyncio.create_task(self.monitor.start(), name="jarvis_resource_monitor_start")
 
     async def run_cli(self) -> None:
         """Run either standard CLI or voice loop based on --voice/config."""
         if self._goal_check_task is None or self._goal_check_task.done():
             self._goal_check_task = asyncio.create_task(self._check_due_goals(), name="jarvis_goal_due_checker")
+        asyncio.create_task(self.monitor.start(), name="jarvis_resource_monitor_start_cli")
 
         if self._voice_layer is not None:
             logger.info("Starting in voice mode...")
@@ -235,6 +252,8 @@ class JarvisControllerV2:
             print(f"Jarvis: {response}")
 
     async def shutdown(self) -> None:
+        await self.monitor.stop()
+
         if self._goal_check_task is not None and not self._goal_check_task.done():
             self._goal_check_task.cancel()
             try:
@@ -261,12 +280,12 @@ class JarvisControllerV2:
     async def _check_due_goals(self) -> None:
         """Background task: check for overdue goals every 5 minutes."""
         while True:
-            await asyncio.sleep(300)
+            await asyncio.sleep(self._goal_check_interval_seconds)
             try:
                 due_items = self.scheduler.due()
                 for item in due_items:
                     msg = f"Due: {item.description or item.goal_id}"
-                    print(f"\n[JARVIS] {msg}")
+                    self.notifier.notify(msg)
                     item.mark_completed()
                     if self._voice_layer is not None:
                         try:

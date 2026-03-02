@@ -69,12 +69,17 @@ class LLMClientV2:
         self.memory = hybrid_memory
         self.model = model
         self.profile = profile
+        self.model_router = None
+
+    def set_router(self, router) -> None:
+        self.model_router = router
 
     async def complete(
         self,
         prompt: str,
         system: str = "",
         temperature: float = 0.1,
+        task_type: str = "chat",
         keep_think: bool = False,
     ) -> str:
         """Text completion via Ollama /api/generate."""
@@ -84,8 +89,13 @@ class LLMClientV2:
             logger.error("aiohttp not installed: pip install aiohttp")
             return ""
 
+        if self.model_router is not None:
+            model_to_use = self.model_router.get_best_available(task_type)
+        else:
+            model_to_use = self.model
+
         payload = {
-            "model": self.model,
+            "model": model_to_use,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": temperature, "top_p": 0.9},
@@ -118,8 +128,9 @@ class LLMClientV2:
         prompt: str,
         system: str = "",
         temperature: float = 0.0,
+        task_type: str = "planning",
     ) -> dict[str, Any] | None:
-        raw = await self.complete(prompt, system=system, temperature=temperature)
+        raw = await self.complete(prompt, system=system, temperature=temperature, task_type=task_type)
         if not raw:
             return None
 

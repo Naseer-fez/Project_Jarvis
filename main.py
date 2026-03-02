@@ -115,6 +115,11 @@ def parse_args() -> argparse.Namespace:
         help="Start web dashboard at http://localhost:7070",
     )
     parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Alias for --gui (backward compatibility)",
+    )
+    parser.add_argument(
         "--verify", action="store_true", help="Verify audit log and exit"
     )
     parser.add_argument(
@@ -239,9 +244,15 @@ async def async_main(args: argparse.Namespace) -> int:
         )
 
         controller = Controller(config=config, voice=voice_enabled)
-        await controller.start()
+        from core.introspection.health import HealthReport, run_startup_health_check
 
-        if args.gui:
+        try:
+            health_report = run_startup_health_check(controller)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Startup health check failed: %s", exc)
+            health_report = HealthReport()
+
+        if args.gui or getattr(args, "dashboard", False):
             try:
                 import threading
 
@@ -253,14 +264,6 @@ async def async_main(args: argparse.Namespace) -> int:
                 )
 
                 set_controller(controller)
-                try:
-                    update_state(
-                        session_id=getattr(controller, "session_id", "session-1"),
-                        model=getattr(getattr(controller, "llm", None), "model", "unknown"),
-                        state="IDLE",
-                    )
-                except Exception:
-                    pass
 
                 def _run_dashboard() -> None:
                     uvicorn.run(
@@ -272,11 +275,24 @@ async def async_main(args: argparse.Namespace) -> int:
 
                 t = threading.Thread(target=_run_dashboard, daemon=True)
                 t.start()
-                print("Dashboard running at: http://localhost:7070")
+                try:
+                    llm_obj = getattr(controller, "llm", None)
+                    model_name = getattr(llm_obj, "model", getattr(llm_obj, "model_name", "unknown"))
+                    update_state(
+                        session_id=getattr(controller, "session_id", "jarvis-1"),
+                        model=model_name,
+                        state="IDLE",
+                        ollama_online=getattr(health_report, "ollama_reachable", False),
+                    )
+                except Exception:
+                    pass
+                print("Dashboard: http://localhost:7070")
             except ImportError as exc:
                 log.warning("Dashboard unavailable: %s", exc)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Dashboard failed to start: %s", exc)
+
+        await controller.start()
 
     except Exception:
         log.critical("Controller failed to start:\n%s", traceback.format_exc())

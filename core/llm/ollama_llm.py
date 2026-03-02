@@ -26,11 +26,15 @@ class OllamaLLM:
         self.base_url = base_url
         self.system_prompt = system_prompt
         self._history: list[dict] = []
+        self.model_router = None
+
+    def set_router(self, router) -> None:
+        self.model_router = router
 
     def reset_history(self):
         self._history.clear()
 
-    async def chat(self, user_message: str, inject_context: str = "") -> Optional[str]:
+    async def chat(self, user_message: str, inject_context: str = "", task_type: str = "chat") -> Optional[str]:
         """
         Send a message and get a response. Maintains history for multi-turn.
         inject_context: optional text prepended to the system context (e.g., memory summary).
@@ -43,8 +47,15 @@ class OllamaLLM:
             {"role": "user", "content": user_message}
         ]
 
+        model_to_use = self.model
+        if self.model_router is not None:
+            try:
+                model_to_use = self.model_router.get_best_available(task_type)
+            except Exception as e:
+                logger.debug("Model routing failed for task_type=%s: %s", task_type, e)
+
         payload = {
-            "model": self.model,
+            "model": model_to_use,
             "messages": messages,
             "stream": False,
         }

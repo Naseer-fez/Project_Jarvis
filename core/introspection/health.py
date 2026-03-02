@@ -178,3 +178,125 @@ def run_health_check(
 
     return report
 
+
+def run_startup_health_check(controller=None) -> "HealthReport":
+    """Run all startup checks, print status, and return a HealthReport."""
+    checks: dict[str, Any] = {}
+
+    # 1) Ollama reachable
+    try:
+        import urllib.request
+
+        urllib.request.urlopen("http://localhost:11434", timeout=3)
+        checks["ollama_reachable"] = True
+    except Exception:
+        checks["ollama_reachable"] = False
+
+    # 2) ChromaDB installed (optional)
+    try:
+        import chromadb  # noqa: F401
+
+        checks["chromadb_ready"] = True
+    except ImportError:
+        checks["chromadb_ready"] = None
+    except Exception:
+        checks["chromadb_ready"] = False
+
+    # 3) Memory SQLite accessible
+    try:
+        from pathlib import Path
+
+        db = Path("memory/memory.db")
+        checks["memory_sqlite"] = db.exists()
+    except Exception:
+        checks["memory_sqlite"] = False
+
+    # 4) Voice dependencies installed (optional)
+    try:
+        import pvporcupine  # noqa: F401
+        import sounddevice  # noqa: F401
+
+        checks["voice_deps"] = True
+    except ImportError:
+        checks["voice_deps"] = None
+    except Exception:
+        checks["voice_deps"] = False
+
+    # 5) Config file exists
+    try:
+        from pathlib import Path
+
+        checks["config_loaded"] = Path("config/jarvis.ini").exists()
+    except Exception:
+        checks["config_loaded"] = False
+
+    # 6) Integrations loaded (if controller available)
+    if controller and hasattr(controller, "integration_loader"):
+        try:
+            result = getattr(controller, "_integration_result", {})
+            loaded = result.get("loaded", []) if isinstance(result, dict) else []
+            checks["integrations"] = f"{len(loaded)} loaded"
+        except Exception:
+            checks["integrations"] = "unknown"
+    else:
+        checks["integrations"] = "not wired"
+
+    # Optional terminal color + Unicode-safe output on Windows code pages.
+    try:
+        import sys
+
+        encoding = (getattr(sys.stdout, "encoding", "") or "").lower()
+        use_unicode = "utf" in encoding
+    except Exception:
+        use_unicode = False
+
+    try:
+        from colorama import Fore, Style, init
+
+        init(autoreset=True)
+        ok = Fore.GREEN + ("✅" if use_unicode else "OK")
+        warn = Fore.YELLOW + ("⚠️" if use_unicode else "WARN")
+        fail = Fore.RED + ("❌" if use_unicode else "FAIL")
+        reset = Style.RESET_ALL
+    except ImportError:
+        ok, warn, fail = "OK", "WARN", "FAIL"
+        reset = ""
+
+    top = "\n═══ JARVIS STARTUP HEALTH ═══" if use_unicode else "\n=== JARVIS STARTUP HEALTH ==="
+    bottom = "══════════════════════════════\n" if use_unicode else "==============================\n"
+
+    print(top)
+    for key, val in checks.items():
+        if val is True or (isinstance(val, str) and val):
+            icon = ok
+        elif val is None:
+            icon = warn
+        else:
+            icon = fail
+        print(f"  {icon} {key}: {val}{reset}")
+    print(bottom)
+
+    # Build HealthReport using existing schema and attach direct attrs for convenience.
+    report = HealthReport()
+    for key, val in checks.items():
+        if val is True or (isinstance(val, str) and val):
+            status = HealthStatus.OK
+        elif val is None:
+            status = HealthStatus.WARN
+        else:
+            status = HealthStatus.FAIL
+        report.add(
+            HealthCheckResult(
+                name=key,
+                status=status,
+                message=str(val),
+                details={"value": val},
+            )
+        )
+        try:
+            setattr(report, key, val)
+        except Exception:
+            pass
+
+    return report
+

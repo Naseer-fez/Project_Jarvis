@@ -13,6 +13,7 @@ from core.agent.agent_loop import AgentLoopEngine
 from core.agent.state_machine import AgentState, StateMachine
 from core.autonomy.autonomy_governor import AutonomyGovernor
 from core.autonomy.risk_evaluator import RiskEvaluator
+from core.llm.model_router import ModelRouter
 from core.llm.ollama_llm import OllamaLLM
 from core.llm.task_planner import TaskPlanner
 from core.memory.memory_engine import MemoryEngine
@@ -79,10 +80,21 @@ class MainController:
         self.router = ToolRouter()
 
         self.llm = OllamaLLM(model=model, base_url=ollama_url)
+        self.model_router = ModelRouter(config=self.config)
+        self.llm.set_router(self.model_router)
+        self.model = self.model_router.route("chat")
+        self.llm.model = self.model
         self.classifier = IntentClassifierV2(self.llm)
         self.planner = TaskPlanner(self.config)
         self.risk = RiskEvaluator(config=self.config if self.config.sections() else None)
         self.gov = AutonomyGovernor(level=autonomy_level)
+
+        try:
+            from dashboard.server import update_state
+
+            update_state(model=self.model_router.route("chat"))
+        except ImportError:
+            pass
 
         self.memory = MemoryEngine(session_id=self.session_id)
         self.audit = AuditLogger(session_id=self.session_id)
@@ -94,7 +106,7 @@ class MainController:
             tool_router=self.router,
             risk_evaluator=self.risk,
             autonomy_governor=self.gov,
-            model=model,
+            model=self.model,
             ollama_url=ollama_url,
             max_iterations=max_iterations,
         )
@@ -104,9 +116,11 @@ class MainController:
             self.router.register("see", analyze_image)
 
         self.integration_registry = api_registry
+        self._integration_result = {"loaded": [], "skipped": []}
         try:
             self.integration_loader = IntegrationLoader()
             result = self.integration_loader.load_all(self.config, self.integration_registry)
+            self._integration_result = result
             logger.info("Integrations: %s loaded, %d skipped", result["loaded"], len(result["skipped"]))
         except Exception as exc:  # noqa: BLE001
             logger.warning("Integration loader failed: %s", exc)
@@ -221,7 +235,7 @@ class MainController:
         if not context_inject:
             context_inject = self.memory.context_summary(text)
 
-        response = await self.llm.chat(text, inject_context=context_inject)
+        response = await self.llm.chat(text, inject_context=context_inject, task_type="chat")
 
         self.sm.transition(AgentState.SPEAKING)
         print(f"Jarvis: {response}")
@@ -234,6 +248,11 @@ class MainController:
 
     async def _run_agent_task(self, goal: str) -> None:
         print(f"\nStarting agent task: {goal!r}")
+
+        try:
+            self.planner._model = self.model_router.get_best_available("planning")
+        except Exception:  # noqa: BLE001
+            pass
 
         trace = await self.agent_loop.run(
             goal=goal,
