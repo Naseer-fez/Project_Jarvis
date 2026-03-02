@@ -1,93 +1,93 @@
-"""
-core/synthesis.py
-══════════════════
-ProfileSynthesizer — uses LLM to synthesize a user identity delta
-from accumulated memories and interaction history.
+"""Profile synthesis engine for Session 3."""
 
-Called by controller after N new memories or on shutdown.
-Returns a delta dict that UserProfileEngine merges into the profile.
-"""
+from __future__ import annotations
 
-import logging
+import asyncio
 import json
+import logging
+import re
 
-logger = logging.getLogger(__name__)
+from core.profile import UserProfileEngine
 
-SYNTHESIS_SYSTEM = """You are a user modelling system for a personal AI assistant called Jarvis.
 
-Given the user's stored memories and interaction history, synthesize an updated identity profile delta.
-
-Focus on:
-- communication_style: formal | casual | technical | creative
-- expertise_level: beginner | intermediate | advanced | expert
-- name: if mentioned anywhere
-- Any strong preferences or personality traits
-
-Respond ONLY with a valid JSON delta (only fields you're confident about):
+SYNTHESIS_SYSTEM = """You are analyzing conversation history to understand a user's
+communication style and expertise level. Respond ONLY with a JSON object.
+No preamble. No markdown. No code fences. Raw JSON only.
+Format:
 {
-  "identity_core": {
-    "name": "...",
-    "communication_style": "...",
-    "expertise_level": "..."
-  }
+  "communication_style": {"value": "casual|formal|technical", "confidence": 0.0-1.0},
+  "expertise_level": {"value": "beginner|intermediate|advanced|expert", "confidence": 0.0-1.0},
+  "preferred_topics": {"value": ["topic1", "topic2"], "confidence": 0.0-1.0},
+  "name": {"value": "FirstName", "confidence": 0.0-1.0}
 }
-
-If you cannot determine something with confidence, omit it entirely."""
+Only include fields you are confident about. Omit fields you cannot determine.
+"""
 
 
 class ProfileSynthesizer:
-    """
-    Analyzes stored memories and generates a profile update delta.
-    """
+    def __init__(self, llm):
+        self._llm = llm
 
-    def __init__(self, llm=None):
-        self.llm = llm
+    def should_run(self, profile: UserProfileEngine) -> bool:
+        count = profile.interaction_count
+        return count > 0 and count % 20 == 0
 
-    def synthesize(self, hybrid_memory) -> dict | None:
-        """
-        Pull recent memory, ask LLM to synthesize a profile delta.
-        Returns delta dict or None if nothing to update.
-        """
-        # Gather context
-        episodes = hybrid_memory.get_recent_episodes(limit=20)
-        preferences = hybrid_memory.get_all_preferences()
+    async def synthesize(self, recent_conversations: list, profile: UserProfileEngine) -> dict:
+        """Analyze recent conversations and apply a confident profile delta."""
+        if not recent_conversations:
+            return {"updated_fields": [], "delta": {}}
 
-        if not episodes and not preferences:
-            logger.info("Synthesis: no memory to analyze.")
-            return None
-
-        context_parts = []
-        if preferences:
-            context_parts.append("USER PREFERENCES:")
-            for k, v in preferences.items():
-                context_parts.append(f"  - {k}: {v}")
-
-        if episodes:
-            context_parts.append("\nRECENT EPISODES:")
-            for ep in episodes[:10]:
-                context_parts.append(f"  - {ep['content']}")
-
-        context = "\n".join(context_parts)
-        prompt = f"Synthesize a user profile delta from this data:\n\n{context}"
-
-        if self.llm is None:
-            logger.warning("Synthesis: no LLM available, returning empty delta.")
-            return {}
+        convo_text = "\n\n".join(str(item) for item in recent_conversations[-20:])
+        prompt = f"Analyze these conversations and extract user profile signals:\n\n{convo_text}"
 
         try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            delta = loop.run_until_complete(
-                self.llm.complete_json(prompt, system=SYNTHESIS_SYSTEM, temperature=0.2)
+            raw = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: self._call_llm(prompt),
             )
-            loop.close()
+            clean = self._strip_fences(raw)
+            delta = json.loads(clean)
+            updated = profile.apply_delta(delta)
+            return {"updated_fields": updated, "delta": delta}
+        except json.JSONDecodeError as e:
+            logging.getLogger(__name__).warning(f"Synthesis JSON parse failed: {e}")
+            return {"updated_fields": [], "delta": {}, "error": "json_parse_failed"}
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).warning(f"Synthesis failed: {e}")
+            return {"updated_fields": [], "delta": {}, "error": str(e)}
 
-            if delta and isinstance(delta, dict):
-                logger.info(f"Synthesis delta: {list(delta.keys())}")
-                return delta
-            return None
+    def _call_llm(self, prompt: str) -> str:
+        if self._llm is None:
+            raise RuntimeError("LLM unavailable for profile synthesis.")
 
-        except Exception as e:
-            logger.error(f"Synthesis failed: {e}")
-            return None
+        if hasattr(self._llm, "complete"):
+            try:
+                result = self._llm.complete(prompt, system=SYNTHESIS_SYSTEM, task_type="synthesis")
+            except TypeError:
+                result = self._llm.complete(prompt, system=SYNTHESIS_SYSTEM)
+            if asyncio.iscoroutine(result):
+                return asyncio.run(result)
+            return str(result or "")
 
+        if hasattr(self._llm, "chat"):
+            result = self._llm.chat(prompt, system_context=SYNTHESIS_SYSTEM)
+            return str(result or "")
+
+        raise AttributeError("LLM client does not expose complete() or chat().")
+
+    @staticmethod
+    def _strip_fences(text: str) -> str:
+        clean = (text or "").strip()
+        clean = re.sub(r"^```(?:json)?\s*", "", clean, flags=re.IGNORECASE)
+        clean = re.sub(r"\s*```$", "", clean)
+        clean = clean.strip()
+
+        if clean.startswith("{") and clean.endswith("}"):
+            return clean
+
+        start = clean.find("{")
+        end = clean.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return clean[start : end + 1]
+
+        return clean

@@ -104,7 +104,16 @@ def parse_args() -> argparse.Namespace:
         epilog=__doc__,
     )
 
-    parser.add_argument("--voice", action="store_true", help="Enable voice mode")
+    parser.add_argument(
+        "--voice",
+        action="store_true",
+        help="Start Jarvis in voice mode (speak + listen)",
+    )
+    parser.add_argument(
+        "--gui",
+        action="store_true",
+        help="Start web dashboard at http://localhost:7070",
+    )
     parser.add_argument(
         "--verify", action="store_true", help="Verify audit log and exit"
     )
@@ -229,8 +238,45 @@ async def async_main(args: argparse.Namespace) -> int:
             config.get("general", "session_name", fallback="default"),
         )
 
-        controller = Controller(config, voice=voice_enabled)
+        controller = Controller(config=config, voice=voice_enabled)
         await controller.start()
+
+        if args.gui:
+            try:
+                import threading
+
+                import uvicorn
+                from dashboard.server import (
+                    app as dashboard_app,
+                    set_controller,
+                    update_state,
+                )
+
+                set_controller(controller)
+                try:
+                    update_state(
+                        session_id=getattr(controller, "session_id", "session-1"),
+                        model=getattr(getattr(controller, "llm", None), "model", "unknown"),
+                        state="IDLE",
+                    )
+                except Exception:
+                    pass
+
+                def _run_dashboard() -> None:
+                    uvicorn.run(
+                        dashboard_app,
+                        host="127.0.0.1",
+                        port=7070,
+                        log_level="warning",
+                    )
+
+                t = threading.Thread(target=_run_dashboard, daemon=True)
+                t.start()
+                print("Dashboard running at: http://localhost:7070")
+            except ImportError as exc:
+                log.warning("Dashboard unavailable: %s", exc)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Dashboard failed to start: %s", exc)
 
     except Exception:
         log.critical("Controller failed to start:\n%s", traceback.format_exc())

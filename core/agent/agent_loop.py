@@ -19,6 +19,7 @@ from core.agent.state_machine import AgentState, StateMachine
 from core.autonomy.autonomy_governor import AutonomyGovernor
 from core.autonomy.risk_evaluator import RiskEvaluator, RiskLevel
 from core.llm.task_planner import TaskPlanner
+from core.metrics.confidence import ConfidenceModel
 from core.tools.tool_router import ToolObservation, ToolRouter
 
 logger = logging.getLogger("Jarvis.AgentLoop")
@@ -26,24 +27,25 @@ logger = logging.getLogger("Jarvis.AgentLoop")
 _DEFAULT_MAX_ITERATIONS = 10
 
 REFLECT_SYSTEM_PROMPT = (
-    "You are an expert software engineer and AI assistant named Jarvis.\n"
-    "Review the executed plan and all tool observations.\n"
-    "If any tool returned error or failure: state the technical root cause first,\n"
-    "explain what went wrong, propose the specific fix.\n"
-    "If successful: summarize what was done, show key output the user needs.\n"
-    "Be direct and technical. No filler. Speak in second person."
+    "You are Jarvis, an expert AI assistant. Review the executed plan and observations.\n"
+    "If any tool failed: state the root cause first, then the fix.\n"
+    "If successful: summarize concisely what was accomplished.\n"
+    "Be direct and technical. No filler phrases. Address the user in second person."
 )
 
 
-def _truncate_observation(text: str, max_chars: int = 800) -> str:
-    """Truncate long observations to first/last 400 chars."""
+def _truncate_obs(text: str, max_chars: int = 800) -> str:
+    """Truncate long observations to keep both leading and trailing context."""
     text = text or ""
     if len(text) <= max_chars:
         return text
-    head = max_chars // 2
-    tail = max_chars - head
+    half = max_chars // 2
     omitted = len(text) - max_chars
-    return f"{text[:head]}\n...[{omitted} chars truncated]...\n{text[-tail:]}"
+    return text[:half] + f"\n...[{omitted} chars omitted]...\n" + text[-half:]
+
+
+def _truncate_observation(text: str, max_chars: int = 800) -> str:
+    return _truncate_obs(text, max_chars=max_chars)
 
 
 @dataclass
@@ -102,6 +104,7 @@ class AgentLoopEngine:
         self.model = model
         self.ollama_url = ollama_url
         self.max_iterations = max(1, int(max_iterations or _DEFAULT_MAX_ITERATIONS))
+        self.confidence = ConfidenceModel()
         self._interrupt = asyncio.Event()
 
     def request_interrupt(self) -> None:
@@ -134,6 +137,14 @@ class AgentLoopEngine:
             return self._stop(trace, "planning_failed")
 
         trace.plan = plan
+        intent_score = getattr(plan, "confidence", None)
+        if intent_score is None and isinstance(plan, dict):
+            intent_score = plan.get("confidence", plan.get("intent_confidence", 0.5))
+        try:
+            intent_score_value = float(intent_score)
+        except (TypeError, ValueError):
+            intent_score_value = 0.5
+        self.confidence.update("intent_clarity", intent_score_value)
 
         if plan.get("clarification_needed"):
             trace.final_response = str(
@@ -227,7 +238,12 @@ class AgentLoopEngine:
                 )
                 continue
 
-            needs_confirm = step_risk.requires_confirmation or self.gov.requires_confirmation(action)
+            force_confirmation = self.confidence.score() < 0.4
+            needs_confirm = (
+                step_risk.requires_confirmation
+                or self.gov.requires_confirmation(action)
+                or force_confirmation
+            )
             if needs_confirm:
                 self.sm.transition(AgentState.AWAITING_CONFIRMATION)
                 approved = await self._ask_confirmation(
@@ -246,10 +262,12 @@ class AgentLoopEngine:
 
             obs_dict = observation.to_dict()
             obs_dict["step_id"] = step_id
-            obs_dict["output_summary"] = _truncate_observation(str(obs_dict.get("output_summary", "")))
+            obs_dict["output_summary"] = _truncate_obs(str(obs_dict.get("output_summary", "")))
             if obs_dict.get("error_message"):
-                obs_dict["error_message"] = _truncate_observation(str(obs_dict["error_message"]))
+                obs_dict["error_message"] = _truncate_obs(str(obs_dict["error_message"]))
             trace.observations.append(obs_dict)
+            tool_success = 1.0 if observation.execution_status == "success" else 0.0
+            self.confidence.update("tool_reliability", tool_success)
 
             if observation.execution_status != "success":
                 return self._stop(trace, "unrecoverable_tool_failure")
@@ -343,10 +361,10 @@ class AgentLoopEngine:
         trace: ExecutionTrace,
     ) -> str:
         if observations:
-            obs_lines = [
-                f"- {obs.tool_name}: {_truncate_observation(obs.output_summary or obs.error_message or '')}"
-                for obs in observations
-            ]
+            obs_lines = []
+            for obs in observations:
+                obs_text = _truncate_obs(obs.output_summary or obs.error_message or "")
+                obs_lines.append(f"- {obs.tool_name}: {obs_text}")
             obs_text = "\n".join(obs_lines)
         else:
             obs_text = "No tool observations."
@@ -376,11 +394,8 @@ class AgentLoopEngine:
                 data = response.json()
                 raw = str(data.get("message", {}).get("content", "")).strip()
 
-                think_matches = re.findall(r"<think>.*?</think>", raw, flags=re.DOTALL)
-                for block in think_matches:
-                    block = block.strip()
-                    if block:
-                        trace.think_blocks.append(block)
+                think_matches = re.findall(r"<think>(.*?)</think>", raw, re.DOTALL)
+                trace.think_blocks = [block.strip() for block in think_matches if block.strip()]
 
                 cleaned_response = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
                 return cleaned_response or self._fallback_reflection(plan, observations)

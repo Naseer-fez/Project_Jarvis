@@ -65,9 +65,10 @@ def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> st
 
 
 class LLMClientV2:
-    def __init__(self, hybrid_memory: Any = None, model: str = DEFAULT_MODEL):
+    def __init__(self, hybrid_memory: Any = None, model: str = DEFAULT_MODEL, profile: Any = None):
         self.memory = hybrid_memory
         self.model = model
+        self.profile = profile
 
     async def complete(
         self,
@@ -160,6 +161,26 @@ class LLMClientV2:
 
     def _build_system(self, query: str = "", profile: str = "", workspace_path: str = "") -> str:
         parts = [JARVIS_SYSTEM]
+
+        profile_obj = getattr(self, "profile", None)
+        if profile_obj is not None:
+            profile_injection = ""
+            style_instruction = ""
+            try:
+                profile_injection = str(profile_obj.get_system_prompt_injection() or "").strip()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Profile injection failed: %s", exc)
+            try:
+                style_instruction = str(profile_obj.get_communication_style() or "").strip()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Profile style injection failed: %s", exc)
+
+            combined = " ".join(part for part in (profile_injection, style_instruction) if part).strip()
+            if combined:
+                words = combined.split()
+                if len(words) > 120:
+                    combined = " ".join(words[:120])
+                parts.append(f"\nPROFILE GUIDANCE:\n{combined}")
 
         if profile:
             parts.append(f"\nUSER PROFILE:\n{profile}")
