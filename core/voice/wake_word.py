@@ -1,4 +1,4 @@
-﻿"""Wake-word detection with continuous-listen fallback."""
+﻿"""Wake-word detection with pvporcupine and continuous-listen fallback."""
 
 from __future__ import annotations
 
@@ -12,27 +12,27 @@ logger = logging.getLogger(__name__)
 
 try:
     import pvporcupine
-except ImportError:  # optional dependency
+except ImportError:
     pvporcupine = None  # type: ignore[assignment]
 
 try:
     from pvrecorder import PvRecorder
-except ImportError:  # optional dependency
+except ImportError:
     PvRecorder = None  # type: ignore[assignment]
 
 
 class WakeWordDetector:
-    """Waits for wake word if available, else behaves as continuous mode."""
+    """Waits for wake word; falls back to continuous mode when unavailable."""
 
     def __init__(self, config: Any) -> None:
         self._config = config
-        self.wake_word = self._get("wake_word", "jarvis").lower().strip() or "jarvis"
+        self.wake_word = self._get("wake_word", "jarvis").strip().lower() or "jarvis"
         self.access_key = os.environ.get("PORCUPINE_ACCESS_KEY", self._get("porcupine_access_key", "")).strip()
         self._stop_event = threading.Event()
 
         self._continuous_mode = pvporcupine is None or PvRecorder is None
         if self._continuous_mode:
-            logger.warning("pvporcupine/pvrecorder unavailable - using continuous listening fallback")
+            logger.warning("Wake-word backend unavailable; using continuous listen fallback")
 
     def _get(self, key: str, default: str) -> str:
         try:
@@ -41,7 +41,7 @@ class WakeWordDetector:
             return default
 
     async def wait_for_wake(self) -> bool:
-        """Return when wake word is detected, or immediately in fallback mode."""
+        """Return True when ready for STT capture."""
         if self._continuous_mode:
             await asyncio.sleep(0.1)
             return not self._stop_event.is_set()
@@ -54,14 +54,14 @@ class WakeWordDetector:
         recorder = None
 
         try:
-            kwargs = {"keywords": [self.wake_word]}
+            kwargs: dict[str, Any] = {"keywords": [self.wake_word]}
             if self.access_key:
                 kwargs["access_key"] = self.access_key
 
             try:
                 porcupine = pvporcupine.create(**kwargs)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Wake-word init failed (%s). Falling back to continuous mode.", exc)
+                logger.warning("Wake-word init failed (%s); falling back to continuous mode", exc)
                 self._continuous_mode = True
                 return not self._stop_event.is_set()
 
@@ -75,13 +75,16 @@ class WakeWordDetector:
 
             return False
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Wake-word detection failed (%s). Falling back to continuous mode.", exc)
+            logger.warning("Wake-word detection failed (%s); switching to continuous mode", exc)
             self._continuous_mode = True
             return not self._stop_event.is_set()
         finally:
             if recorder is not None:
                 try:
                     recorder.stop()
+                except Exception:
+                    pass
+                try:
                     recorder.delete()
                 except Exception:
                     pass

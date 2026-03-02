@@ -1,9 +1,4 @@
-﻿"""
-Stateless, table-driven risk scorer.
-
-Given a list of action strings from the planner, returns a RiskResult.
-No side effects. No LLM calls. Deterministic.
-"""
+﻿"""Deterministic table-driven risk evaluator for planned tool actions."""
 
 from __future__ import annotations
 
@@ -18,7 +13,8 @@ class RiskLevel(IntEnum):
     CONFIRM = 2
     HIGH = 3
     CRITICAL = 4
-    # Backward-compatibility alias used by older tests/code paths.
+
+    # Backward compatibility alias used in legacy paths.
     FORBIDDEN = 4
 
     def label(self) -> str:
@@ -57,12 +53,7 @@ class RiskResult:
 
 
 class RiskEvaluator:
-    """
-    Evaluate risk of a plan.
-
-    Action classification is loaded from config but falls back to sensible
-    built-in defaults so the evaluator always works even without config.
-    """
+    """Evaluates a list of action names into LOW/MEDIUM/CONFIRM/HIGH/CRITICAL."""
 
     _DEFAULT_CRITICAL = frozenset(
         {
@@ -89,6 +80,7 @@ class RiskEvaluator:
             "launch_application",
             "send_email",
             "send_whatsapp",
+            "add_event",
             "add_calendar_event",
         }
     )
@@ -170,14 +162,10 @@ class RiskEvaluator:
     def _load_config(self, config) -> None:
         def _parse(section: str, key: str) -> set[str]:
             raw = config.get(section, key, fallback="")
-            return {a.strip().lower() for a in raw.split(",") if a.strip()}
+            return {item.strip().lower() for item in raw.split(",") if item.strip()}
 
-        critical = _parse("risk", "critical_actions")
-        if not critical:
-            critical = _parse("risk", "forbidden_actions")
-        confirm = _parse("risk", "confirm_actions")
-        if not confirm:
-            confirm = _parse("risk", "user_confirmed_actions")
+        critical = _parse("risk", "critical_actions") or _parse("risk", "forbidden_actions")
+        confirm = _parse("risk", "confirm_actions") or _parse("risk", "user_confirmed_actions")
         high = _parse("risk", "high_risk_actions")
         medium = _parse("risk", "medium_risk_actions")
         low = _parse("risk", "low_risk_actions")
@@ -194,12 +182,8 @@ class RiskEvaluator:
             self._low = low
 
     def evaluate(self, actions: Sequence[str]) -> RiskResult:
-        """Evaluate a list of action names. Returns a RiskResult."""
         if not actions:
-            return RiskResult(
-                level=RiskLevel.LOW,
-                reasons=["No actions - trivial plan"],
-            )
+            return RiskResult(level=RiskLevel.LOW, reasons=["No actions - trivial plan"])
 
         blocking: list[str] = []
         confirm_needed: list[str] = []
@@ -208,38 +192,44 @@ class RiskEvaluator:
         max_level = RiskLevel.LOW
 
         for raw_action in actions:
-            action = raw_action.strip().lower()
+            action = str(raw_action).strip().lower()
+            if not action:
+                continue
 
             if action in self._critical:
                 blocking.append(action)
                 max_level = RiskLevel.CRITICAL
                 reasons.append(f"'{action}' is critical and blocked")
+                continue
 
-            elif action in self._high:
+            if action in self._high:
                 high_risk.append(action)
                 if max_level < RiskLevel.HIGH:
                     max_level = RiskLevel.HIGH
                 reasons.append(f"'{action}' is high-risk")
+                continue
 
-            elif action in self._confirm:
+            if action in self._confirm:
                 confirm_needed.append(action)
                 if max_level < RiskLevel.CONFIRM:
                     max_level = RiskLevel.CONFIRM
                 reasons.append(f"'{action}' requires explicit confirmation")
+                continue
 
-            elif action in self._medium:
+            if action in self._medium:
                 if max_level < RiskLevel.MEDIUM:
                     max_level = RiskLevel.MEDIUM
                 reasons.append(f"'{action}' is medium-risk")
+                continue
 
-            elif action in self._low:
-                pass
-            else:
-                # Unknown action - treat as HIGH by default (conservative)
-                high_risk.append(action)
-                if max_level < RiskLevel.HIGH:
-                    max_level = RiskLevel.HIGH
-                reasons.append(f"'{action}' is unknown - treated as high-risk")
+            if action in self._low:
+                continue
+
+            # Unknown actions default to HIGH for conservative behavior.
+            high_risk.append(action)
+            if max_level < RiskLevel.HIGH:
+                max_level = RiskLevel.HIGH
+            reasons.append(f"'{action}' is unknown - treated as high-risk")
 
         return RiskResult(
             level=max_level,
@@ -250,12 +240,17 @@ class RiskEvaluator:
         )
 
     def evaluate_plan(self, plan: dict) -> RiskResult:
-        """Convenience: evaluate a full plan dict as produced by the planner."""
-        steps = plan.get("steps", [])
-        actions = []
+        steps = plan.get("steps", []) if isinstance(plan, dict) else []
+        actions: list[str] = []
+
         for step in steps:
-            if isinstance(step, dict):
-                action = step.get("action", step.get("type", ""))
-                if action:
-                    actions.append(action)
+            if not isinstance(step, dict):
+                continue
+            action = step.get("action") or step.get("tool") or step.get("type")
+            if action:
+                actions.append(str(action))
+
         return self.evaluate(actions)
+
+
+__all__ = ["RiskLevel", "RiskResult", "RiskEvaluator"]

@@ -1,4 +1,4 @@
-﻿"""Weather integration example using public Open-Meteo APIs."""
+﻿"""Weather integration backed by Open-Meteo public APIs."""
 
 from __future__ import annotations
 
@@ -16,20 +16,27 @@ logger = logging.getLogger(__name__)
 
 class WeatherIntegration(BaseIntegration):
     name = "weather"
-    description = "Fetch basic current weather by city"
-    required_config: list[str] = []
+    description = "Fetch current weather by city"
+
+    def __init__(self, config: Any = None) -> None:
+        super().__init__(config=config)
 
     def is_available(self) -> bool:
+        # No API key required for Open-Meteo.
+        self.unavailable_reason = ""
         return True
 
-    def get_tools(self) -> list[dict]:
+    def get_tools(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "get_current_weather",
-                "description": "Get current weather for a city.",
+                "description": "Get current weather data for a city.",
                 "risk": "LOW",
                 "args": {
-                    "city": {"type": "string", "description": "City name, e.g. Delhi."},
+                    "city": {
+                        "type": "string",
+                        "description": "City name, for example Delhi or New York.",
+                    }
                 },
                 "required_args": ["city"],
             }
@@ -37,26 +44,27 @@ class WeatherIntegration(BaseIntegration):
 
     async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
         if tool_name != "get_current_weather":
-            return {"success": False, "data": None, "error": f"Unknown weather tool '{tool_name}'"}
+            return {"success": False, "data": None, "error": f"Unknown tool '{tool_name}'"}
 
-        city = str(args.get("city", "")).strip()
+        city = str((args or {}).get("city", "")).strip()
         if not city:
             return {"success": False, "data": None, "error": "city is required"}
 
+        loop = asyncio.get_running_loop()
         try:
-            data = await asyncio.to_thread(self._fetch_weather, city)
+            data = await loop.run_in_executor(None, self._fetch_weather, city)
             return {"success": True, "data": data, "error": None}
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Weather request failed: %s", exc)
+            logger.warning("Weather request failed for city '%s': %s", city, exc)
             return {"success": False, "data": None, "error": str(exc)}
 
     def _fetch_weather(self, city: str) -> dict[str, Any]:
-        geocode_url = (
+        geo_url = (
             "https://geocoding-api.open-meteo.com/v1/search?"
             + urllib.parse.urlencode({"name": city, "count": 1})
         )
-        geocode_data = json.loads(urllib.request.urlopen(geocode_url, timeout=10).read().decode("utf-8"))
-        results = geocode_data.get("results") or []
+        geo_data = json.loads(urllib.request.urlopen(geo_url, timeout=10).read().decode("utf-8"))
+        results = geo_data.get("results") or []
         if not results:
             raise ValueError(f"No geocode result for city '{city}'")
 
@@ -66,11 +74,13 @@ class WeatherIntegration(BaseIntegration):
 
         weather_url = (
             "https://api.open-meteo.com/v1/forecast?"
-            + urllib.parse.urlencode({
-                "latitude": lat,
-                "longitude": lon,
-                "current": "temperature_2m,relative_humidity_2m,wind_speed_10m",
-            })
+            + urllib.parse.urlencode(
+                {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current": "temperature_2m,relative_humidity_2m,wind_speed_10m",
+                }
+            )
         )
         weather_data = json.loads(urllib.request.urlopen(weather_url, timeout=10).read().decode("utf-8"))
         current = weather_data.get("current", {})

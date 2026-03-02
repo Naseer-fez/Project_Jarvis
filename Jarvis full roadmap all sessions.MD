@@ -1,239 +1,20 @@
-# JARVIS — COMPLETE CAPABILITY ROADMAP
-# All Future Sessions — Full Instructions for Each
+JARVIS — COMPLETE CAPABILITY ROADMAP
+All Future Sessions — Full Instructions for Each
+MASTER CAPABILITY MAP
+PHASE 6  (Next)   → GUI Automation + Screen Understanding
+PHASE 7           → Proactive Intelligence + Scheduling + Goals
+PHASE 8           → User Profiling + Personalization + Synthesis
+PHASE 9           → Dashboard + Web UI + Remote Control
+PHASE 10          → Hardware / IoT + Serial Control
+PHASE 11          → Multi-Model + Model Switching + Local Fine-tuning
+PHASE 12          → Security Hardening + Full Test Suite
+SESSION 6 — GUI AUTOMATION + SCREEN UNDERSTANDING
+Goal: Jarvis can see your screen, click, type, and control desktop apps.
 
----
+Prompt to paste at session start:
 
-## MASTER CAPABILITY MAP
-
-```
-PHASE 5  (Next)   → Voice + Dynamic Integrations + Agent Upgrades
-PHASE 6           → Coding Agent + File Editor + Sandboxed Execution
-PHASE 7           → GUI Automation + Screen Understanding
-PHASE 8           → Proactive Intelligence + Scheduling + Goals
-PHASE 9           → User Profiling + Personalization + Synthesis
-PHASE 10          → Dashboard + Web UI + Remote Control
-PHASE 11          → Hardware / IoT + Serial Control
-PHASE 12          → Multi-Model + Model Switching + Local Fine-tuning
-PHASE 13          → Security Hardening + Full Test Suite
-```
-
----
----
-
-# SESSION 5 — VOICE + DYNAMIC INTEGRATIONS + AGENT UPGRADES
-
-**Prompt to paste at session start:**
-
-```
 You are an expert Python systems engineer.
-Project: Jarvis — local agentic AI at D:\AI\Jarvis\
-Python 3.11, Windows 11, Ollama at http://localhost:11434
-All code must be complete files — no snippets, no "add this here".
-
-CURRENT WORKING STATE:
-- main.py boots cleanly
-- core/controller_v2.py — JarvisControllerV2 with start(), run_cli(), shutdown()
-- core/memory/hybrid_memory.py — SQLite + ChromaDB working
-- core/llm/task_planner.py — JSON planner with SYSTEM_TOOL_SCHEMA wired in
-- core/agent/agent_loop.py — full plan→risk→confirm→execute→reflect loop
-- core/autonomy/risk_evaluator.py — LOW/MEDIUM/HIGH/CRITICAL table-driven
-- core/tools/tool_router.py + builtin_tools.py — tool registry working
-- integrations/base.py (BaseIntegration ABC) + registry.py exist but are stubs
-- core/voice/ files exist but nothing is wired
-
-INSTALL BEFORE STARTING THIS SESSION:
-  pip install httpx aiohttp faster-whisper pyttsx3 edge-tts pvporcupine
-
-DELIVERABLE 1 — VOICE (files to create/replace):
-  core/voice/stt.py          — Speech-to-text via faster-whisper
-  core/voice/tts.py          — TTS: try edge-tts → pyttsx3 → print fallback
-  core/voice/wake_word.py    — Wake word: pvporcupine → keyword fallback
-  core/voice/voice_loop.py   — Async loop: wake→record→stt→process→tts
-  core/controller_v2.py      — Add voice mode branch in run_cli()
-
-  Voice rules:
-  - python main.py --voice enables it, CLI is default
-  - All voice deps wrapped in try/except ImportError — never crash on missing dep
-  - STT fallback: if faster-whisper missing, read from input()
-  - TTS fallback chain: edge-tts → pyttsx3 → print()
-  - Wake word fallback: if pvporcupine missing, listen continuously
-  - Never block the event loop — use asyncio.get_running_loop().run_in_executor()
-  - Config in config/jarvis.ini under [voice]: enabled, stt_model, tts_engine, tts_voice, wake_word
-
-DELIVERABLE 2 — DYNAMIC INTEGRATIONS (files to create/replace):
-  integrations/base.py       — Updated ABC with is_available(), get_tools(), execute()
-  integrations/registry.py   — register(), get_tools(), execute(), list_active()
-  integrations/loader.py     — NEW: auto-discovers and loads clients/ subclasses
-  integrations/clients/email.py      — send_email, read_emails, search_emails (smtplib+imaplib only)
-  integrations/clients/whatsapp.py   — send_whatsapp (twilio, skip gracefully if not configured)
-  integrations/clients/calendar.py   — add_event, list_events (icalendar, fallback to local .ics)
-  integrations/clients/weather.py    — update existing to match new ABC
-
-  Integration rules:
-  - All secrets from os.environ or config/settings.env — never in code
-  - Every execute() returns {"success": bool, "data": ..., "error": str|None}
-  - integrations must NOT import from core.agent — one-way dependency only
-  - loader.py scans integrations/clients/*.py, finds BaseIntegration subclasses
-  - Only register if is_available() returns True — log skips with reason
-  - Wire into core/agent/controller.py: call loader.load_all(config, registry) in __init__
-  - Wire into core/execution/dispatcher.py: after TOOL_REGISTRY, check integration_registry
-  - Wire into core/llm/task_planner.py: merge registry.get_tools() into SYSTEM_TOOL_SCHEMA
-
-DELIVERABLE 3 — AGENT/LLM/MEMORY UPGRADES (modify only listed files):
-  core/agent/agent_loop.py:
-    - MAX_ITERATIONS: replace hardcoded 5 with configurable self.max_iterations (default 10)
-    - REFLECT_SYSTEM_PROMPT: replace with expert software engineer persona (see below)
-    - Add _truncate_observation(text, max_chars=800) helper — keep first/last 400 chars
-    - Add think_blocks: list[str] to ExecutionTrace, save <think>...</think> before stripping
-  core/llm/client.py:
-    - Add _get_workspace_map(path, max_depth=3, max_files=50) — compact dir tree as string
-    - Add workspace_path param to _build_system() — inject WORKSPACE: section if provided
-    - Add keep_think=False param to complete() — preserve think blocks when True
-  core/autonomy/risk_evaluator.py:
-    - Add CONFIRM = 2 to RiskLevel (between MEDIUM and HIGH, shift HIGH to 3, CRITICAL to 4)
-    - Add list_directory, read_file, search_code, run_linter to _DEFAULT_LOW
-    - Move write_file, execute_shell, launch_application to _DEFAULT_CONFIRM (new set)
-  core/memory/hybrid_memory.py:
-    - Add store_code_file(file_path, content) — AST parse, store functions/classes as chunks
-    - Add index_codebase(root_path) — hash files, only re-index changed ones, return stats
-    - Wire index_codebase into initialize(index_path="") — call if index_path provided
-
-NEW REFLECT_SYSTEM_PROMPT:
-  "You are an expert software engineer and AI assistant named Jarvis.
-   Review the executed plan and all tool observations.
-   If any tool returned error or failure: state the technical root cause first,
-   explain what went wrong, propose the specific fix.
-   If successful: summarize what was done, show key output the user needs.
-   Be direct and technical. No filler. Speak in second person."
-
-FILE DELIVERY ORDER (must be this order to avoid import errors):
-  1. integrations/base.py
-  2. integrations/registry.py
-  3. integrations/loader.py
-  4. integrations/clients/email.py
-  5. integrations/clients/whatsapp.py
-  6. integrations/clients/calendar.py
-  7. integrations/clients/weather.py
-  8. core/autonomy/risk_evaluator.py
-  9. core/memory/hybrid_memory.py
-  10. core/llm/client.py
-  11. core/agent/agent_loop.py
-  12. core/voice/stt.py
-  13. core/voice/tts.py
-  14. core/voice/wake_word.py
-  15. core/voice/voice_loop.py
-  16. core/controller_v2.py
-  17. core/execution/dispatcher.py
-  18. core/agent/controller.py
-  19. core/llm/task_planner.py
-
-VERIFICATION after all files delivered:
-  python -c "from integrations.loader import load_all; print('OK')"
-  python -c "from core.agent.agent_loop import AgentLoopEngine; print('OK')"
-  python -c "from core.memory.hybrid_memory import HybridMemory; print('OK')"
-  python main.py --help
-```
-
----
----
-
-# SESSION 6 — CODING AGENT
-
-**Goal:** Make Jarvis able to write, edit, run, and debug code autonomously.
-
-**Prompt to paste at session start:**
-
-```
-You are an expert Python systems engineer.
-Project: Jarvis — local agentic AI at D:\AI\Jarvis\
-Python 3.11, Windows 11, Ollama at http://localhost:11434
-
-CURRENT STATE: Sessions 1-5 complete. main.py boots. Voice and integrations working.
-
-INSTALL BEFORE STARTING:
-  pip install docker pygments tree-sitter pyflakes
-
-THIS SESSION GOAL: Build a Coding Agent — Jarvis can write, edit, run, and debug code.
-
-FILES TO CREATE:
-  core/tools/code_tools.py
-    - edit_file(path, search_block, replace_block) — search-and-replace patch, NOT full overwrite
-      Rules: read file, find search_block exactly once, replace with replace_block, write back
-      If search_block not found: return error with diff showing current file content
-      If found more than once: return error — ambiguous match
-    - create_file(path, content) — create new file, fail if exists unless overwrite=True
-    - read_file_with_lines(path) — return content with line numbers prepended
-    - run_linter(path) — run pyflakes on a .py file, return structured output
-    - search_code(root, pattern, file_glob="*.py") — grep-style search, return file:line:match
-    - get_directory_tree(path, max_depth=3) — return compact tree string
-
-  core/tools/sandbox.py
-    - SandboxExecutor class
-    - execute(command, working_dir, timeout=30) — run command in subprocess with timeout
-    - If Docker available: run inside jarvis-sandbox container (python:3.11-slim)
-    - If Docker NOT available: run in subprocess with os.chdir restriction + timeout kill
-    - Always return {"stdout": str, "stderr": str, "exit_code": int, "timed_out": bool}
-    - NEVER allow commands: rm -rf, del /f, format, shutdown, reboot, pip install --system
-    - Log every execution to audit logger before running
-
-  core/agent/coding_loop.py
-    - CodingLoopEngine class extending AgentLoopEngine
-    - Override max_iterations to 15 by default
-    - Add _run_tests(test_path) step after each code write
-    - Add _auto_fix_linter(path) — run linter, if errors exist, ask LLM to fix, write, repeat (max 3x)
-    - Add method save_think_blocks_to_file(trace, output_path) — write LLM reasoning to .md file
-
-FILE MODIFICATIONS:
-  core/autonomy/risk_evaluator.py — add to _DEFAULT_LOW:
-    "edit_file", "create_file", "read_file_with_lines", "run_linter",
-    "search_code", "get_directory_tree"
-  core/autonomy/risk_evaluator.py — add to _DEFAULT_CONFIRM:
-    "sandbox_execute", "run_tests"
-  core/agent/controller.py — add coding mode:
-    if intent == "coding" or any code keyword: use CodingLoopEngine instead of AgentLoopEngine
-  core/llm/task_planner.py — add code tools to SYSTEM_TOOL_SCHEMA
-
-DO:
-  - edit_file must use search-and-replace blocks — never overwrite whole file
-  - All sandbox execution goes through SandboxExecutor — never bare subprocess in tools
-  - run_linter must return structured dict: {"errors": [...], "warnings": [...], "clean": bool}
-  - search_code must respect .gitignore patterns — skip __pycache__, .git, venv
-  - Save LLM <think> blocks to workspace/thinking_logs/ for every coding task
-
-DO NOT:
-  - Do not allow the agent to pip install packages without CONFIRM level permission
-  - Do not allow the agent to modify files outside workspace/ and the project root
-  - Do not run tests without first checking they exist
-  - Do not use subprocess.shell=True — always use list form ["python", "file.py"]
-  - Do not skip the linter step — every file write must be followed by run_linter
-
-PATHS:
-  core/tools/code_tools.py        — new file
-  core/tools/sandbox.py           — new file
-  core/agent/coding_loop.py       — new file
-  core/autonomy/risk_evaluator.py — modify
-  core/agent/controller.py        — modify (add coding mode branch)
-  core/llm/task_planner.py        — modify (add code tool schemas)
-
-VERIFICATION:
-  python -c "from core.tools.code_tools import edit_file, run_linter; print('OK')"
-  python -c "from core.tools.sandbox import SandboxExecutor; print('OK')"
-  python -c "from core.agent.coding_loop import CodingLoopEngine; print('OK')"
-  python main.py --help
-```
-
----
----
-
-# SESSION 7 — GUI AUTOMATION + SCREEN UNDERSTANDING
-
-**Goal:** Jarvis can see your screen, click, type, and control desktop apps.
-
-**Prompt to paste at session start:**
-
-```
-You are an expert Python systems engineer.
-Project: Jarvis at D:\AI\Jarvis\. Sessions 1-6 complete.
+Project: Jarvis at D:\AI\Jarvis\. Sessions 1-5 complete.
 
 INSTALL BEFORE STARTING:
   pip install pyautogui pillow pygetwindow pytesseract
@@ -300,20 +81,13 @@ PATHS:
 VERIFICATION:
   python -c "from core.tools.screen import capture_screen; print('OK')"
   python -c "from core.tools.gui_control import click; print('OK')"
-```
+SESSION 7 — PROACTIVE INTELLIGENCE + SCHEDULER + GOALS
+Goal: Jarvis runs in the background, pursues goals, sends reminders, and acts without being asked.
 
----
----
+Prompt to paste at session start:
 
-# SESSION 8 — PROACTIVE INTELLIGENCE + SCHEDULER + GOALS
-
-**Goal:** Jarvis runs in the background, pursues goals, sends reminders, and acts without being asked.
-
-**Prompt to paste at session start:**
-
-```
 You are an expert Python systems engineer.
-Project: Jarvis at D:\AI\Jarvis\. Sessions 1-7 complete.
+Project: Jarvis at D:\AI\Jarvis\. Sessions 1-6 complete.
 
 INSTALL BEFORE STARTING:
   pip install apscheduler
@@ -395,20 +169,13 @@ VERIFICATION:
   python -c "from core.agentic.scheduler import JarvisScheduler; print('OK')"
   python -c "from core.proactive.notifier import NotificationManager; print('OK')"
   python main.py --help
-```
+SESSION 8 — USER PROFILING + PERSONALIZATION + SYNTHESIS
+Goal: Jarvis learns who you are, adapts its tone, and remembers your preferences across sessions.
 
----
----
+Prompt to paste at session start:
 
-# SESSION 9 — USER PROFILING + PERSONALIZATION + SYNTHESIS
-
-**Goal:** Jarvis learns who you are, adapts its tone, and remembers your preferences across sessions.
-
-**Prompt to paste at session start:**
-
-```
 You are an expert Python systems engineer.
-Project: Jarvis at D:\AI\Jarvis\. Sessions 1-8 complete.
+Project: Jarvis at D:\AI\Jarvis\. Sessions 1-7 complete.
 
 THIS SESSION GOAL: User Profiling — Jarvis learns and adapts to the specific user over time.
 
@@ -470,20 +237,13 @@ PATHS:
 VERIFICATION:
   python -c "from core.profile import UserProfileEngine; p = UserProfileEngine(); print(p.get_communication_style())"
   python -c "from core.synthesis import ProfileSynthesizer; print('OK')"
-```
+SESSION 9 — DASHBOARD + WEB UI + REMOTE CONTROL
+Goal: A local web dashboard to monitor Jarvis, view logs, manage memory, and send commands remotely.
 
----
----
+Prompt to paste at session start:
 
-# SESSION 10 — DASHBOARD + WEB UI + REMOTE CONTROL
-
-**Goal:** A local web dashboard to monitor Jarvis, view logs, manage memory, and send commands remotely.
-
-**Prompt to paste at session start:**
-
-```
 You are an expert Python systems engineer.
-Project: Jarvis at D:\AI\Jarvis\. Sessions 1-9 complete.
+Project: Jarvis at D:\AI\Jarvis\. Sessions 1-8 complete.
 
 INSTALL BEFORE STARTING:
   pip install fastapi uvicorn websockets jinja2 python-multipart
@@ -553,20 +313,13 @@ VERIFICATION:
   python -c "from dashboard.server import app; print('OK')"
   python main.py --dashboard &
   curl http://localhost:7070/health
-```
+SESSION 10 — HARDWARE / IoT + SERIAL CONTROL
+Goal: Jarvis controls physical hardware — Arduino, sensors, lights, motors via serial.
 
----
----
+Prompt to paste at session start:
 
-# SESSION 11 — HARDWARE / IoT + SERIAL CONTROL
-
-**Goal:** Jarvis controls physical hardware — Arduino, sensors, lights, motors via serial.
-
-**Prompt to paste at session start:**
-
-```
 You are an expert Python systems engineer.
-Project: Jarvis at D:\AI\Jarvis\. Sessions 1-10 complete.
+Project: Jarvis at D:\AI\Jarvis\. Sessions 1-9 complete.
 
 INSTALL BEFORE STARTING:
   pip install pyserial
@@ -628,36 +381,28 @@ PATHS:
 VERIFICATION:
   python -c "from core.hardware.device_registry import DeviceRegistry; print('OK')"
   python -c "from core.tools.hardware_tools import read_sensor; print('OK')"
-```
+SESSION 11 — MULTI-MODEL + MODEL SWITCHING + LOCAL FINE-TUNING PREP
+Goal: Support multiple LLMs simultaneously — route tasks to the best model for each job.
 
----
----
+Prompt to paste at session start:
 
-# SESSION 12 — MULTI-MODEL + MODEL SWITCHING + LOCAL FINE-TUNING PREP
-
-**Goal:** Support multiple LLMs simultaneously — route tasks to the best model for each job.
-
-**Prompt to paste at session start:**
-
-```
 You are an expert Python systems engineer.
-Project: Jarvis at D:\AI\Jarvis\. Sessions 1-11 complete.
+Project: Jarvis at D:\AI\Jarvis\. Sessions 1-10 complete.
 
 THIS SESSION GOAL: Multi-Model Intelligence — use different models for different task types.
 
 MODEL ROUTING STRATEGY:
-  deepseek-r1:8b    → reasoning, planning, code (slow but smart)
+  deepseek-r1:8b    → reasoning, planning (slow but smart)
   mistral:7b        → fast chat responses, intent classification
   llava             → vision tasks (already works)
   llama3:8b         → general conversation, memory synthesis
-  codellama:7b      → code generation specifically (if installed)
   nomic-embed-text  → embeddings (replace all-MiniLM-L6-v2 for better quality)
 
 FILES TO CREATE:
   core/llm/model_router.py — NEW:
     - ModelRouter class
     - route(task_type) → model_name
-      task_type: "planning", "coding", "chat", "vision", "embedding", "synthesis"
+      task_type: "planning", "chat", "vision", "embedding", "synthesis"
     - register_model(task_type, model_name, priority=1)
     - is_available(model_name) → bool — check via Ollama /api/tags
     - get_fastest_available(task_type) → model_name — fallback chain
@@ -668,7 +413,7 @@ FILES TO CREATE:
     - ModelHealthChecker class
     - check_all() → dict of {model_name: {"available": bool, "latency_ms": int}}
     - Runs on startup and every 60 seconds in background
-    - Expose as /health/models in dashboard API (Session 10)
+    - Expose as /health/models in dashboard API (Session 9)
 
 FILE MODIFICATIONS:
   core/llm/client.py:
@@ -678,7 +423,6 @@ FILE MODIFICATIONS:
 
   core/llm/task_planner.py:
     - Use model_router.route("planning") for model selection
-    - Use model_router.route("coding") if intent is coding
 
   core/memory/semantic_memory.py:
     - Add support for nomic-embed-text via Ollama embeddings API
@@ -689,7 +433,6 @@ FILE MODIFICATIONS:
     [models]
     planning_model = deepseek-r1:8b
     chat_model = mistral:7b
-    coding_model = deepseek-r1:8b
     vision_model = llava
     synthesis_model = llama3:8b
     embedding_model = nomic-embed-text
@@ -716,118 +459,15 @@ PATHS:
 VERIFICATION:
   python -c "from core.llm.model_router import ModelRouter; print('OK')"
   python -c "from core.llm.model_health import ModelHealthChecker; print('OK')"
-```
+SESSION 12 — SECURITY HARDENING + FULL TEST SUITE
+Goal: Lock everything down. Every module has tests. No secrets leak. Jarvis is production-ready.
 
----
----
+Prompt to paste at session start:
 
-# SESSION 13 — SECURITY HARDENING + FULL TEST SUITE
-
-**Goal:** Lock everything down. Every module has tests. No secrets leak. Jarvis is production-ready.
-
-**Prompt to paste at session start:**
-
-```
 You are an expert Python systems engineer and security auditor.
-Project: Jarvis at D:\AI\Jarvis\. Sessions 1-12 complete.
+Project: Jarvis at D:\AI\Jarvis\. Sessions 1-11 complete.
 
 INSTALL BEFORE STARTING:
   pip install pytest pytest-asyncio pytest-cov bandit
 
-THIS SESSION GOAL: Security + Testing — harden every layer and achieve 80%+ test coverage.
-
-SECURITY AUDIT — fix these in the existing code:
-
-  1. core/tools/builtin_tools.py:
-     - ALLOWED_DIRECTORIES only has workspace/ and outputs/ — verify this is enforced everywhere
-     - Add path traversal check: reject any path containing ".." or symlinks outside sandbox
-     - Add max file size check for read_file: reject files > 10MB
-
-  2. core/execution/dispatcher.py:
-     - Add input sanitization before any tool call: strip null bytes, limit arg string length to 4096 chars
-     - Rate limiting: max 30 tool calls per minute per session — return error if exceeded
-
-  3. core/logger.py:
-     - Audit log is already append-only + hash-chained — verify chain integrity on load
-     - Add log rotation: if audit.jsonl > 50MB, archive and start fresh
-
-  4. integrations/ (all clients):
-     - Verify no API keys are logged — scrub secrets from all log messages
-     - Add request timeout to every external API call (default 10s, configurable)
-     - Add retry logic: max 2 retries with 2s backoff for network errors
-
-  5. dashboard/server.py:
-     - Verify auth token is checked on all POST endpoints
-     - Add rate limiting: max 60 requests/minute per IP
-     - Add Content-Security-Policy header to all responses
-
-TEST FILES TO CREATE:
-  tests/test_risk_evaluator.py    — test all risk levels, all tool names, edge cases
-  tests/test_memory.py            — test SQLite store/recall, AST chunking, hash-based reindex
-  tests/test_agent_loop.py        — test full plan→execute→reflect with mock tools
-  tests/test_tools.py             — test edit_file search-replace, sandbox, linter
-  tests/test_integrations.py      — test each integration's is_available() and mock execute()
-  tests/test_profile.py           — test profile save/load, synthesis delta merge
-  tests/test_dispatcher.py        — test routing, rate limiting, input sanitization
-  tests/test_voice.py             — test STT/TTS fallback chains (mock audio)
-  tests/test_security.py          — test path traversal blocked, secrets not logged, rate limits
-
-TEST RULES:
-  - All async tests use @pytest.mark.asyncio
-  - All external calls (Ollama, APIs) must be mocked — tests must pass with no internet/Ollama
-  - Use pytest fixtures for: temp_dir, mock_config, mock_llm, mock_memory
-  - Every test file must have at least 8 test cases
-  - Target: pytest --cov=core --cov-report=term-missing should show >80% coverage
-
-DO:
-  - Run bandit -r core/ after all fixes — target: no HIGH severity findings
-  - Add pre-commit safety check: before any file write, confirm path is in sandbox
-  - Document every security decision in a SECURITY.md file in project root
-
-DO NOT:
-  - Do not use unittest — use pytest only
-  - Do not mock the filesystem — use pytest's tmp_path fixture for real temp dirs
-  - Do not skip testing error paths — unhappy paths are more important than happy paths
-  - Do not add security that breaks existing functionality — test both before and after
-
-PATHS:
-  tests/test_risk_evaluator.py  — new
-  tests/test_memory.py          — new
-  tests/test_agent_loop.py      — new
-  tests/test_tools.py           — new
-  tests/test_integrations.py    — new
-  tests/test_profile.py         — new
-  tests/test_dispatcher.py      — new
-  tests/test_voice.py           — new
-  tests/test_security.py        — new
-  SECURITY.md                   — new
-
-VERIFICATION:
-  pip install pytest pytest-asyncio pytest-cov bandit
-  pytest tests/ -v --tb=short
-  bandit -r core/ -ll
-```
-
----
----
-
-## QUICK REFERENCE — WHAT EACH SESSION ADDS
-
-| Session | What You Get After It |
-|---------|----------------------|
-| 5 | Voice (speak to Jarvis), Email/WhatsApp/Calendar integrations |
-| 6 | Jarvis writes and debugs code, runs linter, uses search-replace edits |
-| 7 | Jarvis sees your screen, clicks, types, controls apps |
-| 8 | Jarvis reminds you of goals, runs scheduled tasks, monitors system |
-| 9 | Jarvis knows your name, style, preferences — adapts automatically |
-| 10 | Web dashboard at localhost:7070 — monitor and control from browser |
-| 11 | Jarvis controls Arduino/hardware via serial port |
-| 12 | Multiple LLMs for different tasks — faster chat, smarter planning |
-| 13 | Security hardened, 80%+ test coverage, production ready |
-
-## RECOMMENDED ORDER
-
-Do sessions in order. Each one builds on the last.
-Sessions 6 and 7 can be swapped if you prefer GUI before coding.
-Sessions 11 and 12 are independent — can be done in either order.
-Session 13 should always be last.
+THIS SESSION GOAL: Security + Testing — harden every layer and achieve 80%+ test cov

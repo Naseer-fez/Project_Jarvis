@@ -1,4 +1,4 @@
-﻿"""Auto-discovery loader for integrations/clients plugins."""
+﻿"""Auto-loader for integration clients under integrations/clients."""
 
 from __future__ import annotations
 
@@ -14,98 +14,107 @@ from integrations.registry import IntegrationRegistry
 logger = logging.getLogger(__name__)
 
 
-def _iter_client_modules() -> list[str]:
+def _discover_modules() -> list[str]:
     clients_dir = Path(__file__).resolve().parent / "clients"
     if not clients_dir.exists():
         return []
 
     modules: list[str] = []
-    for file in sorted(clients_dir.glob("*.py")):
-        if file.name == "__init__.py":
+    for file_path in sorted(clients_dir.glob("*.py")):
+        if file_path.name == "__init__.py":
             continue
-        modules.append(f"integrations.clients.{file.stem}")
+        modules.append(f"integrations.clients.{file_path.stem}")
     return modules
 
 
-def _instantiate(cls: type[BaseIntegration], config: Any) -> BaseIntegration:
-    """Instantiate integration with best-effort constructor compatibility."""
-    for call in (
+def _integration_classes(module: Any) -> list[type[BaseIntegration]]:
+    classes: list[type[BaseIntegration]] = []
+    for _, member in inspect.getmembers(module, inspect.isclass):
+        if member is BaseIntegration:
+            continue
+        if not issubclass(member, BaseIntegration):
+            continue
+        if member.__module__ != module.__name__:
+            continue
+        classes.append(member)
+    return classes
+
+
+def _build_instance(cls: type[BaseIntegration], config: Any) -> BaseIntegration:
+    for ctor in (
         lambda: cls(config=config),
         lambda: cls(config),
         lambda: cls(),
     ):
         try:
-            return call()
+            return ctor()
         except TypeError:
             continue
     return cls()
 
 
 def load_all(config: Any, registry: IntegrationRegistry) -> dict[str, list[str]]:
-    """Discover and load all integration plugins from integrations/clients."""
-    result = {"loaded": [], "skipped": [], "errors": []}
+    """Discover all clients and register available integrations."""
+    summary: dict[str, list[str]] = {
+        "loaded": [],
+        "skipped": [],
+        "errors": [],
+    }
 
-    for module_path in _iter_client_modules():
+    for module_name in _discover_modules():
         try:
-            module = importlib.import_module(module_path)
-        except ImportError as exc:
-            logger.warning("Integration module skipped (import error): %s (%s)", module_path, exc)
-            result["skipped"].append(module_path)
-            continue
+            module = importlib.import_module(module_name)
         except Exception as exc:  # noqa: BLE001
-            logger.exception("Integration module failed to load: %s", module_path)
-            result["errors"].append(f"{module_path}: {exc}")
+            logger.warning("Integration module import failed: %s (%s)", module_name, exc)
+            summary["errors"].append(f"{module_name}: {exc}")
             continue
 
-        classes = [
-            member
-            for _, member in inspect.getmembers(module, inspect.isclass)
-            if issubclass(member, BaseIntegration)
-            and member is not BaseIntegration
-            and member.__module__ == module.__name__
-        ]
-
+        classes = _integration_classes(module)
         if not classes:
-            logger.info("Integration module loaded with no BaseIntegration subclasses: %s", module_path)
-            result["skipped"].append(module_path)
+            logger.info("No BaseIntegration subclass found in %s", module_name)
+            summary["skipped"].append(f"{module_name}: no integration class")
             continue
 
         for cls in classes:
-            integration_name = f"{module_path}.{cls.__name__}"
+            fqcn = f"{module_name}.{cls.__name__}"
             try:
-                instance = _instantiate(cls, config)
+                instance = _build_instance(cls, config)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Integration instantiation failed: %s", integration_name)
-                result["errors"].append(f"{integration_name}: {exc}")
+                logger.warning("Integration instantiation failed: %s (%s)", fqcn, exc)
+                summary["errors"].append(f"{fqcn}: {exc}")
                 continue
 
             try:
                 available = bool(instance.is_available())
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Integration availability check failed: %s (%s)", integration_name, exc)
-                result["skipped"].append(integration_name)
+                logger.warning("Availability check failed: %s (%s)", fqcn, exc)
+                summary["errors"].append(f"{fqcn}: {exc}")
                 continue
 
             if not available:
-                logger.warning("Integration skipped (unavailable): %s", integration_name)
-                result["skipped"].append(integration_name)
+                reason = (getattr(instance, "unavailable_reason", "") or "unavailable").strip()
+                logger.info("Integration skipped: %s (%s)", fqcn, reason)
+                summary["skipped"].append(f"{fqcn}: {reason}")
                 continue
 
             try:
                 registry.register(instance)
-                logger.info("Integration loaded: %s", integration_name)
-                result["loaded"].append(instance.name or cls.__name__)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("Integration registration failed: %s", integration_name)
-                result["errors"].append(f"{integration_name}: {exc}")
+                logger.warning("Integration register failed: %s (%s)", fqcn, exc)
+                summary["errors"].append(f"{fqcn}: {exc}")
+                continue
+
+            loaded_name = instance.name or cls.__name__
+            summary["loaded"].append(loaded_name)
+            logger.info("Integration loaded: %s", loaded_name)
 
     logger.info(
-        "Integration load summary: loaded=%d skipped=%d errors=%d",
-        len(result["loaded"]),
-        len(result["skipped"]),
-        len(result["errors"]),
+        "Integration load complete | loaded=%d skipped=%d errors=%d",
+        len(summary["loaded"]),
+        len(summary["skipped"]),
+        len(summary["errors"]),
     )
-    return result
+    return summary
 
 
 __all__ = ["load_all"]

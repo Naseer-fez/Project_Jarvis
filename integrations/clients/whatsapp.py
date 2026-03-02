@@ -1,4 +1,4 @@
-﻿"""WhatsApp integration using Twilio when configured."""
+﻿"""WhatsApp integration via Twilio (optional dependency)."""
 
 from __future__ import annotations
 
@@ -13,26 +13,30 @@ from integrations.base import BaseIntegration
 logger = logging.getLogger(__name__)
 
 try:
-    from dotenv import load_dotenv
-except ImportError:  # optional dependency
-    load_dotenv = None  # type: ignore[assignment]
-
-try:
     from twilio.rest import Client as TwilioClient
-except ImportError:  # optional dependency
+except Exception:  # noqa: BLE001
     TwilioClient = None  # type: ignore[assignment]
 
 
-def _load_env_file() -> None:
-    env_path = Path(__file__).resolve().parents[2] / "config" / "settings.env"
-    if load_dotenv is not None and env_path.exists():
-        load_dotenv(env_path)
+def _load_settings_env() -> None:
+    env_file = Path(__file__).resolve().parents[2] / "config" / "settings.env"
+    if not env_file.exists():
+        return
+
+    for line in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        if key:
+            os.environ.setdefault(key, value.strip())
 
 
 def _cfg(config: Any, key: str, section: str = "whatsapp") -> str:
-    value = os.environ.get(key.upper(), "").strip()
-    if value:
-        return value
+    env_val = os.environ.get(key.upper(), "").strip()
+    if env_val:
+        return env_val
 
     if config is None:
         return ""
@@ -49,116 +53,83 @@ def _cfg(config: Any, key: str, section: str = "whatsapp") -> str:
 
 class WhatsAppIntegration(BaseIntegration):
     name = "whatsapp"
-    description = "Send and read WhatsApp messages via Twilio"
-    required_config = [
-        "twilio_account_sid",
-        "twilio_auth_token",
-        "twilio_whatsapp_from",
-    ]
+    description = "Send WhatsApp messages through Twilio"
 
     def __init__(self, config: Any = None) -> None:
-        _load_env_file()
-        self._config = config
+        super().__init__(config=config)
+        _load_settings_env()
+
         self.account_sid = _cfg(config, "twilio_account_sid")
         self.auth_token = _cfg(config, "twilio_auth_token")
         self.from_number = _cfg(config, "twilio_whatsapp_from")
 
     def is_available(self) -> bool:
         if TwilioClient is None:
-            logger.warning("WhatsApp integration unavailable: twilio package is not installed")
+            self.unavailable_reason = "twilio package not installed"
             return False
-
         if not self.account_sid:
-            logger.warning("WhatsApp integration unavailable: TWILIO_ACCOUNT_SID is missing")
+            self.unavailable_reason = "TWILIO_ACCOUNT_SID missing"
+            return False
+        if not self.auth_token:
+            self.unavailable_reason = "TWILIO_AUTH_TOKEN missing"
+            return False
+        if not self.from_number:
+            self.unavailable_reason = "TWILIO_WHATSAPP_FROM missing"
             return False
 
-        if not self.auth_token or not self.from_number:
-            logger.warning("WhatsApp integration unavailable: token/from number missing")
-            return False
-
+        self.unavailable_reason = ""
         return True
 
-    def get_tools(self) -> list[dict]:
+    def get_tools(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "send_whatsapp",
-                "description": "Send a WhatsApp message via Twilio sandbox/number.",
+                "description": "Send a WhatsApp message via Twilio.",
                 "risk": "CONFIRM",
                 "args": {
-                    "to": {"type": "string", "description": "Recipient WhatsApp number like whatsapp:+123..."},
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient in whatsapp:+123456 format.",
+                    },
                     "message": {"type": "string", "description": "Message body."},
                 },
                 "required_args": ["to", "message"],
-            },
-            {
-                "name": "read_whatsapp_messages",
-                "description": "Read recent WhatsApp messages from Twilio account logs.",
-                "risk": "LOW",
-                "args": {
-                    "limit": {"type": "integer", "description": "Maximum messages to return.", "default": 10},
-                },
-                "required_args": [],
-            },
+            }
         ]
 
     async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if tool_name != "send_whatsapp":
+            return {"success": False, "data": None, "error": f"Unknown tool '{tool_name}'"}
+
+        to_number = str((args or {}).get("to", "")).strip()
+        message = str((args or {}).get("message", ""))
+
+        loop = asyncio.get_running_loop()
         try:
-            if tool_name == "send_whatsapp":
-                to_value = str(args.get("to", "")).strip()
-                message = str(args.get("message", ""))
-                data = await asyncio.to_thread(self._send_whatsapp, to_value, message)
-                return {"success": True, "data": data, "error": None}
-
-            if tool_name == "read_whatsapp_messages":
-                limit = int(args.get("limit", 10) or 10)
-                data = await asyncio.to_thread(self._read_messages, limit)
-                return {"success": True, "data": data, "error": None}
-
-            return {"success": False, "data": None, "error": f"Unknown WhatsApp tool '{tool_name}'"}
+            data = await loop.run_in_executor(None, self._send_message, to_number, message)
+            return {"success": True, "data": data, "error": None}
         except Exception as exc:  # noqa: BLE001
-            logger.exception("WhatsApp integration execution failed for %s", tool_name)
+            logger.exception("WhatsApp send failed")
             return {"success": False, "data": None, "error": str(exc)}
 
-    def _client(self):
+    def _build_client(self):
         if TwilioClient is None:
-            raise RuntimeError("twilio package is not installed")
+            raise RuntimeError("twilio package not installed")
         return TwilioClient(self.account_sid, self.auth_token)
 
-    def _send_whatsapp(self, to_number: str, message: str) -> dict[str, Any]:
+    def _send_message(self, to_number: str, message: str) -> dict[str, Any]:
         if not to_number:
             raise ValueError("'to' is required")
         if not message:
             raise ValueError("'message' is required")
 
-        client = self._client()
-        msg = client.messages.create(
-            body=message,
-            from_=self.from_number,
-            to=to_number,
-        )
-        return {"sid": msg.sid, "status": msg.status, "to": to_number}
-
-    def _read_messages(self, limit: int) -> list[dict[str, Any]]:
-        client = self._client()
-        items = client.messages.list(limit=max(limit, 1))
-        results: list[dict[str, Any]] = []
-        for item in items:
-            from_value = str(getattr(item, "from_", "") or "")
-            to_value = str(getattr(item, "to", "") or "")
-            if "whatsapp:" not in from_value and "whatsapp:" not in to_value:
-                continue
-
-            results.append(
-                {
-                    "sid": item.sid,
-                    "status": item.status,
-                    "from": from_value,
-                    "to": to_value,
-                    "body": item.body,
-                    "date_sent": str(item.date_sent),
-                }
-            )
-        return results
+        client = self._build_client()
+        response = client.messages.create(body=message, from_=self.from_number, to=to_number)
+        return {
+            "sid": str(getattr(response, "sid", "")),
+            "status": str(getattr(response, "status", "")),
+            "to": to_number,
+        }
 
 
 __all__ = ["WhatsAppIntegration"]
