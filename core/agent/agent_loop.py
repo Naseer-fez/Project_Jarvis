@@ -95,6 +95,7 @@ class AgentLoopEngine:
         model: str = "mistral",
         ollama_url: str = "http://localhost:11434",
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
+        llm: Any = None,  # Optional[LLMClientV2] — avoids import cycle
     ):
         self.sm = state_machine
         self.planner = task_planner
@@ -104,6 +105,7 @@ class AgentLoopEngine:
         self.model = model
         self.ollama_url = ollama_url
         self.max_iterations = max(1, int(max_iterations or _DEFAULT_MAX_ITERATIONS))
+        self.llm = llm  # LLMClientV2 instance, if provided
         self.confidence = ConfidenceModel()
         self._interrupt = asyncio.Event()
 
@@ -375,6 +377,23 @@ class AgentLoopEngine:
             f"Tool observations:\n{obs_text}\n"
         )
 
+        # ── Prefer LLMClientV2 if injected ────────────────────────────────────
+        if self.llm is not None and hasattr(self.llm, "complete"):
+            try:
+                result = await self.llm.complete(
+                    user_prompt,
+                    system=REFLECT_SYSTEM_PROMPT,
+                    temperature=0.2,
+                    task_type="synthesis",
+                )
+                cleaned = re.sub(r"<think>.*?</think>", "", result or "", flags=re.DOTALL).strip()
+                if cleaned:
+                    return cleaned
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("LLMClientV2 reflection failed: %s", exc)
+            # Fall through to httpx if LLMClientV2 returned empty
+
+        # ── Fallback: direct httpx Ollama call ────────────────────────────────
         if httpx is None:
             return self._fallback_reflection(plan, observations)
 

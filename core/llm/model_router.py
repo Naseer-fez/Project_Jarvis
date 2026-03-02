@@ -65,15 +65,11 @@ class ModelRouter:
 
     def get_best_available(self, task_type: str) -> str:
         candidates = self._models.get(task_type, self._models["fallback"])
-        
+
         for candidate in candidates:
             if self.is_available(candidate):
                 return candidate
-        if self.is_available(fallback):
-            logger.warning(
-                "Preferred model '%s' unavailable for task '%s'. Using fallback '%s'.",
-                preferred, task_type, fallback
-            )
+
         # If we got here, none of the specific candidates are available
         fallback_candidates = self._models["fallback"]
         for fallback in fallback_candidates:
@@ -83,6 +79,7 @@ class ModelRouter:
                     task_type, fallback
                 )
                 return fallback
+
 
         # NOTHING is available — surface this loudly
         available = [m for m, ok in self.list_available().items() if ok]

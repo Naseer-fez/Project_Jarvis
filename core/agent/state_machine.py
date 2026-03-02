@@ -1,8 +1,8 @@
 """
 core/agent/state_machine.py
 Shim that re-exports StateMachine and AgentState from
-core.controller.state_machine for import compatibility.
+the canonical core.state_machine module for import compatibility.
 """
-from core.controller.state_machine import StateMachine, AgentState
+from core.state_machine import StateMachine, State as AgentState
 
 __all__ = ["StateMachine", "AgentState"]
