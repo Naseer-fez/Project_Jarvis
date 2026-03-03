@@ -242,19 +242,17 @@ class SpeechToText:
     def _record_and_transcribe_google(self) -> str:
         try:
             import speech_recognition as sr
-            if sd is None: return ""
-            
-            # Record via sounddevice to match exact duration/sample rate cleanly
-            frames = int(self.max_duration_s * self.sample_rate)
-            recording = sd.rec(frames, samplerate=self.sample_rate, channels=1, dtype="int16")
-            sd.wait()
-            
-            # Convert to AudioData
-            audio_data = recording.tobytes()
-            audio = sr.AudioData(audio_data, self.sample_rate, 2)
             
             r = sr.Recognizer()
+            with sr.Microphone(sample_rate=self.sample_rate) as source:
+                logger.info("Listening (Google STT)...")
+                # Adjust for ambient noise briefly
+                r.adjust_for_ambient_noise(source, duration=0.5)
+                audio = r.listen(source, timeout=self.max_duration_s, phrase_time_limit=self.max_duration_s)
+                
             return str(r.recognize_google(audio, language=self.language))
+        except sr.WaitTimeoutError:
+            return ""
         except Exception as exc:
             logger.warning("STT google failed: %s", exc)
             return ""

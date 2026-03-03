@@ -5,6 +5,7 @@ Usage:
   python main.py               # CLI only (safe default)
   python main.py --voice       # Voice + CLI hybrid
   python main.py --verify      # Verify audit log integrity and exit
+  ./jarvis_env/Scripts/Activate.ps1 
 """
 
 from __future__ import annotations

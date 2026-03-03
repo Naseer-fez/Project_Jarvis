@@ -47,7 +47,8 @@ class ModelRouter:
             with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=3) as response:
                 data = json.loads(response.read())
             available = {model["name"] for model in data.get("models", [])}
-            self._cache = {name: (name in available) for name in self._models.values()}
+            flattened_models = [m for model_list in self._models.values() for m in model_list]
+            self._cache = {name: (name in available) for name in flattened_models}
             self._cache_time = time.time()
         except Exception as exc:  # noqa: BLE001
             logger.debug("Model availability check failed: %s", exc)

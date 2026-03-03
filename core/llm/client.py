@@ -70,6 +70,15 @@ class LLMClientV2:
         self.model = model
         self.profile = profile
         self.model_router = None
+        
+        self._cloud_client = None
+        import os
+        if str(os.environ.get("CLOUD_LLM_FALLBACK_ENABLED", "true")).lower() == "true":
+            try:
+                from core.llm.cloud_client import CloudLLMClient
+                self._cloud_client = CloudLLMClient()
+            except Exception as e:
+                logger.warning("Could not init CloudLLMClient: %s", e)
 
     def set_router(self, router) -> None:
         self.model_router = router
@@ -106,6 +115,7 @@ class LLMClientV2:
         if system:
             payload["system"] = system
 
+        raw = ""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(
@@ -115,16 +125,24 @@ class LLMClientV2:
                 ) as response:
                     if response.status != 200:
                         logger.error("Ollama HTTP %s", response.status)
-                        return ""
-                    data = await response.json()
-                    raw = str(data.get("response", ""))
-                    return raw if keep_think else _strip_think(raw)
+                    else:
+                        data = await response.json()
+                        raw = str(data.get("response", ""))
+                        if not keep_think:
+                            raw = _strip_think(raw)
         except asyncio.TimeoutError:
             logger.error("LLM timeout after %ss", TIMEOUT_S)
-            return ""
         except Exception as exc:  # noqa: BLE001
             logger.error("LLM completion failed: %s", exc)
-            return ""
+
+        if not raw and self._cloud_client is not None:
+            logger.warning("Ollama returned empty. Attempting cloud fallback.")
+            try:
+                return await self._cloud_client.complete(prompt, system=system, temperature=temperature)
+            except Exception as exc:
+                logger.error("Cloud fallback also failed: %s", exc)
+                
+        return raw
 
     async def _complete_gemini(self, model: str, prompt: str, system: str, temperature: float) -> str:
         """Text completion via Google Gemini API."""
