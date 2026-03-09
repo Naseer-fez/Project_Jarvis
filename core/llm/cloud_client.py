@@ -12,7 +12,7 @@ class CloudLLMClient:
     Priority: Groq (fastest, cheapest) → OpenAI → Anthropic → fail loudly.
     """
 
-    PROVIDERS = ["groq", "openai", "anthropic"]
+    PROVIDERS = ["gemini", "groq", "openai", "anthropic"]
 
     def __init__(self) -> None:
         self._available: list[str] = []
@@ -24,6 +24,8 @@ class CloudLLMClient:
 
     def _check_provider(self, name: str) -> bool:
         keys = {
+            "gemini": "GEMINI_API_KEY",
+            "gemini": "GEMINI_API_KEY",
             "groq": "GROQ_API_KEY",
             "openai": "OPENAI_API_KEY",
             "anthropic": "ANTHROPIC_API_KEY",
@@ -42,6 +44,10 @@ class CloudLLMClient:
         raise RuntimeError("All cloud LLM providers failed or are unconfigured.")
 
     async def _call(self, provider: str, prompt: str, system: str, temperature: float) -> str:
+        if provider == "gemini":
+            return await self._call_gemini(prompt, system, temperature)
+        if provider == "gemini":
+            return await self._call_gemini(prompt, system, temperature)
         if provider == "groq":
             return await self._call_groq(prompt, system, temperature)
         if provider == "openai":
@@ -112,5 +118,63 @@ class CloudLLMClient:
                     logger.debug("Anthropic response missing content: %s", data)
                     return ""
                 return str(data["content"][0]["text"])
+
+
+    async def _call_gemini(self, prompt: str, system: str, temperature: float) -> str:
+        import aiohttp
+        api_key = os.environ["GEMINI_API_KEY"]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": temperature}
+        }
+        if system:
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=45),
+            ) as resp:
+                data = await resp.json()
+                try:
+                    return str(data["candidates"][0]["content"]["parts"][0]["text"])
+                except (KeyError, IndexError):
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug("Gemini response missing content: %s", data)
+                    return ""
+
+
+    async def _call_gemini(self, prompt: str, system: str, temperature: float) -> str:
+        import aiohttp
+        api_key = os.environ["GEMINI_API_KEY"]
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": temperature}
+        }
+        if system:
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=aiohttp.ClientTimeout(total=45),
+            ) as resp:
+                data = await resp.json()
+                try:
+                    return str(data["candidates"][0]["content"]["parts"][0]["text"])
+                except (KeyError, IndexError):
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug("Gemini response missing content: %s", data)
+                    return ""
 
 __all__ = ["CloudLLMClient"]
