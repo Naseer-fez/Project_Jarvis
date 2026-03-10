@@ -1,180 +1,147 @@
-"""
-core/agentic/belief_state.py
-
-Mutable, versioned store of agent beliefs — what the agent currently
-"thinks is true" about the world, its environment, and its own state.
-
-Beliefs differ from memory (episodic facts) in that they are:
-- Actively reasoned about and updated
-- Associated with a confidence level
-- Retractable when contradicting evidence arrives
-- Exposed to the autonomy policy for go/no-go decisions
-"""
+"""Persistent belief scores for the Agentic Layer."""
 
 from __future__ import annotations
 
+import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+DATA_DIR = Path("data/agentic")
+BELIEF_STATE_PATH = DATA_DIR / "belief_state.json"
+BELIEF_KEYS = (
+    "system_reliability",
+    "network_reliability",
+    "agent_confidence",
+    "api_rate_limit_risk",
+    "risk_tolerance",
+    "user_interruption_likelihood",
+)
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _utcnow_iso() -> str:
+    return _utcnow().isoformat()
+
+
+def _clamp(value: float) -> float:
+    if value < 0.0:
+        return 0.0
+    if value > 1.0:
+        return 1.0
+    return round(float(value), 4)
+
+
+def _atomic_write_json(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temp_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+        temp_path.replace(path)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+
 @dataclass
-class Belief:
-    """A single agent belief with a provenance trail."""
+class BeliefState:
+    """Mutable confidence scores used by autonomy and reflection."""
 
-    belief_id: str
-    key: str                    # dot-path key, e.g. "env.network.available"
-    value: Any
-    confidence: float           # 0.0 – 1.0
-    source: str                 # what produced this belief
-    retracted: bool = False
+    system_reliability: float = 0.75
+    network_reliability: float = 0.7
+    agent_confidence: float = 0.72
+    api_rate_limit_risk: float = 0.2
+    risk_tolerance: float = 0.5
+    user_interruption_likelihood: float = 0.3
+    updated_at: str = field(default_factory=_utcnow_iso)
 
-    created_at: datetime = field(default_factory=_utcnow)
-    updated_at: datetime = field(default_factory=_utcnow)
-    retracted_at: Optional[datetime] = None
-    retraction_reason: Optional[str] = None
+    def scores(self) -> dict[str, float]:
+        return {key: _clamp(float(getattr(self, key))) for key in BELIEF_KEYS}
 
-    def retract(self, reason: str = "") -> None:
-        self.retracted = True
-        self.retracted_at = _utcnow()
-        self.retraction_reason = reason
+    def update(self, key: str, delta: float) -> float:
+        """Adjust a belief score by delta and clamp the result to [0.0, 1.0]."""
+        if key not in BELIEF_KEYS:
+            raise KeyError(f"Unknown belief key: {key}")
 
-    def update(self, value: Any, confidence: float, source: str) -> None:
-        self.value = value
-        self.confidence = max(0.0, min(1.0, confidence))
-        self.source = source
-        self.updated_at = _utcnow()
-        self.retracted = False               # un-retract if re-asserted
+        current_value = float(getattr(self, key))
+        new_value = _clamp(current_value + float(delta))
+        setattr(self, key, new_value)
+        self.updated_at = _utcnow_iso()
+        logger.info(
+            "Belief updated key=%s old=%.3f delta=%.3f new=%.3f",
+            key,
+            current_value,
+            delta,
+            new_value,
+        )
+        self.save()
+        return new_value
 
-    def to_dict(self) -> dict:
+    def should_ask_user(self) -> bool:
+        """Return True when the agent should seek confirmation before acting."""
+        return (
+            self.agent_confidence < 0.45
+            or self.risk_tolerance < 0.35
+            or self.user_interruption_likelihood > 0.7
+            or self.api_rate_limit_risk > 0.8
+            or not self.is_reliable_enough()
+        )
+
+    def is_reliable_enough(self) -> bool:
+        """Return True when environment and internal confidence look stable."""
+        combined_reliability = (
+            self.system_reliability
+            + self.network_reliability
+            + self.agent_confidence
+        ) / 3.0
+        return combined_reliability >= 0.6 and self.api_rate_limit_risk <= 0.8
+
+    def to_dict(self) -> dict[str, object]:
         return {
-            "belief_id": self.belief_id,
-            "key": self.key,
-            "value": self.value,
-            "confidence": self.confidence,
-            "source": self.source,
-            "retracted": self.retracted,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-            "retracted_at": self.retracted_at.isoformat() if self.retracted_at else None,
-            "retraction_reason": self.retraction_reason,
+            "schema_version": 1,
+            "updated_at": self.updated_at,
+            "scores": self.scores(),
         }
 
+    def save(self) -> Path:
+        """Persist the current belief state to disk."""
+        _atomic_write_json(BELIEF_STATE_PATH, self.to_dict())
+        logger.debug("Belief state saved to %s", BELIEF_STATE_PATH)
+        return BELIEF_STATE_PATH
 
-class BeliefState:
-    """
-    Mutable key-value store of agent beliefs, keyed by dot-path strings.
+    def load(self) -> BeliefState:
+        """Load belief state from disk, keeping defaults if no file exists."""
+        if not BELIEF_STATE_PATH.exists():
+            logger.info("Belief state file not found at %s; using defaults", BELIEF_STATE_PATH)
+            return self
 
-    Example keys:
-        "env.network.available"
-        "user.intent.confirmed"
-        "task.email_sent"
+        with BELIEF_STATE_PATH.open("r", encoding="utf-8") as handle:
+            payload = json.load(handle)
 
-    Usage:
-        bs = BeliefState()
-        bs.assert_belief("env.network.available", True, confidence=0.95, source="ping_tool")
-        b = bs.get("env.network.available")
-        bs.retract("env.network.available", reason="DNS failure observed")
-    """
+        score_payload = payload
+        if isinstance(payload, dict) and "scores" in payload:
+            score_payload = payload["scores"]
 
-    def __init__(self) -> None:
-        # key → list[Belief] (history; latest is last)
-        self._store: dict[str, list[Belief]] = {}
+        if isinstance(score_payload, dict):
+            for key in BELIEF_KEYS:
+                if key in score_payload:
+                    setattr(self, key, _clamp(float(score_payload[key])))
 
-    # ── Core ops ─────────────────────────────────────────────────────────
-
-    def assert_belief(
-        self,
-        key: str,
-        value: Any,
-        confidence: float = 1.0,
-        source: str = "agent",
-    ) -> Belief:
-        """Assert or update a belief."""
-        if key in self._store and not self._store[key][-1].retracted:
-            belief = self._store[key][-1]
-            belief.update(value, confidence, source)
+        if isinstance(payload, dict) and payload.get("updated_at"):
+            self.updated_at = str(payload["updated_at"])
         else:
-            belief = Belief(
-                belief_id=str(uuid.uuid4()),
-                key=key,
-                value=value,
-                confidence=max(0.0, min(1.0, confidence)),
-                source=source,
-            )
-            self._store.setdefault(key, []).append(belief)
-        return belief
+            self.updated_at = _utcnow_iso()
 
-    def retract(self, key: str, reason: str = "") -> bool:
-        """Retract the current belief for a key. Returns True if found."""
-        if key in self._store and not self._store[key][-1].retracted:
-            self._store[key][-1].retract(reason)
-            return True
-        return False
+        logger.info("Belief state loaded from %s", BELIEF_STATE_PATH)
+        return self
 
-    def get(self, key: str, default: Any = None) -> Optional[Belief]:
-        """Return the current (non-retracted) belief, or None."""
-        if key in self._store:
-            b = self._store[key][-1]
-            if not b.retracted:
-                return b
-        return default
 
-    def get_value(self, key: str, default: Any = None) -> Any:
-        b = self.get(key)
-        return b.value if b is not None else default
-
-    def get_confidence(self, key: str, default: float = 0.0) -> float:
-        b = self.get(key)
-        return b.confidence if b is not None else default
-
-    # ── Bulk queries ─────────────────────────────────────────────────────
-
-    def all_active(self) -> list[Belief]:
-        """Return all non-retracted beliefs."""
-        return [
-            history[-1]
-            for history in self._store.values()
-            if not history[-1].retracted
-        ]
-
-    def low_confidence(self, threshold: float = 0.5) -> list[Belief]:
-        return [b for b in self.all_active() if b.confidence < threshold]
-
-    def history(self, key: str) -> list[Belief]:
-        return list(self._store.get(key, []))
-
-    # ── Serialisation ────────────────────────────────────────────────────
-
-    def snapshot(self) -> list[dict]:
-        result = []
-        for history in self._store.values():
-            result.extend(b.to_dict() for b in history)
-        return result
-
-    def restore(self, data: list[dict]) -> None:
-        for d in data:
-            belief = Belief(
-                belief_id=d["belief_id"],
-                key=d["key"],
-                value=d["value"],
-                confidence=d["confidence"],
-                source=d["source"],
-                retracted=d["retracted"],
-                created_at=datetime.fromisoformat(d["created_at"]),
-                updated_at=datetime.fromisoformat(d["updated_at"]),
-                retracted_at=datetime.fromisoformat(d["retracted_at"]) if d.get("retracted_at") else None,
-                retraction_reason=d.get("retraction_reason"),
-            )
-            self._store.setdefault(d["key"], []).append(belief)
-
-    def __repr__(self) -> str:
-        active = len(self.all_active())
-        total  = sum(len(v) for v in self._store.values())
-        return f"BeliefState(active={active}, total_history={total})"
-
+__all__ = ["BeliefState", "BELIEF_KEYS", "BELIEF_STATE_PATH"]
