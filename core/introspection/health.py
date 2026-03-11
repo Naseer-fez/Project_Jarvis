@@ -7,6 +7,7 @@ Provides:
 - HealthCheck: run a single check and capture its result
 - HealthReport: aggregate of many checks
 - Helpers for common checks (context integrity, scheduler backlog, etc.)
+- run_lightweight_health_check: fast pre-controller check (no model loading)
 
 Usage:
     report = run_health_check(context=ctx, scheduler=sched, goal_manager=gm)
@@ -17,9 +18,12 @@ Usage:
 
 from __future__ import annotations
 
+import configparser
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 
@@ -41,6 +45,7 @@ class HealthCheckResult:
     message: str
     details: dict = field(default_factory=dict)
     checked_at: datetime = field(default_factory=_utcnow)
+    duration_ms: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -49,6 +54,7 @@ class HealthCheckResult:
             "message": self.message,
             "details": self.details,
             "checked_at": self.checked_at.isoformat(),
+            "duration_ms": self.duration_ms,
         }
 
 
@@ -62,7 +68,7 @@ class HealthReport:
 
     @property
     def is_healthy(self) -> bool:
-        return all(c.status == HealthStatus.OK for c in self.checks)
+        return not self.has_failures
 
     @property
     def has_failures(self) -> bool:
@@ -183,14 +189,31 @@ def run_startup_health_check(controller=None) -> "HealthReport":
     """Run all startup checks, print status, and return a HealthReport."""
     checks: dict[str, Any] = {}
 
+    import logging
+    import time
+    logger = logging.getLogger(__name__)
+    durations: dict[str, float] = {}
+
     # 1) Ollama reachable
+    t0 = time.perf_counter()
     try:
         import urllib.request
+        import urllib.error
+        import socket
+        from core.config.defaults import OLLAMA_BASE_URL
 
-        urllib.request.urlopen("http://localhost:11434", timeout=3)
+        urllib.request.urlopen(OLLAMA_BASE_URL, timeout=3)
         checks["ollama_reachable"] = True
-    except Exception:
+    except urllib.error.URLError as e:
         checks["ollama_reachable"] = False
+        checks["ollama_error"] = str(e.reason)
+    except socket.timeout:
+        checks["ollama_reachable"] = False
+        checks["ollama_error"] = "timeout"
+    except Exception as e:
+        checks["ollama_reachable"] = False
+        checks["ollama_error"] = str(e)
+    durations["ollama_reachable"] = (time.perf_counter() - t0) * 1000
 
     # 2) ChromaDB installed (optional)
     try:
@@ -202,11 +225,13 @@ def run_startup_health_check(controller=None) -> "HealthReport":
     except Exception:
         checks["chromadb_ready"] = False
 
-    # 3) Memory SQLite accessible
+    # 3) Memory SQLite accessible — use controller's own db_path when available
     try:
-        from pathlib import Path
-
-        db = Path("memory/memory.db")
+        if controller is not None and hasattr(controller, "memory") and hasattr(controller.memory, "db_path"):
+            db = Path(controller.memory.db_path)
+        else:
+            raw = os.environ.get("JARVIS_MEMORY_DB", "data/jarvis_memory.db")
+            db = Path(raw)
         checks["memory_sqlite"] = db.exists()
     except Exception:
         checks["memory_sqlite"] = False
@@ -224,8 +249,6 @@ def run_startup_health_check(controller=None) -> "HealthReport":
 
     # 5) Config file exists
     try:
-        from pathlib import Path
-
         checks["config_loaded"] = Path("config/jarvis.ini").exists()
     except Exception:
         checks["config_loaded"] = False
@@ -241,42 +264,94 @@ def run_startup_health_check(controller=None) -> "HealthReport":
     else:
         checks["integrations"] = "not wired"
 
-    # Optional terminal color + Unicode-safe output on Windows code pages.
-    try:
-        import sys
-
-        encoding = (getattr(sys.stdout, "encoding", "") or "").lower()
-        use_unicode = "utf" in encoding
-    except Exception:
-        use_unicode = False
-
-    try:
-        from colorama import Fore, Style, init
-
-        init(autoreset=True)
-        ok = Fore.GREEN + ("✅" if use_unicode else "OK")
-        warn = Fore.YELLOW + ("⚠️" if use_unicode else "WARN")
-        fail = Fore.RED + ("❌" if use_unicode else "FAIL")
-        reset = Style.RESET_ALL
-    except ImportError:
-        ok, warn, fail = "OK", "WARN", "FAIL"
-        reset = ""
-
-    top = "\n═══ JARVIS STARTUP HEALTH ═══" if use_unicode else "\n=== JARVIS STARTUP HEALTH ==="
-    bottom = "══════════════════════════════\n" if use_unicode else "==============================\n"
-
-    print(top)
+    logger.info("═══ JARVIS STARTUP HEALTH ═══")
     for key, val in checks.items():
-        if val is True or (isinstance(val, str) and val):
-            icon = ok
+        if val is True or (isinstance(val, str) and val and key != "ollama_error"):
+            logger.info("  [OK] %s: %s", key, val)
         elif val is None:
-            icon = warn
+            logger.warning("  [WARN] %s: %s", key, val)
+        elif key == "ollama_error":
+            logger.error("  [ERROR] %s: %s", key, val)
         else:
-            icon = fail
-        print(f"  {icon} {key}: {val}{reset}")
-    print(bottom)
+            logger.error("  [FAIL] %s: %s", key, val)
+    logger.info("══════════════════════════════")
 
     # Build HealthReport using existing schema and attach direct attrs for convenience.
+    report = HealthReport()
+    for key, val in checks.items():
+        if val is True or (isinstance(val, str) and val):
+            status = HealthStatus.OK
+        elif val is None:
+            status = HealthStatus.WARN
+        else:
+            status = HealthStatus.FAIL
+        report.add(
+            HealthCheckResult(
+                name=key,
+                status=status,
+                message=str(val),
+                details={"value": val},
+                duration_ms=durations.get(key, 0.0),
+            )
+        )
+        try:
+            setattr(report, key, val)
+        except Exception:
+            pass
+
+    return report
+
+
+def run_lightweight_health_check(
+    config: Optional[configparser.ConfigParser] = None,
+) -> "HealthReport":
+    """
+    Fast, pre-controller health probe used by ``--health-check``.
+
+    Deliberately does NOT import chromadb, sentence_transformers, or any
+    controller code.  Safe to run before the controller is constructed.
+    """
+    checks: dict[str, Any] = {}
+
+    # 1) Config file existence
+    try:
+        cfg_path_str = (
+            config.get("general", "config_file", fallback="config/jarvis.ini")
+            if config is not None
+            else "config/jarvis.ini"
+        )
+        checks["config_loaded"] = Path(cfg_path_str).exists() or Path("config/jarvis.ini").exists()
+    except Exception:
+        checks["config_loaded"] = False
+
+    # 2) Ollama reachable
+    try:
+        import urllib.request
+        base = (
+            config.get("ollama", "base_url", fallback="http://localhost:11434")
+            if config is not None
+            else "http://localhost:11434"
+        )
+        urllib.request.urlopen(base, timeout=3)
+        checks["ollama_reachable"] = True
+    except Exception:
+        checks["ollama_reachable"] = False
+
+    # 3) SQLite path exists (config-aware, no DB connection attempted)
+    try:
+        raw_db = (
+            config.get(
+                "memory",
+                "sqlite_file",
+                fallback=config.get("memory", "db_path", fallback="data/jarvis_memory.db"),
+            )
+            if config is not None
+            else os.environ.get("JARVIS_MEMORY_DB", "data/jarvis_memory.db")
+        )
+        checks["memory_sqlite"] = Path(raw_db).exists()
+    except Exception:
+        checks["memory_sqlite"] = False
+
     report = HealthReport()
     for key, val in checks.items():
         if val is True or (isinstance(val, str) and val):
@@ -299,4 +374,3 @@ def run_startup_health_check(controller=None) -> "HealthReport":
             pass
 
     return report
-

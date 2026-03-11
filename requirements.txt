@@ -12,6 +12,10 @@ aiohttp
 python-dotenv
 rich
 
+# ---- Dashboard ----
+jinja2
+colorama
+
 # ---- LLM + Memory ----
 ollama
 chromadb
@@ -21,10 +25,15 @@ numpy
 # ---- Logging / Audit ----
 cryptography
 
+# ---- Utility (direct imports) ----
+overrides
+typing_extensions
+
 # ---- Testing ----
 pytest
 pytest-asyncio
 pytest-mock
+pytest-timeout
 
 # ---- Dev / Quality ----
 mypy

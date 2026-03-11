@@ -1,4 +1,4 @@
-﻿"""Async Ollama client with optional memory and workspace context injection."""
+"""Async Ollama client with optional memory and workspace context injection."""
 
 from __future__ import annotations
 
@@ -11,8 +11,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-OLLAMA_GENERATE_URL = "http://localhost:11434/api/generate"
-OLLAMA_BASE_URL = "http://localhost:11434"
+try:
+    from core.llm.cloud_client import CloudLLMClient
+except Exception:  # pragma: no cover - cloud fallback is optional
+    CloudLLMClient = None  # type: ignore[assignment]
+
+from core.config.defaults import OLLAMA_BASE_URL
+
+OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
 DEFAULT_MODEL = "deepseek-r1:8b"
 TIMEOUT_S = 120
 
@@ -33,8 +39,17 @@ def _strip_fences(text: str) -> str:
     return cleaned.strip()
 
 
+import time
+_WORKSPACE_CACHE: dict[str, dict[str, Any]] = {}
+
 def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> str:
     """Build a compact directory view to ground model responses in local files."""
+    global _WORKSPACE_CACHE
+    now = time.time()
+    
+    if path in _WORKSPACE_CACHE and now - _WORKSPACE_CACHE[path]["time"] < 60:
+        return _WORKSPACE_CACHE[path]["data"]
+
     root = Path(path)
     if not root.exists() or not root.is_dir():
         return ""
@@ -61,7 +76,9 @@ def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> st
         lines.append(f"{indent}{marker} {item.name}")
         count += 1
 
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    _WORKSPACE_CACHE[path] = {"time": time.time(), "data": result}
+    return result
 
 
 class LLMClientV2:
@@ -70,12 +87,14 @@ class LLMClientV2:
         self.model = model
         self.profile = profile
         self.model_router = None
-        
+
         self._cloud_client = None
         import os
-        if str(os.environ.get("CLOUD_LLM_FALLBACK_ENABLED", "true")).lower() == "true":
+        if (
+            CloudLLMClient is not None
+            and str(os.environ.get("CLOUD_LLM_FALLBACK_ENABLED", "true")).lower() == "true"
+        ):
             try:
-                from core.llm.cloud_client import CloudLLMClient
                 self._cloud_client = CloudLLMClient()
             except Exception as e:
                 logger.warning("Could not init CloudLLMClient: %s", e)
@@ -116,24 +135,33 @@ class LLMClientV2:
             payload["system"] = system
 
         raw = ""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    OLLAMA_GENERATE_URL,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
-                ) as response:
-                    if response.status != 200:
-                        logger.error("Ollama HTTP %s", response.status)
-                    else:
-                        data = await response.json()
-                        raw = str(data.get("response", ""))
-                        if not keep_think:
-                            raw = _strip_think(raw)
-        except asyncio.TimeoutError:
-            logger.error("LLM timeout after %ss", TIMEOUT_S)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("LLM completion failed: %s", exc)
+        for attempt in range(3):
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        OLLAMA_GENERATE_URL,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                    ) as response:
+                        if response.status != 200:
+                            logger.error("Ollama HTTP %s on attempt %d", response.status, attempt + 1)
+                        else:
+                            data = await response.json()
+                            raw = str(data.get("response", ""))
+                            if not keep_think:
+                                raw = _strip_think(raw)
+                        break
+            except asyncio.TimeoutError:
+                logger.error("LLM timeout after %ss on attempt %d", TIMEOUT_S, attempt + 1)
+                break
+            except aiohttp.ClientError as exc:
+                if attempt == 2:
+                    logger.error("LLM completion failed after 3 attempts: %s", exc)
+                else:
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+            except Exception as exc:  # noqa: BLE001
+                logger.error("LLM completion unexpected failure: %s", exc)
+                break
 
         if not raw and self._cloud_client is not None:
             logger.warning("Ollama returned empty. Attempting cloud fallback.")
@@ -204,8 +232,12 @@ class LLMClientV2:
         query_for_memory: str = "",
         profile_summary: str = "",
         workspace_path: str = "",
+        trace_id: str | None = None,
     ) -> str:
         """Async version — use this inside any async context (agent loop, controller)."""
+        if trace_id:
+            logger.info("[trace=%s] Client chat_async starting", trace_id)
+
         system = self._build_system(
             query=query_for_memory,
             profile=profile_summary,
@@ -220,6 +252,7 @@ class LLMClientV2:
         query_for_memory: str = "",
         profile_summary: str = "",
         workspace_path: str = "",
+        trace_id: str | None = None,
     ) -> str:
         """Sync bridge — ONLY call from truly synchronous, non-async contexts."""
         system = self._build_system(
@@ -233,7 +266,7 @@ class LLMClientV2:
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(
                 asyncio.run,
-                self.chat_async(messages, query_for_memory, profile_summary, workspace_path)
+                self.chat_async(messages, query_for_memory, profile_summary, workspace_path, trace_id=trace_id)
             )
             return future.result()
 

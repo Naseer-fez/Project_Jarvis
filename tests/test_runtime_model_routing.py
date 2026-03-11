@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+import time
+from configparser import ConfigParser
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from core.introspection.health import HealthStatus, run_startup_health_check
+from core.llm.model_router import ModelRouter
+
+
+def test_model_router_resolves_installed_latest_tag():
+    cfg = ConfigParser()
+    cfg["models"] = {
+        "chat_model": "mistral:7b",
+        "fallback_model": "mistral:7b",
+    }
+    router = ModelRouter(cfg)
+    router._available_ollama_models = {"deepseek-r1:8b", "mistral:latest"}
+    router._cache_time = time.time()
+
+    assert router.is_available("mistral:7b") is True
+    assert router.get_best_available("chat") == "mistral:latest"
+
+
+def test_controller_v2_sets_llm_router():
+    with patch("core.controller_v2.HybridMemory") as mock_mem, \
+         patch("core.controller_v2.ModelRouter") as mock_router, \
+         patch("core.controller_v2.UserProfileEngine"), \
+         patch("core.controller_v2.GoalManager"), \
+         patch("core.controller_v2.Scheduler"), \
+         patch("core.controller_v2.NotificationManager"), \
+         patch("core.controller_v2.BackgroundMonitor"), \
+         patch("core.controller_v2.ProfileSynthesizer"):
+
+        router = MagicMock()
+        router.route.return_value = "mistral:7b"
+        mock_router.return_value = router
+        mock_mem.return_value.initialize.return_value = {"mode": "lite"}
+
+        from core.controller_v2 import JarvisControllerV2
+
+        ctrl = JarvisControllerV2()
+
+    assert ctrl.llm.model_router is router
+
+
+def test_startup_health_reports_existing_sqlite(tmp_path):
+    db_path = tmp_path / "jarvis_memory.db"
+    db_path.write_text("", encoding="utf-8")
+    controller = MagicMock()
+    controller.memory.db_path = str(db_path)
+
+    with patch("urllib.request.urlopen", return_value=object()):
+        report = run_startup_health_check(controller)
+
+    memory_check = next(check for check in report.checks if check.name == "memory_sqlite")
+    assert memory_check.status == HealthStatus.OK
+    assert memory_check.message == "True"

@@ -15,8 +15,9 @@ jobs:
     - name: Install core deps (no audio/GPU)
       run: |
         pip install pydantic fastapi uvicorn requests aiohttp python-dotenv rich
+        pip install jinja2 colorama overrides typing_extensions
         pip install chromadb numpy cryptography
-        pip install pytest pytest-asyncio pytest-mock icalendar python-dateutil
+        pip install pytest pytest-asyncio pytest-mock pytest-timeout icalendar python-dateutil
     - name: Run tests
       run: pytest tests/ -q --timeout=30 --tb=short
       env:

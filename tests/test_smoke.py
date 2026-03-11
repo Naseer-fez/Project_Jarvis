@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from types import ModuleType
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -234,6 +234,29 @@ class TestShutdownCoordinator:
             await asyncio.wait_for(coord.wait(), timeout=1.0)
 
         asyncio.run(_run())
+
+    def test_windows_signal_handlers_keep_distinct_signal_names(self, monkeypatch):
+        loop = asyncio.new_event_loop()
+        coord = _ShutdownCoordinator(loop)
+        handlers = {}
+
+        monkeypatch.setattr(jarvis_main.sys, "platform", "win32")
+        monkeypatch.setattr(
+            jarvis_main.signal,
+            "signal",
+            lambda sig, handler: handlers.setdefault(sig, handler),
+        )
+
+        with patch.object(coord, "request_shutdown") as request_shutdown:
+            coord.install_signal_handlers()
+            handlers[jarvis_main.signal.SIGINT]()
+            handlers[jarvis_main.signal.SIGBREAK]()
+
+        assert request_shutdown.call_args_list == [
+            call("SIGINT"),
+            call("SIGBREAK"),
+        ]
+        loop.close()
 
 
 # ─────────────────────────────────────────────────────────────

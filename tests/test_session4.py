@@ -355,7 +355,7 @@ class TestContextCompressor(unittest.TestCase):
 
 # ─── 5. Integration Test ──────────────────────────────────────────────────────
 
-class TestJarvisIntegration(unittest.TestCase):
+class TestJarvisIntegration(unittest.IsolatedAsyncioTestCase):
     """
     Full integration test using JarvisControllerV2.
     LLM calls are skipped when Ollama is offline — memory and routing are tested.
@@ -383,23 +383,23 @@ class TestJarvisIntegration(unittest.TestCase):
         self.assertIsNotNone(self.status)
         self.assertIn("session_id", self.status)
 
-    def test_02_store_preference(self):
-        response = self.ctrl.process("remember I like espresso")
+    async def test_02_store_preference(self):
+        response = await self.ctrl.process("remember I like espresso")
         self.assertIn("espresso", response.lower())
 
-    def test_03_recall_preference(self):
+    async def test_03_recall_preference(self):
         with mock.patch.object(self.ctrl.model_router, 'get_best_available', return_value="deepseek-r1:8b"):
-            self.ctrl.process("my name is Bob")
-            response = self.ctrl.process("what's my name?")
+            await self.ctrl.process("my name is Bob")
+            response = await self.ctrl.process("what's my name?")
             self._assert_offline_or_match("Bob", response)
 
-    def test_04_status_command(self):
-        response = self.ctrl.process("status")
+    async def test_04_status_command(self):
+        response = await self.ctrl.process("status")
         self.assertIn("Session", response)
         self.assertIn("Memory", response)
 
-    def test_05_help_command(self):
-        response = self.ctrl.process("help")
+    async def test_05_help_command(self):
+        response = await self.ctrl.process("help")
         self.assertIn("status", response.lower())
         self.assertIn("exit", response.lower())
 
@@ -409,11 +409,11 @@ class TestJarvisIntegration(unittest.TestCase):
         self.assertIn("exchanges", summary)
         self.assertGreater(summary["exchanges"], 0)
 
-    def test_07_multiple_preferences(self):
+    async def test_07_multiple_preferences(self):
         with mock.patch.object(self.ctrl.model_router, 'get_best_available', return_value="deepseek-r1:8b"):
-            self.ctrl.process("I prefer dark mode")
-            self.ctrl.process("I work in Python")
-            response = self.ctrl.process("what do you know about me?")
+            await self.ctrl.process("I prefer dark mode")
+            await self.ctrl.process("I work in Python")
+            response = await self.ctrl.process("what do you know about me?")
             # Should return something — either from memory or LLM fallback
             self.assertIsInstance(response, str)
             self.assertGreater(len(response), 0)

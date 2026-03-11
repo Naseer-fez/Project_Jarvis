@@ -1,4 +1,4 @@
-﻿"""JarvisControllerV2: memory + LLM orchestration with CLI/voice runtime modes."""
+"""JarvisControllerV2: memory + LLM orchestration with CLI/voice runtime modes."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import uuid
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -57,9 +58,11 @@ class JarvisControllerV2:
             model=self.model_router.route("chat"),
             profile=self.profile,
         )
+        self.llm.set_router(self.model_router)
         self.synthesizer = ProfileSynthesizer(self.llm)
         self._conversation_buffer: list[str] = []
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
+        self._on_state_update = lambda **_: None
         try:
             setattr(self.llm, "profile", self.profile)
         except Exception:  # noqa: BLE001
@@ -74,7 +77,11 @@ class JarvisControllerV2:
         if isinstance(config, configparser.ConfigParser):
             minutes = config.getint("proactive", "goal_check_interval_minutes", fallback=5)
             self._goal_check_interval_seconds = max(1, minutes) * 60
-        self._goals_file = Path("memory/goals.json")
+        self._goals_file = Path(
+            config.get("memory", "goals_file", fallback="memory/goals.json")
+            if isinstance(config, configparser.ConfigParser)
+            else "memory/goals.json"
+        )
         self._load_goal_state()
         self.notifier = NotificationManager()
         self.monitor = BackgroundMonitor(self.notifier, self.config)
@@ -107,7 +114,100 @@ class JarvisControllerV2:
             "memory_init": memory_status,
         }
 
-    def process(self, user_input: str) -> str:
+    async def _handle_goal_intent(self, text: str, user_input: str) -> str | None:
+        if any(kw in text for kw in ("remind me", "set goal", "schedule", "don't forget", "remember to")):
+            description = user_input
+            for kw in ("remind me to", "set goal", "schedule", "don't forget to", "remember to"):
+                description = re.sub(re.escape(kw), "", description, flags=re.IGNORECASE).strip()
+            description = description.strip(" .?!")
+            if description:
+                goal_id = self.goal_manager.create_goal(description=description)
+                try:
+                    self.goal_manager.start_goal(goal_id)
+                except (ValueError, KeyError) as exc:
+                    logger.warning("Failed to start goal %r: %s", goal_id, exc)
+                delay_seconds = self._extract_goal_delay_seconds(user_input)
+                self.scheduler.enqueue(
+                    mission_id=goal_id,
+                    goal_id=goal_id,
+                    delay_seconds=delay_seconds,
+                    description=description,
+                )
+                self._persist_goal_state()
+                self._dashboard_update(active_goals=len(self.goal_manager.active_goals()))
+                return f"✓ Goal set: {description}"
+        
+        if any(kw in text for kw in ("what are my goals", "show goals", "list goals", "my goals")):
+            goals = self.goal_manager.active_goals()
+            if not goals:
+                return "No active goals."
+            lines = [f"- [{g.priority}] {g.description}" for g in goals]
+            return "Active goals:\n" + "\n".join(lines)
+            
+        return None
+
+    async def _handle_preference_intent(self, text: str, user_input: str) -> str | None:
+        if text.startswith("remember i like "):
+            value = user_input[16:].strip()
+            if value:
+                self.memory.store_preference(f"likes_{value[:12]}", value)
+                return f"I will remember you like {value}."
+
+        if text.startswith("my name is "):
+            value = user_input[11:].strip()
+            if value:
+                self.memory.store_preference("name", value)
+                return f"I will remember your name is {value}."
+
+        if text.startswith("i prefer "):
+            value = user_input[9:].strip()
+            if value:
+                self.memory.store_preference(f"prefer_{value[:12]}", value)
+                return f"I will remember you prefer {value}."
+
+        if text.startswith("i work in "):
+            value = user_input[10:].strip()
+            if value:
+                self.memory.store_preference("work", value)
+                return f"I will remember you work in {value}."
+                
+        return None
+
+    async def _dispatch_llm(self, text: str, trace_id: str) -> str:
+        context = self.memory.build_context_block(text)
+        profile_injection = self.profile.get_system_prompt_injection()
+        style_instruction = self.profile.get_communication_style()
+        profile_guidance = f"{profile_injection}\n{style_instruction}".strip()
+
+        selected_model = self.model_router.get_best_available("chat")
+        self.llm.model = selected_model
+        self.llm.model_name = selected_model
+
+        messages = [{"role": "user", "content": text}]
+        profile_summary = self.profile.get_communication_style() if self.profile else ""
+        
+        logger.info("[trace=%s] Dispatching to LLM: %r", trace_id, selected_model)
+        response = await self.llm.chat_async(
+            messages, 
+            query_for_memory=text, 
+            profile_summary=profile_summary,
+            trace_id=trace_id
+        )
+
+        if not response or response == "LLM Offline.":
+            prefs = self.memory.recall_preferences(text, top_k=1)
+            if prefs and prefs[0].get("value"):
+                return f"Offline fallback from memory: {prefs[0]['value']}"
+            return "I don't know while offline."
+
+        self.memory.store_conversation(text, response, self.session_id)
+        return response
+
+    async def process(self, user_input: str, trace_id: str | None = None) -> str:
+        if not trace_id:
+            trace_id = uuid.uuid4().hex[:8]
+        logger.info("[trace=%s] Controller process started", trace_id)
+        
         self._dashboard_update(state="THINKING", last_input=user_input)
         self.exchanges += 1
         text = (user_input or "").strip()
@@ -136,78 +236,13 @@ class JarvisControllerV2:
         if lowered == "help":
             return _respond("Commands: status, help, exit, remember <fact>, what's <query>")
 
-        if any(kw in lowered for kw in ("remind me", "set goal", "schedule", "don't forget", "remember to")):
-            description = text
-            for kw in ("remind me to", "set goal", "schedule", "don't forget to", "remember to"):
-                description = re.sub(re.escape(kw), "", description, flags=re.IGNORECASE).strip()
-            description = description.strip(" .?!")
-            if description:
-                goal_id = self.goal_manager.create_goal(description=description)
-                try:
-                    self.goal_manager.start_goal(goal_id)
-                except Exception:
-                    pass
-                delay_seconds = self._extract_goal_delay_seconds(text)
-                self.scheduler.enqueue(
-                    mission_id=goal_id,
-                    goal_id=goal_id,
-                    delay_seconds=delay_seconds,
-                    description=description,
-                )
-                self._persist_goal_state()
-                self._dashboard_update(active_goals=len(self.goal_manager.active_goals()))
-                return _respond(f"✓ Goal set: {description}")
+        if (goal_res := await self._handle_goal_intent(lowered, text)):
+            return _respond(goal_res)
+            
+        if (pref_res := await self._handle_preference_intent(lowered, text)):
+            return _respond(pref_res)
 
-        if any(kw in lowered for kw in ("what are my goals", "show goals", "list goals", "my goals")):
-            goals = self.goal_manager.active_goals()
-            if not goals:
-                return _respond("No active goals.")
-            lines = [f"- [{g.priority}] {g.description}" for g in goals]
-            return _respond("Active goals:\n" + "\n".join(lines))
-
-        if lowered.startswith("remember i like "):
-            value = text[16:].strip()
-            if value:
-                self.memory.store_preference(f"likes_{value[:12]}", value)
-                return _respond(f"I will remember you like {value}.")
-
-        if lowered.startswith("my name is "):
-            value = text[11:].strip()
-            if value:
-                self.memory.store_preference("name", value)
-                return _respond(f"I will remember your name is {value}.")
-
-        if lowered.startswith("i prefer "):
-            value = text[9:].strip()
-            if value:
-                self.memory.store_preference(f"prefer_{value[:12]}", value)
-                return _respond(f"I will remember you prefer {value}.")
-
-        if lowered.startswith("i work in "):
-            value = text[10:].strip()
-            if value:
-                self.memory.store_preference("work", value)
-                return _respond(f"I will remember you work in {value}.")
-
-        context = self.memory.build_context_block(text)
-        profile_injection = self.profile.get_system_prompt_injection()
-        style_instruction = self.profile.get_communication_style()
-        profile_guidance = f"{profile_injection}\n{style_instruction}".strip()
-
-        self.llm.model_name = self.model_router.get_best_available("chat")
-
-        # LLMClientV2 builds its own system prompt internally using these args.
-        messages = [{"role": "user", "content": text}]
-        profile_summary = self.profile.get_communication_style() if self.profile else ""
-        response = self.llm.chat(messages, query_for_memory=text, profile_summary=profile_summary)
-
-        if not response or response == "LLM Offline.":
-            prefs = self.memory.recall_preferences(text, top_k=1)
-            if prefs and prefs[0].get("value"):
-                return _respond(f"Offline fallback from memory: {prefs[0]['value']}")
-            return _respond("I don't know while offline.")
-
-        self.memory.store_conversation(text, response, self.session_id)
+        response = await self._dispatch_llm(text, trace_id=trace_id)
         return _respond(response)
 
     def session_summary(self) -> dict[str, Any]:
@@ -252,7 +287,7 @@ class JarvisControllerV2:
             if text.lower() in {"exit", "quit"}:
                 break
 
-            response = await loop.run_in_executor(None, self.process, text)
+            response = await self.process(text)
             print(f"Jarvis: {response}")
 
     async def shutdown(self) -> None:
@@ -268,16 +303,19 @@ class JarvisControllerV2:
         if self._voice_layer is not None:
             try:
                 await self._voice_layer.stop()
-            except Exception as e:
-                logger.warning(f"VoiceLayer stop error: {e}")
+            except Exception:
+                logger.warning("VoiceLayer stop error", exc_info=True)
 
         if self.voice_loop is not None:
-            await self.voice_loop.stop()
+            try:
+                await self.voice_loop.stop()
+            except Exception:
+                logger.warning("voice_loop stop error", exc_info=True)
 
     async def _voice_text_handler(self, text: str) -> str:
         """Called by VoiceLayer when speech is recognized."""
         self._dashboard_update(state="THINKING", last_input=text)
-        response = self.process(text)
+        response = await self.process(text)
         self._dashboard_update(state="IDLE", last_response=response)
         return response
 
@@ -301,8 +339,8 @@ class JarvisControllerV2:
                 self._dashboard_update(active_goals=len(self.goal_manager.active_goals()))
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
-                logger.warning(f"Goal check error: {e}")
+            except Exception:
+                logger.warning("Goal check loop error", exc_info=True)
 
     async def _speak_via_voice_layer(self, text: str) -> None:
         voice_loop = getattr(self._voice_layer, "_loop", None)
@@ -348,10 +386,8 @@ class JarvisControllerV2:
 
     def _dashboard_update(self, **kwargs: Any) -> None:
         try:
-            from dashboard.server import update_state
-
-            update_state(**kwargs)
-        except ImportError:
+            self._on_state_update(**kwargs)
+        except Exception:
             pass
 
     def _persist_goal_state(self) -> None:

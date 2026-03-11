@@ -3,8 +3,17 @@ import weakref
 from abc import ABC, abstractmethod
 from typing import Any, Set
 import threading
-from overrides import override
-from typing_extensions import Annotated
+try:
+    from overrides import override  # type: ignore[import]
+except ImportError:  # pragma: no cover
+    def override(fn):  # type: ignore[misc]
+        return fn
+
+try:
+    from typing_extensions import Annotated  # noqa: F401  # type: ignore[import]
+except ImportError:  # pragma: no cover
+    from typing import Any as Annotated  # type: ignore[assignment]
+
 
 
 class Connection:
@@ -87,16 +96,15 @@ class LockPool(Pool):
 
     @override
     def connect(self, *args: Any, **kwargs: Any) -> Connection:
-        self._lock.acquire()
         if hasattr(self._connection, "conn") and self._connection.conn is not None:
             return self._connection.conn  # type: ignore # cast doesn't work here for some reason
-        else:
-            new_connection = Connection(
-                self, self._db_file, self._is_uri, *args, **kwargs
-            )
-            self._connection.conn = new_connection
-            self._connections.add(weakref.ref(new_connection))
-            return new_connection
+        self._lock.acquire()
+        new_connection = Connection(
+            self, self._db_file, self._is_uri, *args, **kwargs
+        )
+        self._connection.conn = new_connection
+        self._connections.add(weakref.ref(new_connection))
+        return new_connection
 
     @override
     def return_to_pool(self, conn: Connection) -> None:
@@ -178,7 +186,10 @@ class SQLitePool:
 
     @contextlib.contextmanager
     def acquire(self):
-        conn = self._pool.get()
+        try:
+            conn = self._pool.get(timeout=30.0)
+        except queue.Empty:
+            raise TimeoutError("SQLitePool: timed out waiting for a free connection") from None
         try:
             yield conn
             conn.commit()

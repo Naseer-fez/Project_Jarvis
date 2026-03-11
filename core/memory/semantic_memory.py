@@ -266,19 +266,27 @@ class SemanticMemory:
         self._ensure_init()
         collection = self._collection(collection_name)
 
-        # Don't query empty collections — ChromaDB raises on n_results > count
-        count = collection.count()
-        if count == 0:
+        try:
+            # Don't query empty collections — ChromaDB raises on n_results > count
+            count = collection.count()
+            if count == 0:
+                return []
+
+            actual_k = min(top_k, count)
+            embedding = self._embed(query)
+
+            results = collection.query(
+                query_embeddings=[embedding],
+                n_results=actual_k,
+                include=["documents", "metadatas", "distances"],
+            )
+        except Exception as exc:
+            logger.warning(
+                "Semantic query failed for collection '%s': %s",
+                collection_name,
+                exc,
+            )
             return []
-
-        actual_k  = min(top_k, count)
-        embedding = self._embed(query)
-
-        results = collection.query(
-            query_embeddings=[embedding],
-            n_results=actual_k,
-            include=["documents", "metadatas", "distances"],
-        )
 
         hits = []
         if not results["ids"]:
@@ -350,4 +358,3 @@ class SemanticMemory:
 
     def is_ready(self) -> bool:
         return self._initialized
-

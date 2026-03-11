@@ -1,289 +1,243 @@
-# JARVIS SESSION 3 - DEPLOYMENT VERIFICATION CHECKLIST
+# JARVIS V2 — DEPLOYMENT CHECKLIST
 
-**Version:** 0.1 Text Mode  
-**Session:** 3  
-**Date:** February 16, 2026
+**Version:** 2.0.0  
+**Runtime:** V2 (controller_v2 + HybridMemory + Dashboard)  
+**Date:** March 2026
 
 ---
 
-## FILE INTEGRITY CHECK
+## FILE INTEGRITY — Current Runtime
 
-Verify you have all these files in `D:\AI\Jarvis\`:
+Verify these files exist in `D:\AI\Jarvis\`:
 
 ```
 D:\AI\Jarvis\
+├── config\
+│   └── jarvis.ini                 ← primary configuration
 ├── core\
-│   ├── __init__.py
-│   ├── controller.py
-│   ├── intents.py
-│   └── llm.py
-├── memory\
-│   ├── __init__.py
-│   ├── long_term.py
-│   └── short_term.py
-├── main.py
-├── requirements.txt
-├── README.md
-├── QUICK_START.md
-├── SESSION_3_SUMMARY.md
-└── DEPLOYMENT_CHECKLIST.md (this file)
+│   ├── controller_v2.py           ← active controller
+│   ├── memory\
+│   │   ├── hybrid_memory.py       ← SQLite + Chroma memory
+│   │   ├── semantic_memory.py
+│   │   └── sqlite_pool.py
+│   └── introspection\
+│       └── health.py
+├── dashboard\
+│   └── server.py                  ← FastAPI dashboard
+├── data\
+│   ├── jarvis_memory.db           ← SQLite (created on first run)
+│   └── goals.json                 ← goal persistence (created on first run)
+├── .env                           ← secrets (gitignored)
+├── .env.example                   ← template for secrets
+├── main.py                        ← entry point
+└── requirements.txt
 ```
-
-**Total files:** 12 (excluding generated files)
 
 ---
 
 ## PRE-DEPLOYMENT CHECKS
 
-- [ ] Python 3.10+ installed (`python --version`)
-- [ ] D: drive has at least 10GB free space
-- [ ] Administrator access available
-- [ ] Internet connection active (for initial setup)
+- [ ] Python 3.11+ installed (`python --version`)
+- [ ] D: drive has at least 10 GB free space
+- [ ] Ollama installed and running (`ollama serve`)
+- [ ] At least one model pulled (`ollama list`)
 
 ---
 
-## INSTALLATION VERIFICATION
+## INSTALLATION
 
-### Phase 1: Ollama Setup
-- [ ] Ollama downloaded from https://ollama.com
-- [ ] Ollama installed successfully
-- [ ] `ollama --version` shows version number
+### Phase 1: Ollama
 - [ ] `ollama pull deepseek-r1:8b` completed (~5.2 GB)
-- [ ] `ollama list` shows deepseek-r1:8b
+- [ ] `ollama list` shows the model
+- [ ] `ollama serve` running in a dedicated terminal
 
 ### Phase 2: Python Environment
-- [ ] Navigated to `D:\AI\Jarvis\`
-- [ ] Virtual environment created (`python -m venv jarvis_env`)
-- [ ] Virtual environment activated (see `(jarvis_env)` in prompt)
-- [ ] Dependencies installed (`pip install -r requirements.txt`)
+```powershell
+cd D:\AI\Jarvis
+python -m venv jarvis_env
+jarvis_env\Scripts\activate
+pip install -r requirements.txt
+```
 - [ ] No error messages during installation
+- [ ] `(jarvis_env)` visible in the prompt
 
-### Phase 3: Ollama Server
-- [ ] Separate PowerShell window opened
-- [ ] `ollama serve` running (don't close this window)
-- [ ] No error messages from Ollama
-
-### Phase 4: First Run
-- [ ] Jarvis started with `python main.py`
-- [ ] Banner displayed correctly
-- [ ] Session ID shown (8 characters)
-- [ ] LLM Status shows "✓ Connected"
-- [ ] Prompt shows "You: "
+### Phase 3: Configure Secrets
+Copy `.env.example` to `.env` and fill in values:
+```
+JARVIS_DASHBOARD_TOKEN=<strong-random-secret>
+JARVIS_ENV=production
+```
+> [!CAUTION]
+> Never leave `JARVIS_DASHBOARD_TOKEN` as the default `jarvis`.
+> The server will log a SECURITY warning at startup if it detects the default.
 
 ---
 
-## FUNCTIONAL VERIFICATION
+## FIRST RUN VERIFICATION
 
-### Test 1: Help Command
+### Health Check (fast — does not load LLM)
+```powershell
+python main.py --health-check
 ```
-You: help
-Expected: List of available commands
-Result: [ ] Pass [ ] Fail
+Expected output:
 ```
+Health Report — ✅ HEALTHY (3/3 OK, 0 warn, 0 fail)
+  ✅ config_loaded: True
+  ✅ ollama_reachable: True
+  ✅ memory_sqlite: True
+```
+Exit code 0 = ready. Exit code 1 = a check failed (see log output).
 
-### Test 2: Memory Storage
+### Standard Start
+```powershell
+python main.py
+```
+- [ ] No `CRITICAL` or `ERROR` lines in stderr
+- [ ] `Session …` appears in the console
+- [ ] Respond to `status` and `help` commands
+
+### Dashboard Start
+```powershell
+python main.py --gui --dashboard-token <your-token>
+```
+- [ ] `Dashboard: http://127.0.0.1:7070` in output
+- [ ] `curl -H "X-Dashboard-Token: <your-token>" http://127.0.0.1:7070/health` returns `{"ok": true, ...}`
+- [ ] `curl http://127.0.0.1:7070/` (no token) returns HTTP 401
+
+---
+
+## STORAGE PATHS
+
+| Artifact       | Path (relative to project root) | Config key                    |
+|---------------|----------------------------------|-------------------------------|
+| SQLite DB     | `data/jarvis_memory.db`          | `[memory] sqlite_file`        |
+| Goals JSON    | `data/goals.json`                | `[memory] goals_file`         |
+| Chroma DB     | `data/chroma/`                   | `[memory] chroma_dir`         |
+| App log       | `logs/app.log`                   | `[logging] app_file`          |
+| Audit log     | `logs/audit.jsonl`               | `[logging] audit_file`        |
+
+All paths are created automatically on first run. Override any path in `jarvis.ini`.
+
+---
+
+## FUNCTIONAL TESTS
+
+### Test 1: Memory Storage
 ```
 You: remember I like coffee
-Expected: "✓ I'll remember that: favorite_thing = coffee"
-Result: [ ] Pass [ ] Fail
+Expected: "I will remember you like coffee."
 ```
 
-### Test 3: Memory Storage (Different Pattern)
-```
-You: my name is [YourName]
-Expected: "✓ I'll remember that: name = [yourname]"
-Result: [ ] Pass [ ] Fail
-```
-
-### Test 4: Memory Recall
+### Test 2: Memory Recall
 ```
 You: what do I like to drink?
-Expected: "Based on what I know: coffee"
-Result: [ ] Pass [ ] Fail
+Expected: Response mentioning coffee from memory or LLM context
 ```
 
-### Test 5: Status Command
+### Test 3: Status
 ```
 You: status
-Expected: System status with session info
-Result: [ ] Pass [ ] Fail
+Expected: Session ID + memory mode (hybrid or sqlite-only)
 ```
 
-### Test 6: LLM Question
+### Test 4: Goal Setting
 ```
-You: what is 2+2?
-Expected: Response from LLM (should mention 4)
-Result: [ ] Pass [ ] Fail
+You: remind me to review the logs in 30 minutes
+Expected: "✓ Goal set: review the logs"
 ```
 
-### Test 7: Exit
+### Test 5: LLM Question
+```
+You: what is 2 + 2?
+Expected: LLM response
+```
+
+### Test 6: Exit
 ```
 You: exit
-Expected: "Goodbye! Session saved." + clean shutdown
-Result: [ ] Pass [ ] Fail
+Expected: Clean shutdown, no tracebacks
 ```
 
----
-
-## PERSISTENCE VERIFICATION
-
-### Test 8: Restart and Recall
-After completing Test 7:
-
-1. [ ] Restart Jarvis (`python main.py`)
-2. [ ] Type: `what do I like to drink?`
-3. [ ] Expected: Still recalls "coffee" from previous session
-4. [ ] Result: [ ] Pass [ ] Fail
-
-### Test 9: Database File Created
-- [ ] File exists: `D:\AI\Jarvis\memory\memory.db`
-- [ ] File size > 0 bytes
-- [ ] File can be opened in SQLite browser (optional)
+### Test 7: Persistence
+1. Exit Jarvis
+2. Restart: `python main.py`
+3. Ask: `what do I like to drink?`
+- [ ] Recalls "coffee" from the previous session
 
 ---
 
-## ERROR CHECKING
+## RUNNING TESTS
 
-### Common Issues Resolved?
+```powershell
+# Full suite
+pytest -q
 
-- [ ] No "module not found" errors
-- [ ] No "Ollama not available" warnings (if Ollama is running)
-- [ ] No file permission errors
-- [ ] No database write errors
-- [ ] Console output is clean (no Python tracebacks)
+# CI-equivalent (requires pytest-timeout)
+pytest tests/ -q --timeout=30 --tb=short
 
----
+# Specific area
+pytest tests/test_memory.py -v
+```
 
-## PERFORMANCE METRICS
-
-Record your results:
-
-- **Initial startup time:** _______ seconds
-- **Response time for memory recall:** _______ seconds
-- **Response time for LLM question:** _______ seconds
-- **Memory.db size after 10 exchanges:** _______ KB
-
-Expected values:
-- Startup: 1-3 seconds
-- Memory recall: <0.5 seconds
-- LLM response: 2-10 seconds (depends on CPU)
-- Database size: <100 KB initially
+Baseline: **375 passed, 5 skipped** in ~3 minutes.
 
 ---
 
-## FINAL VALIDATION
+## AUDIT LOG VERIFICATION
 
-All of these must be TRUE:
-
-- [ ] **All 9 functional tests passed**
-- [ ] Memory persists across sessions
-- [ ] No errors during normal operation
-- [ ] LLM responds to questions
-- [ ] Database file exists and grows
-- [ ] Console output is clean
+```powershell
+python main.py --verify
+```
+Expected: `[OK] Audit OK - N entries verified`
 
 ---
 
-## POST-DEPLOYMENT TASKS
+## PRODUCTION MODE
 
-If all checks passed:
+Set in `.env` or shell before starting:
+```
+JARVIS_ENV=production
+JARVIS_DASHBOARD_TOKEN=<strong-secret>
+```
 
-1. [ ] Create backup of `memory.db` (optional)
-2. [ ] Bookmark this checklist for reference
-3. [ ] Read `README.md` for full feature documentation
-4. [ ] Review `SESSION_3_SUMMARY.md` for technical details
-5. [ ] Prepare for Session 4 (voice integration)
-
----
-
-## TROUBLESHOOTING REFERENCE
-
-### If Test 6 (LLM Question) Fails:
-
-1. Verify Ollama is running: `ollama serve`
-2. Check model exists: `ollama list`
-3. Test Ollama directly: `ollama run deepseek-r1:8b "What is 2+2?"`
-4. Check Windows Firewall isn't blocking port 11434
-
-### If Test 8 (Persistence) Fails:
-
-1. Check `memory.db` exists
-2. Verify write permissions on `D:\AI\Jarvis\memory\`
-3. Look for error messages in console during storage
-4. Try running as administrator once
-
-### If Any Test Fails:
-
-1. Note the exact error message
-2. Check console output for Python tracebacks
-3. Verify virtual environment is activated
-4. Confirm all files from the checklist exist
-5. Restart from Phase 2 if needed
+In production mode:
+- Config not found → hard exit (exit code 2)
+- `core.controller_v2` import failure → hard exit (no silent fallback to legacy controller)
+- To allow legacy fallback explicitly: `JARVIS_ALLOW_LEGACY_CONTROLLER=1`
 
 ---
 
-## SUCCESS CRITERIA
+## TROUBLESHOOTING
 
-**MINIMUM FOR SUCCESS:**
-- Tests 1-5, 7-9 pass (8/9)
-- Test 6 can fail if you skip LLM integration
+### Ollama not reachable
+```powershell
+ollama serve               # start in a separate terminal
+ollama list                # confirm a model is available
+curl http://localhost:11434
+```
 
-**FULL SUCCESS:**
-- All 9 tests pass
-- No errors in console
-- Database persists
-- Clean shutdown
+### Memory DB errors
+```powershell
+python -c "from core.memory.hybrid_memory import HybridMemory; m = HybridMemory(); print(m.stats())"
+```
 
----
+### Dashboard 401 / auth issues
+- Confirm `JARVIS_DASHBOARD_TOKEN` is set in `.env` and matches the `--dashboard-token` argument
+- Use `X-Dashboard-Token` header for API calls
+- WebSocket: connect as `ws://localhost:7070/ws?token=<your-token>`
 
-## SESSION 3 DELIVERABLES VERIFIED
-
-- [ ] Core memory system working
-- [ ] Intent classification accurate
-- [ ] LLM integration functional (optional)
-- [ ] Persistence verified
-- [ ] Documentation complete
-
----
-
-## READY FOR SESSION 4?
-
-Session 4 will add:
-- Whisper (Speech-to-Text)
-- Piper (Text-to-Speech)
-- Voice interaction loop
-
-**Prerequisites before Session 4:**
-- [ ] All Session 3 tests passing
-- [ ] Comfortable with text mode operation
-- [ ] Memory system understood
-- [ ] Ready to add voice layer
+### Legacy controller fallback in non-production
+The system falls back to `core.controller` only when `core.controller_v2` fails to import.
+A `WARNING` is logged. In production this is blocked unless `JARVIS_ALLOW_LEGACY_CONTROLLER=1` is set.
 
 ---
 
 ## SIGN-OFF
 
-**Deployment Date:** _______________________
-
-**Deployed By:** _______________________
-
-**All Tests Passed?** [ ] Yes [ ] No
-
-**LLM Connected?** [ ] Yes [ ] No
-
-**Memory Persisting?** [ ] Yes [ ] No
-
-**Ready for Session 4?** [ ] Yes [ ] Not Yet
-
-**Notes:**
-_____________________________________________
-_____________________________________________
-_____________________________________________
-
----
+**Deployment Date:** ___________________  
+**Deployed By:** ___________________  
+**Health Check Passed?** [ ] Yes [ ] No  
+**LLM Connected?** [ ] Yes [ ] No  
+**Memory Persisting?** [ ] Yes [ ] No  
 
 **DEPLOYMENT STATUS:** [ ] ✓ VERIFIED [ ] ⚠ ISSUES [ ] ✗ FAILED
-
----
-
-*Keep this checklist for reference when troubleshooting or preparing for Session 4.*

@@ -1,0 +1,29 @@
+Changed in this turn only.
+Unrelated pre-existing local edits were preserved and are not listed here.
+
+Modified
+D:\AI\Jarvis\main.py
+D:\AI\Jarvis\tests\test_smoke.py
+D:\AI\Jarvis\core\agentic\__init__.py
+D:\AI\Jarvis\core\agentic\mission.py
+D:\AI\Jarvis\core\agentic\reflection.py
+D:\AI\Jarvis\core\llm\client.py
+D:\AI\Jarvis\core\llm\cloud_client.py
+D:\AI\Jarvis\core\memory\semantic_memory.py
+
+Added
+D:\AI\Jarvis\core\agentic\goal_manager.py
+D:\AI\Jarvis\core\memory\base.py
+D:\AI\Jarvis\core\memory\code_store.py
+D:\AI\Jarvis\core\memory\conversation.py
+D:\AI\Jarvis\core\memory\hybrid.py
+D:\AI\Jarvis\core\memory\memory.py
+D:\AI\Jarvis\core\memory\preferences.py
+D:\AI\Jarvis\core\memory\user_memory.py
+
+Removed
+D:\AI\Jarvis\Main_No_Voice.py
+D:\AI\Jarvis\fixes.py
+D:\AI\Jarvis\j.ini
+D:\AI\Jarvis\.pytest_cache
+D:\AI\Jarvis\__pycache__
