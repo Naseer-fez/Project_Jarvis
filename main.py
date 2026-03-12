@@ -516,7 +516,16 @@ def _build_model_inventory(config: configparser.ConfigParser) -> dict[str, dict[
     router = ModelRouter(config=config)
     inventory: dict[str, dict[str, Any]] = {}
 
-    for task_type in ("planning", "chat", "vision", "synthesis", "fallback"):
+    for task_type in (
+        "intent_classification",
+        "memory_summarization",
+        "tool_selection",
+        "planning",
+        "chat",
+        "vision",
+        "synthesis",
+        "fallback",
+    ):
         primary = router.route(task_type)
         entry: dict[str, Any] = {
             "primary": primary,
