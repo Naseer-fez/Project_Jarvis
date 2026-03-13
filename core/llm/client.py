@@ -18,7 +18,6 @@ except Exception:  # pragma: no cover - cloud fallback is optional
 
 from core.config.defaults import OLLAMA_BASE_URL
 
-OLLAMA_GENERATE_URL = f"{OLLAMA_BASE_URL}/api/generate"
 DEFAULT_MODEL = "deepseek-r1:8b"
 TIMEOUT_S = 120
 
@@ -82,10 +81,11 @@ def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> st
 
 
 class LLMClientV2:
-    def __init__(self, hybrid_memory: Any = None, model: str = DEFAULT_MODEL, profile: Any = None):
+    def __init__(self, hybrid_memory: Any = None, model: str = DEFAULT_MODEL, profile: Any = None, base_url: str = OLLAMA_BASE_URL):
         self.memory = hybrid_memory
         self.model = model
         self.profile = profile
+        self.base_url = base_url
         self.model_router = None
 
         self._cloud_client = None
@@ -139,7 +139,7 @@ class LLMClientV2:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
-                        OLLAMA_GENERATE_URL,
+                        f"{self.base_url}/api/generate",
                         json=payload,
                         timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
                     ) as response:
@@ -339,11 +339,15 @@ class LLMClientV2:
         import concurrent.futures
         import aiohttp
 
+        # We must capture self.base_url for the nested _check to use without binding self wrongly if thread issues arise,
+        # but since we run this in a threadpool with asyncio.run(_check()), safely pass it in or capture it.
+        url = self.base_url
+
         async def _check() -> bool:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(
-                        OLLAMA_BASE_URL,
+                        url,
                         timeout=aiohttp.ClientTimeout(total=3),
                     ) as response:
                         return response.status == 200

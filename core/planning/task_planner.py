@@ -279,6 +279,26 @@ SYSTEM_TOOL_SCHEMA = {
             },
             "required_args": ["name"]
         },
+        {
+            "name": "web_search",
+            "description": "Perform a web search using DuckDuckGo to find recent or general information.",
+            "risk": "low",
+            "args": {
+                "query": {"type": "string", "description": "The search query."},
+                "max_results": {"type": "integer", "default": 5}
+            },
+            "required_args": ["query"]
+        },
+        {
+            "name": "web_scrape",
+            "description": "Fetch and extract readable text from a webpage URL.",
+            "risk": "low",
+            "args": {
+                "url": {"type": "string", "description": "The URL to scrape."},
+                "max_chars": {"type": "integer", "default": 8000}
+            },
+            "required_args": ["url"]
+        },
     ]
 }
 
@@ -343,7 +363,8 @@ send_telegram, get_updates,
 create_event, list_events, delete_event, find_free_slot,
 list_unread, send_gmail, summarize_unread, mark_as_read,
 create_page, query_database, append_block, get_page,
-play_track, pause, search_track, get_current_track, create_playlist
+play_track, pause, search_track, get_current_track, create_playlist,
+web_search, web_scrape
 
 For multi-step requests (e.g. 'summarize emails AND add to Notion'), emit a workflow plan:
 {

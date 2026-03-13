@@ -17,6 +17,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from integrations.base import ToolResult
 from integrations.clients.calendar import CalendarIntegration
+from integrations.clients.computer_control import ComputerControlIntegration
 from integrations.clients.email import EmailIntegration
 from integrations.clients.whatsapp import WhatsAppIntegration
 from integrations.loader import IntegrationLoader
@@ -139,6 +140,16 @@ def test_whatsapp_not_available_without_env_vars():
 def test_calendar_is_always_available():
     cal = CalendarIntegration()
     assert cal.is_available() is True
+
+
+def test_computer_control_tools_do_not_shadow_core_planner_tools():
+    from core.llm.task_planner import SYSTEM_TOOL_SCHEMA
+
+    reserved_names = {tool["name"] for tool in SYSTEM_TOOL_SCHEMA["tools"]}
+    control_names = {tool["name"] for tool in ComputerControlIntegration().get_tools()}
+
+    assert control_names == {"move_mouse", "mouse_click", "keyboard_type", "take_screenshot"}
+    assert reserved_names.isdisjoint(control_names)
 
 
 @pytest.mark.asyncio

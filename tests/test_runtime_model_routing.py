@@ -13,6 +13,7 @@ def test_model_router_resolves_installed_latest_tag():
     cfg = ConfigParser()
     cfg["models"] = {
         "chat_model": "mistral:7b",
+        "summarize_model": "llama3.2:1b",
         "fallback_model": "mistral:7b",
     }
     router = ModelRouter(cfg)
@@ -21,6 +22,19 @@ def test_model_router_resolves_installed_latest_tag():
 
     assert router.is_available("mistral:7b") is True
     assert router.get_best_available("chat") == "mistral:latest"
+
+
+def test_model_router_aliases_synthesis_and_fallback_tasks():
+    cfg = ConfigParser()
+    cfg["models"] = {
+        "chat_model": "mistral:7b",
+        "summarize_model": "llama3.2:1b",
+        "fallback_model": "gemini-2.5-flash",
+    }
+    router = ModelRouter(cfg)
+
+    assert router.route("synthesis") == "llama3.2:1b"
+    assert router.route("fallback") == "gemini-2.5-flash"
 
 
 def test_controller_v2_sets_llm_router():

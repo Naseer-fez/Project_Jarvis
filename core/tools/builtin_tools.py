@@ -221,6 +221,18 @@ def register_all_tools(router):
     except Exception as e:
         logger.warning("GUI control tools unavailable: %s", e)
 
+    # ── Web Research tools ─────────────────────────────────────────────────
+    try:
+        from core.tools.web_tools import (
+            web_search,
+            web_scrape,
+        )
+        router.register("web_search", web_search)
+        router.register("web_scrape", web_scrape)
+        logger.info("Web research tools registered")
+    except Exception as e:
+        logger.warning("Web research tools unavailable: %s", e)
+
     logger.info("Registered %d tools total: %s", len(router.registered_tools()), router.registered_tools())
 
 

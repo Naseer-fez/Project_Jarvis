@@ -8,13 +8,13 @@ import json
 import logging
 import re
 import uuid
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from core.agentic.scheduler import Scheduler
 from core.autonomy.goal_manager import GoalManager
+from core.desktop_actions import handle_desktop_command
 from core.llm.model_router import ModelRouter
 from core.llm.client import LLMClientV2
 from core.memory.hybrid_memory import HybridMemory
@@ -22,6 +22,13 @@ from core.profile import UserProfileEngine
 from core.proactive.background_monitor import BackgroundMonitor
 from core.proactive.notifier import NotificationManager
 from core.synthesis import ProfileSynthesizer
+from core.agent.agent_loop import AgentLoopEngine
+from core.agent.state_machine import StateMachine
+from core.llm.task_planner import TaskPlanner
+from core.tools.tool_router import ToolRouter
+from core.autonomy.risk_evaluator import RiskEvaluator
+from core.autonomy.autonomy_governor import AutonomyGovernor
+from core.tools.builtin_tools import register_all_tools
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +60,16 @@ class JarvisControllerV2:
         self.memory = HybridMemory(db_path, chroma_path=chroma_path, model_name=embedding_model)
         self.model_router = ModelRouter(config=self.config)
         self.profile = UserProfileEngine()
+        
+        base_url = "http://localhost:11434"
+        if isinstance(self.config, configparser.ConfigParser) and self.config.has_section("ollama"):
+            base_url = self.config.get("ollama", "base_url", fallback=base_url)
+
         self.llm = LLMClientV2(
             hybrid_memory=self.memory,
             model=self.model_router.route("chat"),
             profile=self.profile,
+            base_url=base_url,
         )
         self.llm.set_router(self.model_router)
         self.synthesizer = ProfileSynthesizer(self.llm)
@@ -68,6 +81,23 @@ class JarvisControllerV2:
         except Exception:  # noqa: BLE001
             pass
         self.exchanges = 0
+
+        self.state_machine = StateMachine()
+        self.task_planner = TaskPlanner(self.config)
+        self.tool_router = ToolRouter()
+        register_all_tools(self.tool_router)
+        self.risk_evaluator = RiskEvaluator(self.config)
+        self.autonomy_governor = AutonomyGovernor(level=3)
+        self.agent_loop = AgentLoopEngine(
+            state_machine=self.state_machine,
+            task_planner=self.task_planner,
+            tool_router=self.tool_router,
+            risk_evaluator=self.risk_evaluator,
+            autonomy_governor=self.autonomy_governor,
+            model=model_name,
+            ollama_url=base_url,
+            llm=self.llm,
+        )
 
         self.voice_loop = None
         self.goal_manager = GoalManager()
@@ -234,13 +264,29 @@ class JarvisControllerV2:
         if lowered == "status":
             return _respond(f"Session: {self.session_id} | Memory Mode: {self.memory.mode}")
         if lowered == "help":
-            return _respond("Commands: status, help, exit, remember <fact>, what's <query>")
+            return _respond(
+                "Commands: status, help, exit, remember <fact>, what's <query>, "
+                "open <app>, search <query> in <browser>"
+            )
 
         if (goal_res := await self._handle_goal_intent(lowered, text)):
             return _respond(goal_res)
             
         if (pref_res := await self._handle_preference_intent(lowered, text)):
             return _respond(pref_res)
+
+        if (desktop_res := await handle_desktop_command(text)):
+            return _respond(desktop_res)
+
+        # Trigger AgentLoopEngine if the query implies research or action
+        agent_keywords = ["search", "look up", "find", "check", "scrape", "get", "download", "fetch", "read", "click", "analyze"]
+        if len(text.split()) > 2 and any(kw in lowered for kw in agent_keywords):
+            self._dashboard_update(state="PLANNING", last_input=user_input)
+            plan = await asyncio.to_thread(self.task_planner.plan, text)
+            if plan and plan.get("tools_required"):
+                self._dashboard_update(state="EXECUTE", last_input=user_input)
+                trace = await self.agent_loop.run(goal=text, context=self.memory.build_context_block(text))
+                return _respond(trace.final_response)
 
         response = await self._dispatch_llm(text, trace_id=trace_id)
         return _respond(response)

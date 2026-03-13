@@ -6,18 +6,34 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODELS = {
-    "planning": "deepseek-r1:8b",
+    "intent": "qwen2.5:0.5b",
+    "summarize": "llama3.2:1b",
     "chat": "mistral:7b",
+    "tool_picker": "mistral:7b",
+    "plan": "deepseek-r1:8b",
+    "fallback": "gemini-2.5-flash",
     "vision": "llava",
-    "synthesis": "deepseek-r1:8b",
-    "embedding": "nomic-embed-text",
-    "fallback": "mistral:7b",
 }
 
-
 class ModelRouter:
+    TASK_MAP = {
+        "intent": ["intent", "chat", "fallback"],
+        "intent_classification": ["intent", "chat", "fallback"],
+        "summarize": ["summarize", "chat", "fallback"],
+        "memory_summarization": ["summarize", "chat", "fallback"],
+        "synthesis": ["summarize", "chat", "fallback"],
+        "tool_picker": ["tool_picker", "plan", "fallback"],
+        "tool_selection": ["tool_picker", "plan", "fallback"],
+        "plan": ["plan", "fallback"],
+        "planning": ["plan", "fallback"],
+        "chat": ["chat", "plan", "fallback"],
+        "vision": ["vision", "fallback"],
+        "fallback": ["fallback"],
+    }
+
     def __init__(self, config: Optional[object] = None):
         self._models: dict[str, list[str]] = {}
+        self.config = config
         for key, val in DEFAULT_MODELS.items():
             self._models[key] = [m.strip() for m in val.split(",")]
 
@@ -33,18 +49,32 @@ class ModelRouter:
         self._cache_ttl: float = 60.0
         self._available_ollama_models: set[str] = set()
 
-    def route(self, task_type: str) -> str:
+        self._base_url = "http://localhost:11434"
+        if config and config.has_section("ollama"):
+            self._base_url = config.get("ollama", "base_url", fallback=self._base_url)
+
+    def _resolve_task_candidates(self, task_type: str | None) -> list[str]:
+        normalized = str(task_type or "chat").strip().lower() or "chat"
+        return self.TASK_MAP.get(normalized, ["chat", "fallback"])
+
+    def route(self, task_type: str = "chat") -> str:
         """Returns the primary (first) model for the task type."""
-        models = self._models.get(task_type, self._models["fallback"])
+        candidates = self._resolve_task_candidates(task_type)
+        models = []
+        for c in candidates:
+            # We try to use the configured model, and then fall back to defaults
+            cfg_models = self._models.get(c, self._models.get("fallback", ["mistral:7b"]))
+            if cfg_models:
+                models.extend(cfg_models)
+
         return models[0] if models else "mistral:7b"
 
     def _refresh_cache_bg(self) -> None:
         try:
             import json
             import urllib.request
-            from core.config.defaults import OLLAMA_BASE_URL
 
-            with urllib.request.urlopen(f"{OLLAMA_BASE_URL}/api/tags", timeout=3) as response:
+            with urllib.request.urlopen(f"{self._base_url}/api/tags", timeout=3) as response:
                 data = json.loads(response.read())
             available = {
                 str(model.get("name", "")).strip()
@@ -113,19 +143,24 @@ class ModelRouter:
         self._refresh_cache()
         return self._resolve_ollama_model(model_name) is not None
 
-    def get_best_available(self, task_type: str) -> str:
+    def get_best_available(self, task_type: str = "chat") -> str | None:
         self._refresh_cache()
-        candidates = self._models.get(task_type, self._models["fallback"])
+        candidates = self._resolve_task_candidates(task_type)
 
         for candidate in candidates:
-            if candidate.startswith("gemini-") and self.is_available(candidate):
-                return candidate
-            resolved = self._resolve_ollama_model(candidate)
-            if resolved is not None:
-                return resolved
+            # Check configured string
+            model_list = self._models.get(candidate)
+            if not model_list:
+                continue
+            for model_name in model_list:
+                if model_name.startswith("gemini-") and self.is_available(model_name):
+                    return model_name
+                resolved = self._resolve_ollama_model(model_name)
+                if resolved is not None:
+                    return resolved
 
         # If we got here, none of the specific candidates are available
-        fallback_candidates = self._models["fallback"]
+        fallback_candidates = self._models.get("fallback", [])
         for fallback in fallback_candidates:
             if fallback.startswith("gemini-") and self.is_available(fallback):
                 logger.warning(
@@ -151,9 +186,10 @@ class ModelRouter:
             )
             return available[0]
 
+        fallback_hint = fallback_candidates[0] if fallback_candidates else "a local Ollama model"
         raise RuntimeError(
             f"No configured models available. Ollama is empty, and Gemini API key is missing.\n"
-            f"Set GEMINI_API_KEY in .env, or run: ollama pull {fallback_candidates[0]}"
+            f"Set GEMINI_API_KEY in .env, or run: ollama pull {fallback_hint}"
         )
 
     def list_available(self) -> dict:

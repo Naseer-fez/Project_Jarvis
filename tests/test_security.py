@@ -202,6 +202,24 @@ async def test_rate_limit_resets_after_60_seconds():
     assert "rate limit" not in (result.error or "").lower()
 
 
+@pytest.mark.asyncio
+async def test_dispatcher_routes_click_through_core_handler():
+    from core.execution.dispatcher import Dispatcher
+    from core.tools.system_automation import ToolResult as SysToolResult
+
+    mock_policy = MagicMock()
+    mock_reflection = MagicMock()
+    d = Dispatcher(autonomy_policy=mock_policy, reflection_engine=mock_reflection)
+    mock_click = AsyncMock(return_value=SysToolResult(True, output="clicked"))
+    d._core_tools["click"] = mock_click
+
+    with patch.object(d, "_check_policy", new=AsyncMock(return_value=True)):
+        result = await d.dispatch({"tool": "click", "args": {"x": 10, "y": 20}})
+
+    assert result.success is True
+    mock_click.assert_awaited_once()
+
+
 # ── type_text safety ──────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio

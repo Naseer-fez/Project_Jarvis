@@ -6,6 +6,7 @@ Manages conversation history for multi-turn interactions.
 import logging
 from typing import Optional
 import httpx
+from core.config.defaults import OLLAMA_BASE_URL
 
 logger = logging.getLogger("Jarvis.OllamaLLM")
 
@@ -19,7 +20,7 @@ class OllamaLLM:
     def __init__(
         self,
         model: str = "mistral",
-        base_url: str = "http://localhost:11434",
+        base_url: str = OLLAMA_BASE_URL,
         system_prompt: str = JARVIS_SYSTEM_PROMPT,
     ):
         self.model = model

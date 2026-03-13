@@ -1,8 +1,9 @@
-﻿"""Task planner that asks Ollama for strict JSON plans with dynamic tool schema."""
+"""Task planner that asks Ollama for strict JSON plans with dynamic tool schema."""
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.request
 from copy import deepcopy
@@ -14,6 +15,8 @@ try:
     from integrations.registry import api_registry
 except Exception:  # noqa: BLE001
     api_registry = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
 
 
 SYSTEM_TOOL_SCHEMA: dict[str, Any] = {
@@ -237,6 +240,27 @@ SYSTEM_TOOL_SCHEMA: dict[str, Any] = {
             "args": {},
             "required_args": [],
         },
+        # ── Web Research tools ──────────────────────────────────────────────
+        {
+            "name": "web_search",
+            "description": "Perform a web search using DuckDuckGo to find recent or general information. Returns text summaries.",
+            "risk": "low",
+            "args": {
+                "query": {"type": "string", "description": "The search query."},
+                "max_results": {"type": "integer", "default": 5}
+            },
+            "required_args": ["query"]
+        },
+        {
+            "name": "web_scrape",
+            "description": "Fetch and extract readable text from a webpage URL.",
+            "risk": "low",
+            "args": {
+                "url": {"type": "string", "description": "The URL to scrape."},
+                "max_chars": {"type": "integer", "default": 8000}
+            },
+            "required_args": ["url"]
+        },
     ]
 }
 
@@ -272,6 +296,11 @@ Return this structure:
 
 def _build_tool_schema() -> dict[str, Any]:
     merged = deepcopy(SYSTEM_TOOL_SCHEMA)
+    seen_names = {
+        str(tool.get("name", "")).strip()
+        for tool in merged["tools"]
+        if isinstance(tool, dict) and str(tool.get("name", "")).strip()
+    }
 
     if api_registry is None:
         return merged
@@ -285,8 +314,16 @@ def _build_tool_schema() -> dict[str, Any]:
         dynamic_tools = []
 
     for tool in dynamic_tools:
-        if isinstance(tool, dict) and tool.get("name"):
-            merged["tools"].append(dict(tool))
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name", "")).strip()
+        if not name:
+            continue
+        if name in seen_names:
+            logger.warning("Skipping dynamic tool schema '%s' because it conflicts with an existing tool", name)
+            continue
+        merged["tools"].append(dict(tool))
+        seen_names.add(name)
 
     return merged
 

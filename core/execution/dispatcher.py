@@ -28,6 +28,19 @@ except Exception:  # noqa: BLE001
 logger = logging.getLogger(__name__)
 
 CONFIRM_THRESHOLD = 0.5
+CORE_TOOL_RISK_REGISTRY: dict[str, float] = {
+    **TOOL_REGISTRY,
+    "capture_screen": 0.1,
+    "capture_region": 0.1,
+    "find_text_on_screen": 0.1,
+    "describe_screen": 0.1,
+    "click": 0.8,
+    "double_click": 0.8,
+    "right_click": 0.8,
+    "type_text": 0.8,
+    "hotkey": 0.8,
+    "get_active_window": 0.1,
+}
 
 INTEGRATION_RISK_REGISTRY: dict[str, float] = {
     "read_emails": 0.1,
@@ -37,7 +50,32 @@ INTEGRATION_RISK_REGISTRY: dict[str, float] = {
     "send_email": 0.8,
     "send_whatsapp": 0.8,
     "add_event": 0.6,
+    "move_mouse": 0.8,
+    "mouse_click": 0.8,
+    "keyboard_type": 0.8,
+    "take_screenshot": 0.4,
 }
+
+
+def _coerce_tool_result(result: Any) -> ToolResult:
+    if isinstance(result, ToolResult):
+        return result
+
+    success = bool(getattr(result, "success", False))
+    output = getattr(result, "output", "")
+    error = str(getattr(result, "error", "") or "")
+    metadata = getattr(result, "metadata", {})
+    data = getattr(result, "data", None)
+
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if data is not None:
+        if isinstance(data, dict):
+            metadata = dict(data) | metadata
+        if not output:
+            output = str(data)
+
+    return ToolResult(success=success, output=str(output or ""), error=error, metadata=metadata)
 
 
 class DispatchError(Exception):
@@ -62,6 +100,16 @@ class Dispatcher:
             "delete_file": self._run_delete_file,
             "launch_application": self._run_launch_application,
             "execute_shell": self._run_execute_shell,
+            "capture_screen": self._run_capture_screen,
+            "capture_region": self._run_capture_region,
+            "find_text_on_screen": self._run_find_text_on_screen,
+            "describe_screen": self._run_describe_screen,
+            "click": self._run_click,
+            "double_click": self._run_double_click,
+            "right_click": self._run_right_click,
+            "type_text": self._run_type_text,
+            "hotkey": self._run_hotkey,
+            "get_active_window": self._run_get_active_window,
         }
 
     def _sanitize_args(self, args: dict) -> dict:
@@ -93,8 +141,8 @@ class Dispatcher:
         args = self._sanitize_args(args)
 
         # 1) Built-in core tool registry first.
-        if tool_name in TOOL_REGISTRY and tool_name in self._core_tools:
-            risk_score = float(TOOL_REGISTRY.get(tool_name, 1.0))
+        if tool_name in self._core_tools:
+            risk_score = float(CORE_TOOL_RISK_REGISTRY.get(tool_name, 1.0))
             logger.info("Dispatch core tool='%s' risk=%.2f rationale='%s'", tool_name, risk_score, rationale)
             return await self._dispatch_core_tool(tool_name, args, risk_score)
 
@@ -152,6 +200,7 @@ class Dispatcher:
             logger.exception("Core tool '%s' failed", tool_name)
             result = ToolResult(False, error=f"Dispatcher error: {exc}")
 
+        result = _coerce_tool_result(result)
         await self._feed_reflection(tool_name, args, result)
         return result
 
@@ -250,6 +299,76 @@ class Dispatcher:
     async def _run_execute_shell(self, args: dict[str, Any]) -> ToolResult:
         return await async_execute_shell(args["command"], args.get("working_dir"))
 
+    async def _run_capture_screen(self, args: dict[str, Any]) -> ToolResult:
+        del args
+        from core.tools.screen import capture_screen
+
+        return _coerce_tool_result(await asyncio.to_thread(capture_screen))
+
+    async def _run_capture_region(self, args: dict[str, Any]) -> ToolResult:
+        from core.tools.screen import capture_region
+
+        return _coerce_tool_result(
+            await asyncio.to_thread(
+                capture_region,
+                int(args["x"]),
+                int(args["y"]),
+                int(args["width"]),
+                int(args["height"]),
+            )
+        )
+
+    async def _run_find_text_on_screen(self, args: dict[str, Any]) -> ToolResult:
+        from core.tools.screen import find_text_on_screen
+
+        return _coerce_tool_result(await asyncio.to_thread(find_text_on_screen, str(args["text"])))
+
+    async def _run_describe_screen(self, args: dict[str, Any]) -> ToolResult:
+        del args
+        from core.tools.screen import describe_screen
+
+        return _coerce_tool_result(await asyncio.to_thread(describe_screen))
+
+    async def _run_click(self, args: dict[str, Any]) -> ToolResult:
+        from core.tools.gui_control import click
+
+        return _coerce_tool_result(
+            await click(
+                int(args["x"]),
+                int(args["y"]),
+                str(args.get("button", "left") or "left"),
+            )
+        )
+
+    async def _run_double_click(self, args: dict[str, Any]) -> ToolResult:
+        from core.tools.gui_control import double_click
+
+        return _coerce_tool_result(await double_click(int(args["x"]), int(args["y"])))
+
+    async def _run_right_click(self, args: dict[str, Any]) -> ToolResult:
+        from core.tools.gui_control import right_click
+
+        return _coerce_tool_result(await right_click(int(args["x"]), int(args["y"])))
+
+    async def _run_type_text(self, args: dict[str, Any]) -> ToolResult:
+        from core.tools.gui_control import type_text
+
+        interval = float(args.get("interval", 0.05) or 0.05)
+        return _coerce_tool_result(await type_text(str(args["text"]), interval=interval))
+
+    async def _run_hotkey(self, args: dict[str, Any]) -> ToolResult:
+        from core.tools.gui_control import hotkey
+
+        raw_keys = args.get("keys", [])
+        keys = [str(item) for item in raw_keys] if isinstance(raw_keys, (list, tuple)) else [str(raw_keys)]
+        return _coerce_tool_result(await hotkey(*[key for key in keys if key]))
+
+    async def _run_get_active_window(self, args: dict[str, Any]) -> ToolResult:
+        del args
+        from core.tools.gui_control import get_active_window
+
+        return _coerce_tool_result(await asyncio.to_thread(get_active_window))
+
 
 def _summarise_action(tool_name: str, args: dict[str, Any]) -> str:
     summaries = {
@@ -260,6 +379,13 @@ def _summarise_action(tool_name: str, args: dict[str, Any]) -> str:
         "send_email": lambda x: f"send an email to {x.get('to', '')}",
         "send_whatsapp": lambda x: f"send a WhatsApp message to {x.get('to', '')}",
         "add_event": lambda x: f"add calendar event '{x.get('title', '')}'",
+        "click": lambda x: f"click at ({x.get('x', '?')}, {x.get('y', '?')})",
+        "double_click": lambda x: f"double-click at ({x.get('x', '?')}, {x.get('y', '?')})",
+        "right_click": lambda x: f"right-click at ({x.get('x', '?')}, {x.get('y', '?')})",
+        "type_text": lambda x: f"type text '{str(x.get('text', ''))[:40]}'",
+        "hotkey": lambda x: f"press hotkey {x.get('keys', [])}",
+        "move_mouse": lambda x: f"move the mouse to ({x.get('x', '?')}, {x.get('y', '?')})",
+        "mouse_click": lambda x: "click the mouse",
     }
     return summaries.get(tool_name, lambda _: f"run '{tool_name}'")(args)
 
