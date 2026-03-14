@@ -1,4 +1,4 @@
-﻿"""Agent loop engine: plan -> risk -> confirm -> execute -> reflect."""
+"""Agent loop engine: plan -> risk -> confirm -> execute -> reflect."""
 
 from __future__ import annotations
 
@@ -102,7 +102,7 @@ class AgentLoopEngine:
         self.router = tool_router
         self.risk = risk_evaluator
         self.gov = autonomy_governor
-        self.model = model
+        self.model = model or "deepseek-r1:8b"
         self.ollama_url = ollama_url
         self.max_iterations = max(1, int(max_iterations or _DEFAULT_MAX_ITERATIONS))
         self.llm = llm  # LLMClientV2 instance, if provided
@@ -121,6 +121,9 @@ class AgentLoopEngine:
         context: str = "",
         confirm_callback=None,
     ) -> ExecutionTrace:
+        if self._check_interrupt():
+            return self._stop(ExecutionTrace(goal=goal), "user_interrupt")
+
         self._interrupt.clear()
         self.router.reset_call_count()
 
@@ -129,9 +132,6 @@ class AgentLoopEngine:
 
         self._ensure_thinking_state()
         self.sm.transition(AgentState.PLANNING)
-
-        if self._check_interrupt():
-            return self._stop(trace, "user_interrupt")
 
         plan = await self._build_plan(goal, context)
         if not plan:

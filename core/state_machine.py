@@ -24,30 +24,41 @@ class IllegalTransitionError(Exception):
 class State(Enum):
     """Canonical Jarvis agent states (V1 / V2 acceptance tests)."""
     IDLE          = auto()
+    THINKING      = auto()
     PLANNING      = auto()
+    RISK_EVALUATION = auto()
+    AWAITING_CONFIRMATION = auto()
+    ACTING        = auto()
+    OBSERVING     = auto()
+    REFLECTING    = auto()
     REVIEWING     = auto()
     EXECUTING     = auto()
+    SPEAKING      = auto()
+    LISTENING     = auto()
+    TRANSCRIBING  = auto()
     ERROR         = auto()
     ABORTED       = auto()
     SHUTDOWN      = auto()
-    # V2 voice states
-    LISTENING     = auto()
-    TRANSCRIBING  = auto()
-    SPEAKING      = auto()
 
 
 # Legal transitions table
 _TRANSITIONS: dict[State, frozenset[State]] = {
-    State.IDLE:         frozenset({State.PLANNING, State.LISTENING, State.SHUTDOWN}),
-    State.PLANNING:     frozenset({State.REVIEWING, State.IDLE, State.ERROR, State.SPEAKING}),
+    State.IDLE:         frozenset({State.THINKING, State.PLANNING, State.LISTENING, State.SHUTDOWN}),
+    State.THINKING:     frozenset({State.IDLE, State.PLANNING, State.ERROR}),
+    State.PLANNING:     frozenset({State.RISK_EVALUATION, State.REVIEWING, State.IDLE, State.ERROR, State.SPEAKING}),
+    State.RISK_EVALUATION: frozenset({State.AWAITING_CONFIRMATION, State.ACTING, State.IDLE, State.ERROR}),
+    State.AWAITING_CONFIRMATION: frozenset({State.ACTING, State.IDLE, State.ERROR}),
+    State.ACTING:       frozenset({State.OBSERVING, State.IDLE, State.ERROR}),
+    State.OBSERVING:    frozenset({State.ACTING, State.REFLECTING, State.IDLE, State.ERROR}),
+    State.REFLECTING:   frozenset({State.SPEAKING, State.IDLE, State.ERROR}),
     State.REVIEWING:    frozenset({State.EXECUTING, State.ABORTED, State.IDLE, State.ERROR}),
     State.EXECUTING:    frozenset({State.IDLE, State.ERROR, State.ABORTED}),
+    State.SPEAKING:     frozenset({State.IDLE, State.LISTENING, State.ERROR}),
+    State.LISTENING:    frozenset({State.TRANSCRIBING, State.IDLE, State.ERROR}),
+    State.TRANSCRIBING: frozenset({State.PLANNING, State.IDLE, State.ERROR}),
     State.ERROR:        frozenset({State.IDLE, State.SHUTDOWN}),
     State.ABORTED:      frozenset({State.IDLE, State.SHUTDOWN}),
     State.SHUTDOWN:     frozenset(),
-    State.LISTENING:    frozenset({State.TRANSCRIBING, State.IDLE, State.ERROR}),
-    State.TRANSCRIBING: frozenset({State.PLANNING, State.IDLE, State.ERROR}),
-    State.SPEAKING:     frozenset({State.IDLE, State.LISTENING, State.ERROR}),
 }
 
 _RESETTABLE = frozenset({State.ERROR, State.ABORTED})

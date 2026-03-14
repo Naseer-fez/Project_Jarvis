@@ -6,8 +6,11 @@ import asyncio
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
+
+import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +114,6 @@ class LLMClientV2:
         keep_think: bool = False,
     ) -> str:
         """Text completion via Ollama /api/generate."""
-        try:
-            import aiohttp
-        except ImportError:
-            logger.error("aiohttp not installed: pip install aiohttp")
-            return ""
-
         if self.model_router is not None:
             model_to_use = self.model_router.get_best_available(task_type)
         else:
@@ -337,7 +334,6 @@ class LLMClientV2:
     def is_ollama_running(self) -> bool:
         """Sync health check — runs in its own thread to avoid event loop conflicts."""
         import concurrent.futures
-        import aiohttp
 
         # We must capture self.base_url for the nested _check to use without binding self wrongly if thread issues arise,
         # but since we run this in a threadpool with asyncio.run(_check()), safely pass it in or capture it.

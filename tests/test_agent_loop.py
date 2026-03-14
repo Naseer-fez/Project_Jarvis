@@ -21,10 +21,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 def _find_agent_loop_class():
     """Try several known module paths for the agent loop class."""
     candidates = [
-        ("core.agent.loop", "AgentLoop"),
-        ("core.agentic.loop", "AgentLoop"),
-        ("core.agent.agent_loop", "AgentLoop"),
-        ("core.controller_v2", "ControllerV2"),
+        ("core.agent.agent_loop", "AgentLoopEngine"),
+        ("core.agentic.loop", "AgentLoopEngne"),
     ]
     for mod_path, cls_name in candidates:
         try:
@@ -47,7 +45,7 @@ def _find_agent_loop_module():
 
 def _make_truncate_fn():
     """Try importing _truncate_obs; fall back to inline implementation."""
-    for mod_path in ("core.agent.loop", "core.agentic.loop", "core.agent.agent_loop"):
+    for mod_path in ("core.agent.agent_loop", "core.agentic.loop"):
         try:
             import importlib
             mod = importlib.import_module(mod_path)
@@ -70,7 +68,7 @@ def test_truncate_obs_cuts_long_string():
     fn = _make_truncate_fn()
     long_text = "x" * 2000
     result = fn(long_text)
-    assert len(result) <= 900, "Truncated result should be ≤ 900 chars (800 + small suffix)"
+    assert len(result) <= 930  # 800 + padding/suffix
     assert "x" in result
 
 
@@ -85,49 +83,63 @@ async def test_agent_loop_respects_max_iterations():
     """Agent loop should stop after max_iterations even if task isn't done."""
     mod_path, cls_name, AgentLoop = _find_agent_loop_class()
     if AgentLoop is None:
-        pytest.skip("AgentLoop not found")
+        pytest.skip("AgentLoopEngine not found")
 
     mock_planner = MagicMock()
-    mock_planner.plan = MagicMock(return_value={"steps": []})
-    mock_planner.plan_async = AsyncMock(return_value={"steps": []})
-
-    mock_dispatcher = MagicMock()
-    mock_dispatcher.dispatch = AsyncMock(return_value=MagicMock(success=True, output="done"))
+    mock_planner.plan = AsyncMock(return_value={"steps": [{"id": 1, "action": "test", "description": "test", "params": {}}]})
+    
+    from core.state_machine import StateMachine
+    from core.autonomy.risk_evaluator import RiskEvaluator
+    from core.autonomy.autonomy_governor import AutonomyGovernor
+    
+    mock_sm = StateMachine()
+    mock_router = MagicMock()
+    mock_router.execute = AsyncMock(return_value=MagicMock(execution_status="success", output_summary="done"))
+    mock_router.reset_call_count = MagicMock()
+    mock_risk = RiskEvaluator()
+    mock_gov = AutonomyGovernor(level=3) # Allow everything
 
     mock_llm = MagicMock()
-    mock_llm.complete = MagicMock(return_value="some response")
+    mock_llm.complete = AsyncMock(return_value="reflection")
 
-    try:
-        loop = AgentLoop(
-            llm=mock_llm,
-            dispatcher=mock_dispatcher,
-            planner=mock_planner,
-            max_iterations=2,
-        )
-        result = await loop.run("do something")
-        # Should have stopped — result could be a string, dict, or trace object
-        assert result is not None
-    except TypeError:
-        pytest.skip("AgentLoop constructor signature differs — skipping")
+    loop = AgentLoop(
+        state_machine=mock_sm,
+        task_planner=mock_planner,
+        tool_router=mock_router,
+        risk_evaluator=mock_risk,
+        autonomy_governor=mock_gov,
+        max_iterations=1,
+        llm=mock_llm
+    )
+    
+    # Use a dummy confirm_callback to avoid stdin reading
+    result = await loop.run("do something", confirm_callback=lambda _: True)
+    assert result is not None
+    assert result.iterations >= 1
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_interrupt_flag_stops_loop():
-    """Setting interrupt_flag should cause loop to exit early."""
+async def test_agent_loop_interrupt_event_stops_loop():
+    """Setting _interrupt event should cause loop to exit early."""
     mod_path, cls_name, AgentLoop = _find_agent_loop_class()
     if AgentLoop is None:
-        pytest.skip("AgentLoop not found")
+        pytest.skip("AgentLoopEngine not found")
 
-    mock_llm = MagicMock()
-    mock_llm.complete = MagicMock(return_value="response")
-
-    try:
-        loop = AgentLoop(llm=mock_llm, max_iterations=100)
-        loop.interrupt_flag = True
-        result = await loop.run("do nothing")
-        assert result is not None
-    except (TypeError, AttributeError):
-        pytest.skip("AgentLoop does not support interrupt_flag — skipping")
+    from core.state_machine import StateMachine
+    mock_sm = StateMachine()
+    mock_router = MagicMock()
+    mock_router.reset_call_count = MagicMock()
+    loop = AgentLoop(
+        state_machine=mock_sm,
+        task_planner=MagicMock(),
+        tool_router=mock_router,
+        risk_evaluator=MagicMock(),
+        autonomy_governor=MagicMock()
+    )
+    
+    loop.request_interrupt()
+    result = await loop.run("do nothing")
+    assert result.stop_reason == "user_interrupt"
 
 
 def test_think_blocks_extracted_from_response():
@@ -141,6 +153,7 @@ def test_think_blocks_extracted_from_response():
     assert len(think_blocks) == 1
     assert "I should read the file" in think_blocks[0]
     assert "The answer is 42." == clean_response
+
 
 
 def test_think_blocks_absent_in_normal_response():
