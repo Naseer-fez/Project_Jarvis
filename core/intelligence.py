@@ -6,7 +6,6 @@ Uses LLM to extract key/value pairs and categorize them.
 """
 
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 

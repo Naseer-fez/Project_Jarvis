@@ -7,16 +7,15 @@ All registry and risk_evaluator calls are mocked.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.workflow.engine import (
     WorkflowEngine,
-    WorkflowResult,
     WorkflowStep,
     build_steps_from_plan,
 )
-from core.autonomy.risk_evaluator import RiskEvaluator, RiskLevel, RiskResult
+from core.autonomy.risk_evaluator import RiskLevel, RiskResult
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

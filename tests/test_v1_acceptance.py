@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import configparser
 import json
-import os
 import sys
-import tempfile
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -101,7 +99,6 @@ class TestStateMachine:
 
     def test_all_illegal_transitions_raise(self):
         """Exhaustively check that no illegal transition silently succeeds."""
-        import itertools
         allowed = {
             State.IDLE:         {State.PLANNING, State.LISTENING, State.SHUTDOWN},
             State.PLANNING:     {State.REVIEWING, State.IDLE, State.ERROR, State.SPEAKING},

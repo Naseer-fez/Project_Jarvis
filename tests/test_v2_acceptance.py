@@ -11,11 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import configparser
-import json
 import sys
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -273,7 +272,6 @@ class TestTTS:
 
     def test_tts_is_speaking_flag(self, tmp_config):
         from core.voice.tts import TTS
-        import threading
         with patch("core.voice.tts.TTS._init_backend", return_value="cli"):
             tts = TTS(tmp_config)
             assert not tts.is_speaking
@@ -337,7 +335,7 @@ class TestVoiceLoop:
 
     def test_voice_loop_cannot_trigger_forbidden_action(self, tmp_config, tmp_path):
         """Voice loop submits plans through risk evaluator — forbidden actions blocked."""
-        from core.risk_evaluator import RiskEvaluator, RiskLevel
+        from core.risk_evaluator import RiskEvaluator
         ev = RiskEvaluator(tmp_config)
         # A plan with shell_exec must be blocked before reaching execution
         result = ev.evaluate(["shell_exec"])
@@ -379,8 +377,6 @@ class TestVoiceLoop:
 
     def test_voice_loop_does_not_access_l2_l3(self):
         """Voice loop must not import or call desktop/serial automation."""
-        import importlib
-        import sys
         # Serial controller must remain a stub
         from core.hardware.serial_controller import SerialController
         sc = SerialController()

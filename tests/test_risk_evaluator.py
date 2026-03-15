@@ -4,7 +4,7 @@ All external dependencies are mocked; tests run fully offline.
 """
 
 import pytest
-from core.autonomy.risk_evaluator import RiskEvaluator, RiskLevel, RiskResult
+from core.autonomy.risk_evaluator import RiskEvaluator, RiskLevel
 
 
 # ── Fixture ───────────────────────────────────────────────────────────────────

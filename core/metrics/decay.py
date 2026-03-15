@@ -20,8 +20,8 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
-from typing import Callable, Optional
+from datetime import datetime, timezone
+from typing import Optional
 
 
 def _utcnow() -> datetime:

@@ -3,15 +3,11 @@ Built-in tools for Jarvis.
 All tools are async coroutines and sandboxed to allowed directories.
 """
 
-import asyncio
-import gzip
 import json
 import logging
 import os
 import platform
-import time
 from pathlib import Path
-from typing import Optional
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 

@@ -46,7 +46,7 @@ class ContextCompressor:
         if not lines:
             return ""
 
-        return f"--- Memory Context ---\n" + "\n".join(lines) + f"\n--- End Memory ---"
+        return "--- Memory Context ---\n" + "\n".join(lines) + "\n--- End Memory ---"
 
     def _compress_preferences(self, prefs: list[dict], include_scores: bool) -> tuple[list[str], int]:
         filtered = [p for p in prefs if p.get("score", 0) >= self.threshold]

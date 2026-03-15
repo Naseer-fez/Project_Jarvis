@@ -5,7 +5,6 @@ Agentic web browsing/research capability using DuckDuckGo and BeautifulSoup.
 
 import asyncio
 import logging
-from typing import Optional
 
 try:
     from ddgs import DDGS

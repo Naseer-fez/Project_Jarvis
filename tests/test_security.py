@@ -6,7 +6,6 @@ No real file system changes outside tmp_path.
 
 from __future__ import annotations
 
-import asyncio
 import sys
 import time
 from pathlib import Path
@@ -60,7 +59,6 @@ def test_valid_sandbox_path_allowed(tmp_path, monkeypatch):
 def test_symlink_outside_sandbox_blocked(tmp_path):
     """A symlink pointing outside the sandbox must be rejected."""
     from core.tools.builtin_tools import _assert_safe_path
-    import os
 
     target_outside = Path("C:/Windows")  # Never inside sandbox
     link_path = tmp_path / "evil_link"
@@ -148,10 +146,9 @@ def test_sanitize_args_non_string_values_unchanged():
 async def test_rate_limit_triggered_on_31st_call():
     """31 calls within 60 s must hit the rate limit."""
     from core.execution.dispatcher import Dispatcher
-    from core.tools.system_automation import ToolResult as SysToolResult
 
     mock_policy = MagicMock()
-    from core.agentic.autonomy_policy import PolicyDecision, PolicyVerdict
+    from core.agentic.autonomy_policy import PolicyVerdict
     mock_decision = MagicMock()
     mock_decision.verdict = PolicyVerdict.ALLOW
     mock_policy.check.return_value = mock_decision
@@ -180,7 +177,7 @@ async def test_rate_limit_resets_after_60_seconds():
     from core.execution.dispatcher import Dispatcher
 
     mock_policy = MagicMock()
-    from core.agentic.autonomy_policy import PolicyDecision, PolicyVerdict
+    from core.agentic.autonomy_policy import PolicyVerdict
     mock_decision = MagicMock()
     mock_decision.verdict = PolicyVerdict.ALLOW
     mock_policy.check.return_value = mock_decision

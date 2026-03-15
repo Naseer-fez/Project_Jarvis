@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 from configparser import ConfigParser
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from core.introspection.health import HealthStatus, run_startup_health_check

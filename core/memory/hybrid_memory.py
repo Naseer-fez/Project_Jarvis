@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -477,7 +476,6 @@ class HybridMemory:
 
     def cleanup_stale_data(self, max_age_days: int = 30) -> dict[str, int]:
         """Remove episodes/actions older than max_age_days. Returns removal counts."""
-        import json as _json
         from datetime import timedelta
         cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
 

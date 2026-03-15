@@ -41,7 +41,6 @@ def _strip_fences(text: str) -> str:
     return cleaned.strip()
 
 
-import time
 _WORKSPACE_CACHE: dict[str, dict[str, Any]] = {}
 
 def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> str:

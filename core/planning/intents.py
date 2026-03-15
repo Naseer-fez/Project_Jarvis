@@ -6,9 +6,7 @@ Uses DeepSeek R1:8b to classify user input into structured intents.
 Falls back to keyword heuristics if LLM is unavailable.
 """
 
-import json
 import logging
-import re
 from enum import Enum
 
 logger = logging.getLogger(__name__)

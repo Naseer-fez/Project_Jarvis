@@ -10,7 +10,7 @@ Each TraceEntry answers: "At time T, given context C, the agent chose A because 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional

@@ -17,7 +17,7 @@ except Exception:  # noqa: BLE001
 
 from core.agent.state_machine import AgentState, StateMachine
 from core.autonomy.autonomy_governor import AutonomyGovernor
-from core.autonomy.risk_evaluator import RiskEvaluator, RiskLevel
+from core.autonomy.risk_evaluator import RiskEvaluator
 from core.llm.task_planner import TaskPlanner
 from core.metrics.confidence import ConfidenceModel
 from core.tools.tool_router import ToolObservation, ToolRouter

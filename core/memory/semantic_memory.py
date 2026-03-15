@@ -23,7 +23,7 @@ import uuid
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import List, Dict, Any
 
 try:
     import chromadb
