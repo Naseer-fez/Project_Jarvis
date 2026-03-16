@@ -39,7 +39,8 @@ def monitor(f, input='print', output='print'):
 
     """
     if not input:
-        input = lambda v: None
+        def input(v):
+            return None
     elif input == 'print':
         incount = [0]
         def input(value):
@@ -47,7 +48,8 @@ def monitor(f, input='print', output='print'):
             print("in  %s %r %r" % (incount[0], args, kwargs))
             incount[0] += 1
     if not output:
-        output = lambda v: None
+        def output(v):
+            return None
     elif output == 'print':
         outcount = [0]
         def output(value):
@@ -74,20 +76,31 @@ def timing(f, *args, **kwargs):
     if args or kwargs:
         if len(args) == 1 and not kwargs:
             arg = args[0]
-            g = lambda: f(arg)
+            def g():
+                return f(arg)
         else:
-            g = lambda: f(*args, **kwargs)
+            def g():
+                return f(*args, **kwargs)
     else:
         g = f
     from timeit import default_timer as clock
-    t1=clock(); v=g(); t2=clock(); t=t2-t1
+    t1=clock(); g(); t2=clock(); t=t2-t1
     if t > 0.05 or once:
         return t
     for i in range(3):
         t1=clock()
         # Evaluate multiple times because the timer function
         # has a significant overhead
-        g();g();g();g();g();g();g();g();g();g()
+        g()
+        g()
+        g()
+        g()
+        g()
+        g()
+        g()
+        g()
+        g()
+        g()
         t2=clock()
         t=min(t,(t2-t1)/10)
     return t

@@ -150,7 +150,7 @@ class TestCodeFileStorage:
                 if cls is not None:
                     instance = cls(db_path=str(tmp_path / "code.db"))
                     # Feed broken Python — should not raise
-                    result = instance.store_code_file("bad.py", "def broken(:\n    pass")
+                    instance.store_code_file("bad.py", "def broken(:\n    pass")
                     # Success or failure result is fine — just must not raise
                     return
             except ImportError:

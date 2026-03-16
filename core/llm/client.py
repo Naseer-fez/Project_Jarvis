@@ -251,12 +251,12 @@ class LLMClientV2:
         trace_id: str | None = None,
     ) -> str:
         """Sync bridge — ONLY call from truly synchronous, non-async contexts."""
-        system = self._build_system(
+        self._build_system(
             query=query_for_memory,
             profile=profile_summary,
             workspace_path=workspace_path,
         )
-        prompt = self._messages_to_prompt(messages)
+        self._messages_to_prompt(messages)
 
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:

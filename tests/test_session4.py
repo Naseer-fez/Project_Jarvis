@@ -51,7 +51,8 @@ class TestEmbeddingManager(unittest.TestCase):
 
     def test_02_embed_returns_list(self):
         """embed() should return a list of floats."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         vec = self.em.embed("hello world")
         self.assertIsInstance(vec, list)
         self.assertTrue(len(vec) > 0)
@@ -59,41 +60,47 @@ class TestEmbeddingManager(unittest.TestCase):
 
     def test_03_embed_dimension_consistent(self):
         """All embeddings should have the same dimension."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         v1 = self.em.embed("coffee")
         v2 = self.em.embed("a much longer text about many different topics")
         self.assertEqual(len(v1), len(v2))
 
     def test_04_similarity_self(self):
         """A text should have near-perfect similarity with itself."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         score = self.em.similarity("I like coffee", "I like coffee")
         self.assertGreater(score, 0.99)
 
     def test_05_similarity_semantic(self):
         """Semantically similar texts should score higher than unrelated ones."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         similar_score = self.em.similarity("I enjoy coffee", "My favorite drink is coffee")
         unrelated_score = self.em.similarity("I enjoy coffee", "The stock market crashed")
         self.assertGreater(similar_score, unrelated_score)
 
     def test_06_similarity_range(self):
         """Similarity scores should be between 0 and 1."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         score = self.em.similarity("cat", "quantum mechanics")
         self.assertGreaterEqual(score, 0.0)
         self.assertLessEqual(score, 1.0)
 
     def test_07_embed_batch(self):
         """embed_batch() should return the correct number of vectors."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         texts = ["apple", "banana", "cherry"]
         vecs = self.em.embed_batch(texts)
         self.assertEqual(len(vecs), 3)
 
     def test_08_cache(self):
         """Same text embedded twice should hit the cache (embed_count should not increase)."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         before = self.em._embed_count
         _ = self.em.embed("unique test string for cache check")
         _ = self.em.embed("unique test string for cache check")  # should hit cache
@@ -102,7 +109,8 @@ class TestEmbeddingManager(unittest.TestCase):
 
     def test_09_rank_memories(self):
         """rank_memories() should return highest-scoring text first."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         query = "what do I drink in the morning"
         candidates = [
             "User drinks coffee every morning",
@@ -116,7 +124,8 @@ class TestEmbeddingManager(unittest.TestCase):
 
     def test_10_info(self):
         """info() should return expected keys."""
-        if not self.available: self.skipTest("Model not available")
+        if not self.available:
+            self.skipTest("Model not available")
         info = self.em.info()
         for key in ["model", "initialized", "dimension", "embed_count", "cache_size"]:
             self.assertIn(key, info)
@@ -144,12 +153,14 @@ class TestSemanticMemory(unittest.TestCase):
         self.assertTrue(self.available)
 
     def test_02_store_preference(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         doc_id = self.sm.store_preference("favorite_drink", "coffee")
         self.assertIsNotNone(doc_id)
 
     def test_03_recall_preference_exact(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         self.sm.store_preference("hobby", "playing guitar")
         results = self.sm.recall_preferences("What do I do for fun?", top_k=3)
         self.assertTrue(len(results) > 0)
@@ -158,43 +169,50 @@ class TestSemanticMemory(unittest.TestCase):
 
     def test_04_recall_preference_semantic(self):
         """Should find 'coffee' when asking about morning beverages."""
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         self.sm.store_preference("morning_drink", "coffee")
         results = self.sm.recall_preferences("what do I drink when I wake up?", top_k=5, threshold=0.0)
         self.assertTrue(len(results) > 0)
 
     def test_05_store_episode(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         doc_id = self.sm.store_episode("User discussed a project deadline", "work")
         self.assertIsNotNone(doc_id)
 
     def test_06_recall_episode(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         self.sm.store_episode("User mentioned they enjoy hiking on weekends", "leisure")
         results = self.sm.recall_episodes("outdoor activities", top_k=5, threshold=0.0)
         self.assertTrue(len(results) > 0)
 
     def test_07_store_conversation(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         doc_id = self.sm.store_conversation_turn(
             "What's the capital of France?", "Paris.", session_id="test"
         )
         self.assertIsNotNone(doc_id)
 
     def test_08_recall_conversation(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         results = self.sm.recall_conversations("France geography", top_k=3, threshold=0.0)
         self.assertTrue(len(results) > 0)
 
     def test_09_recall_all(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         all_results = self.sm.recall_all("coffee morning routine", top_k=3, threshold=0.0)
         self.assertIn("preferences", all_results)
         self.assertIn("episodes", all_results)
         self.assertIn("conversations", all_results)
 
     def test_10_stats(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         stats = self.sm.stats()
         self.assertTrue(stats.get("initialized"))
         self.assertIn("preferences", stats)
@@ -202,14 +220,16 @@ class TestSemanticMemory(unittest.TestCase):
 
     def test_11_relevance_scores_valid(self):
         """Scores should be between 0 and 1."""
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         results = self.sm.recall_preferences("anything", top_k=5, threshold=0.0)
         for r in results:
             self.assertGreaterEqual(r["score"], 0.0)
             self.assertLessEqual(r["score"], 1.0)
 
     def test_12_delete_preference(self):
-        if not self.available: self.skipTest("Unavailable")
+        if not self.available:
+            self.skipTest("Unavailable")
         self.sm.store_preference("temp_key", "temp_value")
         result = self.sm.delete_preference("temp_key")
         self.assertTrue(result)

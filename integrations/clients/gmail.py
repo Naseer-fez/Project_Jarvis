@@ -15,6 +15,7 @@ Rules:
 
 from __future__ import annotations
 
+import aiohttp
 import base64
 import os
 from email.mime.text import MIMEText

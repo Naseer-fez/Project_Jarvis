@@ -100,16 +100,22 @@ class TestStateMachine:
     def test_all_illegal_transitions_raise(self):
         """Exhaustively check that no illegal transition silently succeeds."""
         allowed = {
-            State.IDLE:         {State.PLANNING, State.LISTENING, State.SHUTDOWN},
-            State.PLANNING:     {State.REVIEWING, State.IDLE, State.ERROR, State.SPEAKING},
+            State.IDLE:         {State.THINKING, State.PLANNING, State.LISTENING, State.SHUTDOWN},
+            State.THINKING:     {State.IDLE, State.PLANNING, State.ERROR},
+            State.PLANNING:     {State.RISK_EVALUATION, State.REVIEWING, State.IDLE, State.ERROR, State.SPEAKING},
+            State.RISK_EVALUATION: {State.AWAITING_CONFIRMATION, State.ACTING, State.IDLE, State.ERROR},
+            State.AWAITING_CONFIRMATION: {State.ACTING, State.IDLE, State.ERROR},
+            State.ACTING:       {State.OBSERVING, State.IDLE, State.ERROR},
+            State.OBSERVING:    {State.ACTING, State.REFLECTING, State.IDLE, State.ERROR},
+            State.REFLECTING:   {State.SPEAKING, State.IDLE, State.ERROR},
             State.REVIEWING:    {State.EXECUTING, State.ABORTED, State.IDLE, State.ERROR},
             State.EXECUTING:    {State.IDLE, State.ERROR, State.ABORTED},
+            State.SPEAKING:     {State.IDLE, State.LISTENING, State.ERROR},
+            State.LISTENING:    {State.TRANSCRIBING, State.IDLE, State.ERROR},
+            State.TRANSCRIBING: {State.PLANNING, State.IDLE, State.ERROR},
             State.ERROR:        {State.IDLE, State.SHUTDOWN},
             State.ABORTED:      {State.IDLE, State.SHUTDOWN},
             State.SHUTDOWN:     set(),
-            State.LISTENING:    {State.TRANSCRIBING, State.IDLE, State.ERROR},
-            State.TRANSCRIBING: {State.PLANNING, State.IDLE, State.ERROR},
-            State.SPEAKING:     {State.IDLE, State.LISTENING, State.ERROR},
         }
         for src_state, allowed_dests in allowed.items():
             all_states = set(State)
@@ -395,8 +401,8 @@ class TestAuditLog:
     def test_entries_are_chained(self, tmp_path):
         from core.logger import AuditLog
         log = AuditLog(str(tmp_path / "audit.jsonl"))
-        h1 = log.write("E1", {})
-        h2 = log.write("E2", {})
+        log.write("E1", {})
+        log.write("E2", {})
         # Read back and check prev_hash linkage
         lines = (tmp_path / "audit.jsonl").read_text().splitlines()
         e1 = json.loads(lines[0])

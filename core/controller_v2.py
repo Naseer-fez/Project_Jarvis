@@ -204,10 +204,10 @@ class JarvisControllerV2:
         return None
 
     async def _dispatch_llm(self, text: str, trace_id: str) -> str:
-        context = self.memory.build_context_block(text)
+        self.memory.build_context_block(text)
         profile_injection = self.profile.get_system_prompt_injection()
         style_instruction = self.profile.get_communication_style()
-        profile_guidance = f"{profile_injection}\n{style_instruction}".strip()
+        f"{profile_injection}\n{style_instruction}".strip()
 
         selected_model = self.model_router.get_best_available("chat")
         self.llm.model = selected_model

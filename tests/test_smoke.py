@@ -337,7 +337,7 @@ class TestAsyncMainController:
         }
 
     def _run_with_patches(self, args, controller, logger_mod):
-        patches = self._build_patches(controller, logger_mod)
+        self._build_patches(controller, logger_mod)
 
         with patch("main.async_main", wraps=async_main):
             # Patch the imports inside async_main at the module level

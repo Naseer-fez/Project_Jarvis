@@ -38,7 +38,7 @@ _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(
     DESCRIPTOR, "google.rpc.context.audit_context_pb2", _globals
 )
-if _descriptor._USE_C_DESCRIPTORS == False:
+if not _descriptor._USE_C_DESCRIPTORS:
     _globals["DESCRIPTOR"]._options = None
     _globals[
         "DESCRIPTOR"
