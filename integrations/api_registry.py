@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from integrations.base_integration import RiskLevel
+from integrations.base import RiskLevel
 from integrations.weather_api.client import WeatherIntegration
 
 

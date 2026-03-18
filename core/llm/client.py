@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from core.config.defaults import OLLAMA_BASE_URL
 import asyncio
 import json
 import logging
@@ -18,8 +19,6 @@ try:
     from core.llm.cloud_client import CloudLLMClient
 except Exception:  # pragma: no cover - cloud fallback is optional
     CloudLLMClient = None  # type: ignore[assignment]
-
-from core.config.defaults import OLLAMA_BASE_URL
 
 DEFAULT_MODEL = "deepseek-r1:8b"
 TIMEOUT_S = 120

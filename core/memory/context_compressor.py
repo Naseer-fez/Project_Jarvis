@@ -56,7 +56,8 @@ class ContextCompressor:
             k = self._clean(p.get("key", ""))
             v = self._truncate(self._clean(p.get("value", "")), MAX_VALUE_LEN)
             entry = f"{k}={v}"
-            if include_scores: entry += f"[{p.get('score', 0):.2f}]"
+            if include_scores:
+                entry += f"[{p.get('score', 0):.2f}]"
             lines.append(entry)
         return lines, self._estimate_tokens(" | ".join(lines))
 
@@ -68,7 +69,8 @@ class ContextCompressor:
             event = self._truncate(self._clean(ep.get("event", "")), MAX_EPISODE_LEN)
             ts = (ep.get("timestamp") or "")[:10]
             entry = f"{event}" + (f" ({ts})" if ts else "")
-            if include_scores: entry += f"[{ep.get('score', 0):.2f}]"
+            if include_scores:
+                entry += f"[{ep.get('score', 0):.2f}]"
             lines.append(entry)
         return lines, self._estimate_tokens("; ".join(lines))
 
@@ -79,7 +81,8 @@ class ContextCompressor:
             user = self._truncate(self._clean(c.get("user_input", "")), MAX_CONVO_LEN)
             assist = self._truncate(self._clean(c.get("assistant_response", "")), MAX_CONVO_LEN)
             entry = f'"{user}" → "{assist}"'
-            if include_scores: entry += f"[{c.get('score', 0):.2f}]"
+            if include_scores:
+                entry += f"[{c.get('score', 0):.2f}]"
             lines.append(entry)
         return lines, self._estimate_tokens("; ".join(lines))
 

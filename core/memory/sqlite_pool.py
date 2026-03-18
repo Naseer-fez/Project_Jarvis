@@ -1,3 +1,5 @@
+import queue
+import contextlib
 import sqlite3
 import weakref
 from abc import ABC, abstractmethod
@@ -171,8 +173,6 @@ class PerThreadPool(Pool):
         pass  # Each thread gets its own connection, so we don't need to return it to the pool
 
 
-import queue
-import contextlib
 
 class SQLitePool:
     def __init__(self, db_path: str, pool_size: int = 3):

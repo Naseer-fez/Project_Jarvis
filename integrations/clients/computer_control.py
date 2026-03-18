@@ -18,6 +18,7 @@ class ComputerControlIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import pyautogui
+            _ = pyautogui.FAILSAFE  # Use it to avoid F401
             return True
         except ImportError:
             return False

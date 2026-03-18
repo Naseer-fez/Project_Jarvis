@@ -15,12 +15,12 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from integrations.base import ToolResult
-from integrations.clients.calendar import CalendarIntegration
-from integrations.clients.computer_control import ComputerControlIntegration
-from integrations.clients.email import EmailIntegration
-from integrations.clients.whatsapp import WhatsAppIntegration
-from integrations.loader import IntegrationLoader
+from integrations.base import ToolResult  # noqa: E402
+from integrations.clients.calendar import CalendarIntegration  # noqa: E402
+from integrations.clients.computer_control import ComputerControlIntegration  # noqa: E402
+from integrations.clients.email import EmailIntegration  # noqa: E402
+from integrations.clients.whatsapp import WhatsAppIntegration  # noqa: E402
+from integrations.loader import IntegrationLoader  # noqa: E402
 
 
 # ── ToolResult ────────────────────────────────────────────────────────────────

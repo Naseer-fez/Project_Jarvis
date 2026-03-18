@@ -84,7 +84,10 @@ def timing(f, *args, **kwargs):
     else:
         g = f
     from timeit import default_timer as clock
-    t1=clock(); g(); t2=clock(); t=t2-t1
+    t1 = clock()
+    g()
+    t2 = clock()
+    t = t2 - t1
     if t > 0.05 or once:
         return t
     for i in range(3):

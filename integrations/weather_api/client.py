@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from integrations.base_integration import BaseIntegration, RiskLevel, ToolResult
+from integrations.base import BaseIntegration, RiskLevel, ToolResult
 
 
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")

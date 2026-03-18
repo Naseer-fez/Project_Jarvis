@@ -29,7 +29,7 @@ def test_legacy_memory_shims_store_and_recall(tmp_path) -> None:
 
 
 def test_legacy_tool_result_to_llm_string() -> None:
-    from integrations.base_integration import RiskLevel, ToolResult
+    from integrations.base import RiskLevel, ToolResult
 
     result = ToolResult(success=False, error="boom", tool_name="get_current_weather")
 

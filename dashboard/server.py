@@ -8,6 +8,7 @@ import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+import threading
 from typing import Any
 
 import uvicorn
@@ -43,7 +44,7 @@ class JarvisState:
     _start_time: float = field(default_factory=time.time)
 
 
-import threading
+
 _state = JarvisState()
 _state_lock = threading.Lock()
 _controller = None

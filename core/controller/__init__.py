@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import configparser
 
-from core.controller_v2 import JarvisControllerV2
+from .controller import JarvisControllerV2
 
 
 class Controller:

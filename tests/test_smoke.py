@@ -25,8 +25,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import main as jarvis_main
-from main import (
+import main as jarvis_main  # noqa: E402
+from main import (  # noqa: E402
     ExitCode,
     _ShutdownCoordinator,
     apply_cli_overrides,

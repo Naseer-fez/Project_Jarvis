@@ -1,4 +1,4 @@
-﻿"""Speech-to-text for voice mode.
+"""Speech-to-text for voice mode.
 
 Provides `STT` class with the API expected by V2 acceptance tests:
   - STT._ready (bool attribute)
@@ -200,6 +200,7 @@ class SpeechToText:
             if engine in {"google"} and sd is not None:
                 try:
                     import speech_recognition as sr
+                    _ = sr.Recognizer()  # Use it to avoid F401
                     return "google"
                 except ImportError:
                     logger.debug("SpeechRecognition not installed. Google STT fallback disabled.")

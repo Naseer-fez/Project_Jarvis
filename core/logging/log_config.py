@@ -1,9 +1,9 @@
+import sys
+from pathlib import Path
 import importlib as _importlib
 _stdlib_logging = _importlib.import_module("logging")
 
 logging = _stdlib_logging
-import sys
-from pathlib import Path
 
 
 _LOGGER_INITIALIZED = False

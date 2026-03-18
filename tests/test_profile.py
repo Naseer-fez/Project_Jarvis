@@ -15,8 +15,8 @@ import pytest
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.profile import UserProfileEngine
-from core.synthesis import ProfileSynthesizer
+from core.profile import UserProfileEngine  # noqa: E402
+from core.synthesis import ProfileSynthesizer  # noqa: E402
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────

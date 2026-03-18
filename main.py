@@ -571,49 +571,13 @@ def _safe_audit(logger_mod: Any, event_type: str, payload: dict[str, Any], log: 
 
 
 def _load_logger_module():
-    try:
-        return importlib.import_module("core.logging.logger")
-    except Exception:
-        pass
-
-    try:
-        from core.logging import logger as logger_mod
-
-        return logger_mod
-    except Exception:
-        from core import logger as logger_mod
-
-        return logger_mod
+    from core.logging import logger as logger_mod
+    return logger_mod
 
 
 def _load_controller_class():
-    try:
-        from core.controller_v2 import Controller as controller_cls
-
-        return controller_cls
-    except Exception as primary_exc:
-        env = os.environ.get("JARVIS_ENV", "development").lower()
-        allow_legacy = os.environ.get("JARVIS_ALLOW_LEGACY_CONTROLLER", "").strip() == "1"
-
-        if env == "production" and not allow_legacy:
-            _bootstrap.critical(
-                "core.controller_v2 failed to import and JARVIS_ALLOW_LEGACY_CONTROLLER is not set; "
-                "refusing legacy fallback in production. Original error: %s",
-                primary_exc,
-                exc_info=True,
-            )
-            raise primary_exc
-
-        try:
-            from core.controller import Controller as controller_cls
-
-            _bootstrap.warning(
-                "Falling back to compatibility controller because core.controller_v2 failed: %s",
-                primary_exc,
-            )
-            return controller_cls
-        except Exception:
-            raise primary_exc
+    from core.controller import Controller
+    return Controller
 
 
 def _load_integrations(controller: Any, config: configparser.ConfigParser, log: logging.Logger) -> dict[str, list[str]]:
