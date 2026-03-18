@@ -571,12 +571,22 @@ def _safe_audit(logger_mod: Any, event_type: str, payload: dict[str, Any], log: 
 
 
 def _load_logger_module():
+    logger_mod = sys.modules.get("core.logging.logger")
+    if logger_mod is not None:
+        return logger_mod
+
     from core.logging import logger as logger_mod
+
     return logger_mod
 
 
 def _load_controller_class():
+    controller_mod = sys.modules.get("core.controller")
+    if controller_mod is not None:
+        return controller_mod.Controller
+
     from core.controller import Controller
+
     return Controller
 
 
