@@ -1,7 +1,13 @@
 {
   "agent":"Jarvis","version":"2.0","root":"D:/AI/Jarvis","entry":"python main.py","mode":"local_offline",
 
-  "llm":{"model":"deepseek-r1:8b","endpoint":"http://localhost:11434/api/chat","streaming":true,"timeout":60},
+  "llm":{
+    "model":"deepseek-r1:8b",
+    "quick_model":"gemma3:1b",
+    "endpoint":"http://localhost:11434/api/chat",
+    "streaming":true,
+    "timeout":60
+  },
 
   "embed":{"model":"all-MiniLM-L6-v2","dim":384},
 
@@ -18,8 +24,24 @@
   "memory":{
     "layers":["short_term(20turns)","sqlite","chroma"],
     "collections":["jarvis_preferences","jarvis_episodes","jarvis_conversations"],
+    "llm_context_titles":true,
     "recall":{"top_k":5,"threshold":0.30,"max_tokens":400,"priority":["preferences","episodes","conversations"]},
     "chroma_ops":{"jarvis_preferences":"upsert,id=pref_{key}","jarvis_episodes":"add,id=ep_{uuid12}","jarvis_conversations":"add,id=conv_{uuid12}"}
+  },
+
+  "web_search":{
+    "enabled":true,
+    "provider":"auto",
+    "default_max_results":5,
+    "summarize_results":true,
+    "auto_extract_query":true,
+    "provider_timeout_s":8,
+    "scrape_timeout_s":10,
+    "quick_task_timeout_s":4,
+    "max_scrape_chars":8000,
+    "ddgs_region":"wt-wt",
+    "ddgs_safesearch":"moderate",
+    "tavily_api_key_env":"TAVILY_API_KEY"
   },
 
   "db_schema":{

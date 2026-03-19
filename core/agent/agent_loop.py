@@ -384,7 +384,7 @@ class AgentLoopEngine:
                     user_prompt,
                     system=REFLECT_SYSTEM_PROMPT,
                     temperature=0.2,
-                    task_type="synthesis",
+                    task_type="final_response",
                 )
                 cleaned = re.sub(r"<think>.*?</think>", "", result or "", flags=re.DOTALL).strip()
                 if cleaned:

@@ -48,6 +48,8 @@ class HybridMemory:
         self.chroma_path = chroma_path
         self.model_name = model_name
         self.mode = "sqlite-only"
+        self._llm: Any | None = None
+        self._enable_llm_context_titles = True
 
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -80,6 +82,16 @@ class HybridMemory:
             result["codebase_index"] = self.index_codebase(index_path)
 
         return result
+
+    def set_llm(
+        self,
+        llm: Any | None,
+        *,
+        enable_context_titles: bool = True,
+    ) -> None:
+        """Attach an LLM used for optional low-latency context titling."""
+        self._llm = llm
+        self._enable_llm_context_titles = bool(enable_context_titles)
 
     def _conn(self):
         return self._pool.acquire()
@@ -228,7 +240,11 @@ class HybridMemory:
         try:
             from core.memory.context_compressor import ContextCompressor
 
-            compressor = ContextCompressor(threshold=0.0)
+            compressor = ContextCompressor(
+                threshold=0.0,
+                llm=self._llm,
+                enable_llm_title=self._enable_llm_context_titles,
+            )
             return compressor.compress(query, self.recall_all(query, top_k=n_results))
         except Exception:  # noqa: BLE001
             return ""

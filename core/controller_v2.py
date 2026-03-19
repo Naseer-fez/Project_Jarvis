@@ -99,6 +99,18 @@ class JarvisControllerV2:
             base_url=base_url,
         )
         self.llm.set_router(self.model_router)
+        enable_context_titles = True
+        if isinstance(self.config, configparser.ConfigParser):
+            enable_context_titles = self.config.getboolean(
+                "memory",
+                "llm_context_titles",
+                fallback=True,
+            )
+        if hasattr(self.memory, "set_llm"):
+            self.memory.set_llm(
+                self.llm,
+                enable_context_titles=enable_context_titles,
+            )
         self.synthesizer = ProfileSynthesizer(self.llm)
         self._conversation_buffer: list[str] = []
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
@@ -112,7 +124,11 @@ class JarvisControllerV2:
         self.state_machine = StateMachine()
         self.task_planner = TaskPlanner(self.config)
         self.tool_router = ToolRouter()
-        register_all_tools(self.tool_router)
+        register_all_tools(
+            self.tool_router,
+            llm=self.llm,
+            config=self.config,
+        )
         self.risk_evaluator = RiskEvaluator(self.config)
         self.autonomy_governor = AutonomyGovernor(level=3)
         self.agent_loop = AgentLoopEngine(

@@ -67,7 +67,12 @@ class IntentClassifierV2:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                 result = pool.submit(
                     asyncio.run,
-                    self.llm.complete_json(prompt, system=CLASSIFY_SYSTEM, temperature=0.0)
+                    self.llm.complete_json(
+                        prompt,
+                        system=CLASSIFY_SYSTEM,
+                        temperature=0.0,
+                        task_type="intent_classification",
+                    )
                 ).result(timeout=30)
 
             if result and "intent" in result:
@@ -102,4 +107,3 @@ class IntentClassifierV2:
             return {"intent": Intent.META.value, "confidence": 0.9}
 
         return {"intent": Intent.CHAT.value, "confidence": 0.75}
-

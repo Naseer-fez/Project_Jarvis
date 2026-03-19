@@ -28,12 +28,33 @@ def test_model_router_aliases_synthesis_and_fallback_tasks():
     cfg["models"] = {
         "chat_model": "mistral:7b",
         "summarize_model": "llama3.2:1b",
+        "quick_model": "gemma3:1b",
         "fallback_model": "gemini-2.5-flash",
     }
     router = ModelRouter(cfg)
 
     assert router.route("synthesis") == "llama3.2:1b"
+    assert router.route("web_search_summary") == "gemma3:1b"
+    assert router.route("tool_parameter_extraction") == "gemma3:1b"
+    assert router.route("context_title_generation") == "gemma3:1b"
+    assert router.route("final_response") == "mistral:7b"
     assert router.route("fallback") == "gemini-2.5-flash"
+
+
+def test_model_router_prefers_quick_model_for_available_quick_tasks():
+    cfg = ConfigParser()
+    cfg["models"] = {
+        "chat_model": "mistral:7b",
+        "summarize_model": "llama3.2:1b",
+        "quick_model": "gemma3:1b",
+        "fallback_model": "gemini-2.5-flash",
+    }
+    router = ModelRouter(cfg)
+    router._available_ollama_models = {"gemma3:latest", "mistral:latest"}
+    router._cache_time = time.time()
+
+    assert router.get_best_available("web_search_summary") == "gemma3:latest"
+    assert router.get_best_available("tool_parameter_extraction") == "gemma3:latest"
 
 
 def test_controller_v2_sets_llm_router():

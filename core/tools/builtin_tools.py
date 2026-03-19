@@ -154,7 +154,7 @@ async def log_event(content: str, category: str = "general") -> str:
     return f"Event logged: [{category}] {content}"
 
 
-def register_all_tools(router):
+def register_all_tools(router, llm=None, config=None) -> None:
     """Register all built-in tools with a ToolRouter instance."""
     # ── Core tools ─────────────────────────────────────────────────────────
     router.register("get_time", get_time)
@@ -220,9 +220,11 @@ def register_all_tools(router):
     # ── Web Research tools ─────────────────────────────────────────────────
     try:
         from core.tools.web_tools import (
+            configure_web_tools,
             web_search,
             web_scrape,
         )
+        configure_web_tools(config=config, llm=llm)
         router.register("web_search", web_search)
         router.register("web_scrape", web_scrape)
         logger.info("Web research tools registered")
@@ -230,5 +232,3 @@ def register_all_tools(router):
         logger.warning("Web research tools unavailable: %s", e)
 
     logger.info("Registered %d tools total: %s", len(router.registered_tools()), router.registered_tools())
-
-
