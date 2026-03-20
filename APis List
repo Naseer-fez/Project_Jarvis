@@ -1,0 +1,376 @@
+# Jarvis API and Credentials Setup Guide
+
+You do not need every API below.
+Jarvis is local-first, so you can run it with Ollama only and then add cloud providers or integrations one by one.
+
+## Step 1: Open the right files
+
+Jarvis loads secrets from `.env` when it starts.
+
+Use these files as your reference:
+
+- `.env.example`
+- `config/settings.env.template`
+
+If `.env` already exists, edit it.
+If it does not exist, create it based on those two template files.
+
+## Step 2: Set the minimum things first
+
+### 2.1 Create your dashboard token
+
+This is not from any website. You make it yourself.
+
+Add this to `.env`:
+
+```env
+JARVIS_DASHBOARD_TOKEN=replace_with_a_long_random_secret
+```
+
+### 2.2 Choose how Jarvis will run its LLM
+
+Option A: Local-first with Ollama
+
+1. Install Ollama from `https://ollama.com/`
+2. Start Ollama:
+
+```powershell
+ollama serve
+```
+
+3. Pull at least one model:
+
+```powershell
+ollama pull deepseek-r1:8b
+```
+
+Optional models mentioned by the repo:
+
+```powershell
+ollama pull mistral:7b
+ollama pull llava
+```
+
+Option B: Cloud fallback
+
+Add at least one cloud key. Recommended first key:
+
+- `GEMINI_API_KEY`
+
+Optional extra providers:
+
+- `GROQ_API_KEY`
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+
+## Step 3: Get each API or credential
+
+Only do the sections for the features you want to use.
+
+### 3.1 Gemini
+
+Use this if you want the main cloud fallback.
+
+1. Go to `https://aistudio.google.com/`
+2. Sign in with your Google account
+3. Create an API key
+4. Put it in `.env`
+
+```env
+GEMINI_API_KEY=your_key_here
+```
+
+### 3.2 OpenAI
+
+Use this only if you want OpenAI as an optional fallback provider.
+
+1. Go to `https://platform.openai.com/`
+2. Open the API keys section
+3. Create a new secret key
+4. Put it in `.env`
+
+```env
+OPENAI_API_KEY=your_key_here
+```
+
+### 3.3 Groq
+
+1. Go to `https://console.groq.com/`
+2. Create an API key
+3. Put it in `.env`
+
+```env
+GROQ_API_KEY=your_key_here
+```
+
+### 3.4 Anthropic
+
+1. Go to `https://console.anthropic.com/`
+2. Create an API key
+3. Put it in `.env`
+
+```env
+ANTHROPIC_API_KEY=your_key_here
+```
+
+### 3.5 Telegram
+
+Needed for Telegram messaging integration.
+
+1. Open Telegram
+2. Search for `@BotFather`
+3. Run `/newbot`
+4. Follow the prompts and copy the bot token
+5. Send at least one message to your bot
+6. Open this URL in your browser, replacing `<TOKEN>` with your real bot token:
+
+```text
+https://api.telegram.org/bot<TOKEN>/getUpdates
+```
+
+7. Find the `chat.id` value in the response
+8. Put both values in `.env`
+
+```env
+TELEGRAM_BOT_TOKEN=your_bot_token_here
+TELEGRAM_CHAT_ID=your_chat_id_here
+```
+
+### 3.6 Google Calendar and Gmail
+
+Needed for both the Calendar and Gmail integrations.
+
+You need:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+- `GOOGLE_REFRESH_TOKEN`
+
+Steps:
+
+1. Go to `https://console.cloud.google.com/`
+2. Create or select a Google Cloud project
+3. Enable these APIs:
+   Calendar API
+   Gmail API
+4. Configure the OAuth consent screen
+5. Create OAuth client credentials
+6. Copy the Client ID and Client Secret
+7. Use OAuth Playground to generate a refresh token:
+   `https://developers.google.com/oauthplayground/`
+8. In OAuth Playground settings, enable "Use your own OAuth credentials"
+9. Paste your Google Client ID and Client Secret there
+10. Request these scopes:
+    `https://www.googleapis.com/auth/calendar.events`
+    `https://www.googleapis.com/auth/gmail.readonly`
+    `https://www.googleapis.com/auth/gmail.send`
+    `https://www.googleapis.com/auth/gmail.modify`
+11. Authorize access
+12. Exchange the authorization code for tokens
+13. Copy the refresh token
+14. Put all three values in `.env`
+
+```env
+GOOGLE_CLIENT_ID=your_client_id_here
+GOOGLE_CLIENT_SECRET=your_client_secret_here
+GOOGLE_REFRESH_TOKEN=your_refresh_token_here
+```
+
+### 3.7 Notion
+
+1. Go to `https://www.notion.so/my-integrations`
+2. Create a new internal integration
+3. Copy the integration secret
+4. Share the pages or databases you want Jarvis to access with that integration
+5. Put the secret in `.env`
+
+```env
+NOTION_API_KEY=your_notion_secret_here
+```
+
+### 3.8 Spotify
+
+Needed for playback, search, and playlist tools.
+
+You need:
+
+- `SPOTIFY_CLIENT_ID`
+- `SPOTIFY_CLIENT_SECRET`
+- `SPOTIFY_REFRESH_TOKEN`
+
+Steps:
+
+1. Go to `https://developer.spotify.com/dashboard`
+2. Create an app
+3. Copy the Client ID and Client Secret
+4. Add a redirect URI such as:
+
+```text
+http://localhost:8888/callback
+```
+
+5. Run the Spotify Authorization Code flow to get a refresh token
+6. Approve these scopes if requested:
+   `user-read-playback-state`
+   `user-modify-playback-state`
+   `user-read-currently-playing`
+   `playlist-modify-public`
+   `playlist-modify-private`
+7. Copy the refresh token
+8. Put the values in `.env`
+
+```env
+SPOTIFY_CLIENT_ID=your_client_id_here
+SPOTIFY_CLIENT_SECRET=your_client_secret_here
+SPOTIFY_REFRESH_TOKEN=your_refresh_token_here
+```
+
+### 3.9 Twilio WhatsApp
+
+Needed for WhatsApp integration.
+
+1. Go to `https://console.twilio.com/`
+2. Create or sign in to your Twilio account
+3. Copy your Account SID
+4. Copy your Auth Token
+5. Set up WhatsApp Sandbox or an approved WhatsApp sender
+6. Put the values in `.env`
+
+```env
+TWILIO_ACCOUNT_SID=your_account_sid_here
+TWILIO_AUTH_TOKEN=your_auth_token_here
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+```
+
+If you are using the sandbox, the sender is usually the Twilio sandbox number.
+
+### 3.10 Picovoice Porcupine
+
+Needed only for wake-word voice mode.
+
+1. Go to `https://console.picovoice.ai/`
+2. Create an access key
+3. Put it in `.env`
+
+```env
+PORCUPINE_ACCESS_KEY=your_access_key_here
+```
+
+### 3.11 Tavily
+
+Needed if you want Tavily-backed web search.
+
+1. Go to `https://tavily.com/`
+2. Create an API key
+3. Put it in `.env`
+
+```env
+TAVILY_API_KEY=your_key_here
+```
+
+### 3.12 Weather API
+
+The codebase includes a weather integration that expects `WEATHER_API_KEY`.
+This key is not listed in the main templates, but the integration exists.
+
+1. Go to `https://openweathermap.org/api`
+2. Create an API key
+3. Add it to `.env`
+
+```env
+WEATHER_API_KEY=your_key_here
+```
+
+### 3.13 Email account credentials
+
+Needed for the email integration.
+
+These are mailbox credentials, not a separate API portal.
+
+1. Use the email account you want Jarvis to access
+2. Enable IMAP and SMTP for that provider
+3. If your provider requires it, create an app password
+4. Put the values in `.env`
+
+```env
+EMAIL_ADDRESS=you@example.com
+EMAIL_PASSWORD=your_password_or_app_password
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+IMAP_HOST=imap.gmail.com
+```
+
+If you use Gmail, an app password is usually safer than your main password.
+
+## Step 4: Turn cloud fallback on or off
+
+If you want cloud fallback enabled:
+
+```env
+CLOUD_LLM_FALLBACK_ENABLED=true
+```
+
+If you want Jarvis to stay local-only when possible, keep using Ollama and only add cloud keys if needed.
+
+## Step 5: Example `.env` starter block
+
+Use this as a small starter checklist:
+
+```env
+JARVIS_DASHBOARD_TOKEN=replace_with_a_long_random_secret
+
+# Recommended cloud fallback
+GEMINI_API_KEY=
+
+# Optional cloud providers
+GROQ_API_KEY=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
+
+# Optional integrations
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+NOTION_API_KEY=
+SPOTIFY_CLIENT_ID=
+SPOTIFY_CLIENT_SECRET=
+SPOTIFY_REFRESH_TOKEN=
+TWILIO_ACCOUNT_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+PORCUPINE_ACCESS_KEY=
+TAVILY_API_KEY=
+WEATHER_API_KEY=
+EMAIL_ADDRESS=
+EMAIL_PASSWORD=
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+IMAP_HOST=imap.gmail.com
+```
+
+## Step 6: Verify your setup
+
+1. Make sure `.env` is saved in the project root
+2. If using Ollama, run:
+
+```powershell
+ollama serve
+ollama list
+```
+
+3. Start Jarvis
+4. If an integration does not load, check:
+   the env vars are filled in
+   the optional Python package for that integration is installed
+
+## Quick summary
+
+Minimum practical setup:
+
+1. Set `JARVIS_DASHBOARD_TOKEN`
+2. Install and run Ollama
+3. Optionally add `GEMINI_API_KEY`
+
+Then add only the integration credentials you actually plan to use.
