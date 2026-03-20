@@ -3,12 +3,9 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import os
-import sys
-import traceback
 
-import main as jarvis_main
+import main_connector as jarvis_main
 
 ExitCode = jarvis_main.ExitCode
 PROJECT_ROOT = jarvis_main.PROJECT_ROOT
@@ -26,7 +23,7 @@ def apply_cli_overrides(
     config["voice"]["enabled"] = "false"
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Jarvis text-only entry point",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -59,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         help="Override log level (also reads JARVIS_LOG_LEVEL env var)",
     )
     parser.add_argument("--session-name", help="Optional session name for this run")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 async def async_main(args: argparse.Namespace) -> int:
@@ -70,18 +67,14 @@ async def async_main(args: argparse.Namespace) -> int:
     return await jarvis_main.async_main(args)
 
 
-def main() -> None:
-    args = parse_args()
-    try:
-        exit_code = asyncio.run(async_main(args))
-    except KeyboardInterrupt:
-        print("\nInterrupted - goodbye.", file=sys.stderr)
-        exit_code = ExitCode.OK
-    except Exception:
-        _bootstrap.critical("Unhandled top-level exception:\n%s", traceback.format_exc())
-        exit_code = ExitCode.GENERIC_ERROR
-
-    sys.exit(exit_code)
+def main(argv: list[str] | None = None) -> None:
+    raise SystemExit(
+        jarvis_main.run_entrypoint(
+            parse_args_fn=parse_args,
+            async_entry_fn=async_main,
+            argv=argv,
+        )
+    )
 
 
 if __name__ == "__main__":

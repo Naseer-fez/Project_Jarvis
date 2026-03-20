@@ -50,6 +50,8 @@ This repository has legacy modules from earlier phases, but the current runtime 
 - Google Calendar
 - Notion
 - Spotify
+- Home Assistant
+- GitHub
 - IMAP/SMTP email
 - Twilio WhatsApp
 
@@ -131,22 +133,22 @@ ollama pull mistral:7b
 ollama pull llava
 ```
 
-### Optional packages for extended features
+### Optional install profiles
 
-`requirements.txt` installs the main runtime, but several optional features depend on additional packages:
+`requirements.txt` now installs the lean core runtime only. Add the profiles you need:
 
 ```powershell
-pip install psutil icalendar python-dateutil twilio google-genai pvporcupine colorama
+pip install -r requirements.txt
+pip install -r requirements/integrations.txt   # Telegram + GitHub SDKs
+pip install -r requirements/voice.txt          # STT / TTS / wake word
+pip install -r requirements/dev.txt            # tests + lint + typing
 ```
 
-Install only what you need:
+Or install everything for a local workstation:
 
-- `psutil` for proactive resource monitoring
-- `icalendar` and `python-dateutil` for richer local calendar support
-- `twilio` for WhatsApp integration
-- `google-genai` for Gemini SDK-backed execution paths
-- `pvporcupine` for wake-word support
-- `colorama` for improved health-check terminal output
+```powershell
+pip install -r requirements/full.txt
+```
 
 ## Installation
 
@@ -159,6 +161,14 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 pip install -r requirements.txt
+```
+
+For optional features, add one or more of:
+
+```powershell
+pip install -r requirements/integrations.txt
+pip install -r requirements/voice.txt
+pip install -r requirements/dev.txt
 ```
 
 ### 2. Configure environment secrets
@@ -332,6 +342,8 @@ Goals are tracked through the goal manager and checked by a background scheduler
 | Google Calendar / Gmail | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` |
 | Notion | `NOTION_API_KEY` |
 | Spotify | `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`, `SPOTIFY_REFRESH_TOKEN` |
+| Home Assistant | `HOME_ASSISTANT_URL`, `HOME_ASSISTANT_TOKEN` |
+| GitHub | `GITHUB_TOKEN`, `GITHUB_DEFAULT_REPO` |
 | Email | `EMAIL_ADDRESS`, `EMAIL_PASSWORD`, `SMTP_HOST`, `SMTP_PORT`, `IMAP_HOST` |
 | WhatsApp | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM` |
 
@@ -348,6 +360,8 @@ Integrations are auto-discovered from `integrations/clients/` and loaded only if
 | Google Calendar | `create_event`, `list_events`, `delete_event`, `find_free_slot` | Uses Google OAuth refresh token |
 | Notion | `create_page`, `query_database`, `append_block`, `get_page` | Requires Notion internal integration token |
 | Spotify | `play_track`, `pause`, `search_track`, `get_current_track`, `create_playlist` | Uses Spotify refresh token |
+| Home Assistant | `get_entity_state`, `turn_on_entity`, `turn_off_entity`, `toggle_entity`, `set_thermostat`, `call_service`, `list_entities` | Uses Home Assistant REST API token |
+| GitHub | `list_open_issues`, `create_issue`, `close_issue`, `list_open_prs`, `get_pr_diff`, `create_gist`, `search_code` | Uses a personal access token and optional default repo |
 | Email | `send_email`, `read_emails`, `search_emails` | IMAP/SMTP based |
 | WhatsApp | `send_whatsapp` | Uses Twilio |
 

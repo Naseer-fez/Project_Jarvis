@@ -1,3 +1,10 @@
-from core.controller_v2 import Controller, JarvisControllerV2
+from importlib import import_module
 
 __all__ = ["JarvisControllerV2", "Controller"]
+
+
+def __getattr__(name: str):
+    if name in __all__:
+        module = import_module("core.controller_v2")
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

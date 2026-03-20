@@ -49,6 +49,28 @@ def test_unknown_tool_defaults_to_high(evaluator):
     assert "some_totally_unknown_tool_xyz" in result.high_risk_actions
 
 
+def test_home_assistant_read_tools_are_known_low_risk(evaluator):
+    result = evaluator.evaluate(["get_entity_state", "list_entities"])
+    assert result.level == RiskLevel.LOW
+
+
+def test_home_assistant_mutating_tools_require_confirmation(evaluator):
+    result = evaluator.evaluate(["turn_on_entity", "call_service"])
+    assert result.level == RiskLevel.CONFIRM
+    assert result.requires_confirmation is True
+
+
+def test_github_read_tools_are_known_low_risk(evaluator):
+    result = evaluator.evaluate(["list_open_issues", "list_open_prs", "get_pr_diff", "search_code"])
+    assert result.level == RiskLevel.LOW
+
+
+def test_github_write_tools_require_confirmation(evaluator):
+    result = evaluator.evaluate(["create_issue", "close_issue", "create_gist"])
+    assert result.level == RiskLevel.CONFIRM
+    assert result.requires_confirmation is True
+
+
 # ── evaluate_plan() ───────────────────────────────────────────────────────────
 
 def test_evaluate_plan_returns_highest_risk(evaluator):

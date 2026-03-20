@@ -108,6 +108,14 @@ class RiskEvaluator:
             "append_block",
             "play_track",
             "create_playlist",
+            "turn_on_entity",
+            "turn_off_entity",
+            "toggle_entity",
+            "set_thermostat",
+            "call_service",
+            "create_issue",
+            "close_issue",
+            "create_gist",
         }
     )
 
@@ -187,6 +195,11 @@ class RiskEvaluator:
             "pause",
             "search_track",
             "get_current_track",
+            "get_entity_state",
+            "list_entities",
+            "list_open_issues",
+            "list_open_prs",
+            "get_pr_diff",
         }
     )
 

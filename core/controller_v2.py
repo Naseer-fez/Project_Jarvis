@@ -6,10 +6,8 @@ import asyncio
 import configparser
 import json
 import logging
-import re
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from core.agent.agent_loop import AgentLoopEngine
@@ -18,6 +16,12 @@ from core.agentic.scheduler import Scheduler
 from core.autonomy.autonomy_governor import AutonomyGovernor
 from core.autonomy.goal_manager import GoalManager
 from core.autonomy.risk_evaluator import RiskEvaluator
+from core.controller.intents import (
+    extract_goal_delay_seconds,
+    handle_goal_intent,
+    handle_preference_intent,
+)
+from core.controller.services import build_controller_services
 from core.desktop_actions import handle_desktop_command
 from core.llm.client import LLMClientV2
 from core.llm.model_router import ModelRouter
@@ -49,121 +53,58 @@ class JarvisControllerV2:
             else configparser.ConfigParser()
         )
         self.voice_enabled = bool(voice)
-
-        if isinstance(config, configparser.ConfigParser):
-            db_path = config.get(
-                "memory",
-                "db_path",
-                fallback=config.get("memory", "sqlite_file", fallback=db_path),
-            )
-            chroma_path = config.get(
-                "memory",
-                "chroma_path",
-                fallback=config.get("memory", "chroma_dir", fallback=chroma_path),
-            )
-            model_name = config.get(
-                "models",
-                "chat_model",
-                fallback=config.get(
-                    "llm",
-                    "model",
-                    fallback=config.get("ollama", "planner_model", fallback=model_name),
-                ),
-            )
-            embedding_model = config.get(
-                "memory",
-                "embedding_model",
-                fallback=embedding_model,
-            )
-
         self.session_id = uuid.uuid4().hex[:8]
-        self.memory = HybridMemory(
-            db_path,
+
+        settings, services = build_controller_services(
+            self.config,
+            db_path=db_path,
             chroma_path=chroma_path,
-            model_name=embedding_model,
+            model_name=model_name,
+            embedding_model=embedding_model,
+            memory_cls=HybridMemory,
+            model_router_cls=ModelRouter,
+            profile_cls=UserProfileEngine,
+            llm_cls=LLMClientV2,
+            synthesizer_cls=ProfileSynthesizer,
+            state_machine_cls=StateMachine,
+            task_planner_cls=TaskPlanner,
+            tool_router_cls=ToolRouter,
+            risk_evaluator_cls=RiskEvaluator,
+            autonomy_governor_cls=AutonomyGovernor,
+            agent_loop_cls=AgentLoopEngine,
+            goal_manager_cls=GoalManager,
+            scheduler_cls=Scheduler,
+            notifier_cls=NotificationManager,
+            monitor_cls=BackgroundMonitor,
+            register_tools=register_all_tools,
         )
-        self.model_router = ModelRouter(config=self.config)
-        self.profile = UserProfileEngine()
 
-        base_url = "http://localhost:11434"
-        if (
-            isinstance(self.config, configparser.ConfigParser)
-            and self.config.has_section("ollama")
-        ):
-            base_url = self.config.get("ollama", "base_url", fallback=base_url)
+        self.memory = services.memory
+        self.model_router = services.model_router
+        self.profile = services.profile
+        self.llm = services.llm
+        self.synthesizer = services.synthesizer
+        self.state_machine = services.state_machine
+        self.task_planner = services.task_planner
+        self.tool_router = services.tool_router
+        self.risk_evaluator = services.risk_evaluator
+        self.autonomy_governor = services.autonomy_governor
+        self.agent_loop = services.agent_loop
+        self.goal_manager = services.goal_manager
+        self.scheduler = services.scheduler
+        self.notifier = services.notifier
+        self.monitor = services.monitor
 
-        self.llm = LLMClientV2(
-            hybrid_memory=self.memory,
-            model=self.model_router.route("chat"),
-            profile=self.profile,
-            base_url=base_url,
-        )
-        self.llm.set_router(self.model_router)
-        enable_context_titles = True
-        if isinstance(self.config, configparser.ConfigParser):
-            enable_context_titles = self.config.getboolean(
-                "memory",
-                "llm_context_titles",
-                fallback=True,
-            )
-        if hasattr(self.memory, "set_llm"):
-            self.memory.set_llm(
-                self.llm,
-                enable_context_titles=enable_context_titles,
-            )
-        self.synthesizer = ProfileSynthesizer(self.llm)
         self._conversation_buffer: list[str] = []
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
         self._on_state_update = lambda **_: None
-        try:
-            setattr(self.llm, "profile", self.profile)
-        except Exception:  # noqa: BLE001
-            pass
         self.exchanges = 0
-
-        self.state_machine = StateMachine()
-        self.task_planner = TaskPlanner(self.config)
-        self.tool_router = ToolRouter()
-        register_all_tools(
-            self.tool_router,
-            llm=self.llm,
-            config=self.config,
-        )
-        self.risk_evaluator = RiskEvaluator(self.config)
-        self.autonomy_governor = AutonomyGovernor(level=3)
-        self.agent_loop = AgentLoopEngine(
-            state_machine=self.state_machine,
-            task_planner=self.task_planner,
-            tool_router=self.tool_router,
-            risk_evaluator=self.risk_evaluator,
-            autonomy_governor=self.autonomy_governor,
-            model=model_name,
-            ollama_url=base_url,
-            llm=self.llm,
-        )
-
         self.voice_loop = None
-        self.goal_manager = GoalManager()
-        self.scheduler = Scheduler()
         self._goal_check_task: asyncio.Task | None = None
-        self._goal_check_interval_seconds = 300
-        if isinstance(config, configparser.ConfigParser):
-            minutes = config.getint(
-                "proactive",
-                "goal_check_interval_minutes",
-                fallback=5,
-            )
-            self._goal_check_interval_seconds = max(1, minutes) * 60
-        self._goals_file = Path(
-            config.get("memory", "goals_file", fallback="memory/goals.json")
-            if isinstance(config, configparser.ConfigParser)
-            else "memory/goals.json"
-        )
+        self._goal_check_interval_seconds = settings.goal_check_interval_seconds
+        self._goals_file = settings.goals_file
         self._load_goal_state()
-        self.notifier = NotificationManager()
-        self.monitor = BackgroundMonitor(self.notifier, self.config)
 
-        self.voice_enabled = voice
         self._voice_layer = None
         if voice:
             try:
@@ -192,90 +133,29 @@ class JarvisControllerV2:
         }
 
     async def _handle_goal_intent(self, text: str, user_input: str) -> str | None:
-        if any(
-            kw in text
-            for kw in (
-                "remind me",
-                "set goal",
-                "schedule",
-                "don't forget",
-                "remember to",
-            )
-        ):
-            description = user_input
-            for kw in (
-                "remind me to",
-                "set goal",
-                "schedule",
-                "don't forget to",
-                "remember to",
-            ):
-                description = re.sub(
-                    re.escape(kw),
-                    "",
-                    description,
-                    flags=re.IGNORECASE,
-                ).strip()
-            description = description.strip(" .?!")
-            if description:
-                goal_id = self.goal_manager.create_goal(description=description)
-                try:
-                    self.goal_manager.start_goal(goal_id)
-                except (ValueError, KeyError) as exc:
-                    logger.warning("Failed to start goal %r: %s", goal_id, exc)
-                delay_seconds = self._extract_goal_delay_seconds(user_input)
-                self.scheduler.enqueue(
-                    mission_id=goal_id,
-                    goal_id=goal_id,
-                    delay_seconds=delay_seconds,
-                    description=description,
-                )
-                self._persist_goal_state()
-                self._dashboard_update(active_goals=len(self.goal_manager.active_goals()))
-                return f"Goal set: {description}"
-
-        if any(
-            kw in text
-            for kw in ("what are my goals", "show goals", "list goals", "my goals")
-        ):
-            goals = self.goal_manager.active_goals()
-            if not goals:
-                return "No active goals."
-            lines = [f"- [{g.priority}] {g.description}" for g in goals]
-            return "Active goals:\n" + "\n".join(lines)
-
-        return None
+        result = handle_goal_intent(
+            text,
+            user_input,
+            goal_manager=self.goal_manager,
+            scheduler=self.scheduler,
+        )
+        if result is None:
+            return None
+        if result.mutated:
+            self._persist_goal_state()
+            self._dashboard_update(active_goals=len(self.goal_manager.active_goals()))
+        return result.response
 
     async def _handle_preference_intent(
         self,
         text: str,
         user_input: str,
     ) -> str | None:
-        if text.startswith("remember i like "):
-            value = user_input[16:].strip()
-            if value:
-                self.memory.store_preference(f"likes_{value[:12]}", value)
-                return f"I will remember you like {value}."
-
-        if text.startswith("my name is "):
-            value = user_input[11:].strip()
-            if value:
-                self.memory.store_preference("name", value)
-                return f"I will remember your name is {value}."
-
-        if text.startswith("i prefer "):
-            value = user_input[9:].strip()
-            if value:
-                self.memory.store_preference(f"prefer_{value[:12]}", value)
-                return f"I will remember you prefer {value}."
-
-        if text.startswith("i work in "):
-            value = user_input[10:].strip()
-            if value:
-                self.memory.store_preference("work", value)
-                return f"I will remember you work in {value}."
-
-        return None
+        return handle_preference_intent(
+            text,
+            user_input,
+            memory=self.memory,
+        )
 
     async def _dispatch_llm(self, text: str, trace_id: str) -> str:
         self.memory.build_context_block(text)
@@ -520,24 +400,7 @@ class JarvisControllerV2:
         logger.warning("No running loop available; skipped profile synthesis task.")
 
     def _extract_goal_delay_seconds(self, user_input: str) -> float:
-        lowered = user_input.lower()
-        if "tomorrow" in lowered:
-            return 24 * 60 * 60
-        match = re.search(
-            r"\bin\s+(\d+)\s+(minute|minutes|hour|hours|day|days)\b",
-            lowered,
-        )
-        if not match:
-            return 0.0
-        value = int(match.group(1))
-        unit = match.group(2)
-        if unit.startswith("minute"):
-            return float(value * 60)
-        if unit.startswith("hour"):
-            return float(value * 60 * 60)
-        if unit.startswith("day"):
-            return float(value * 24 * 60 * 60)
-        return 0.0
+        return extract_goal_delay_seconds(user_input)
 
     def _dashboard_update(self, **kwargs: Any) -> None:
         try:

@@ -87,8 +87,8 @@ python -m venv jarvis_env
 # Activate (PowerShell)
 .\jarvis_env\Scripts\Activate.ps1
 
-# Install dependencies
-pip install requests rich pydantic python-dotenv numpy chromadb
+# Install core dependencies
+pip install -r requirements.txt
 ```
 
 ### 4. VERIFY WHISPER CACHE LOCATION

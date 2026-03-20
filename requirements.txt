@@ -1,61 +1,8 @@
-# =============================
-# Project Jarvis – ALL-IN-ONE
-# Windows Safe | NO MSVC
-# =============================
+# Default install: core runtime only.
+# Optional feature groups:
+#   pip install -r requirements/full.txt
+#   pip install -r requirements/integrations.txt
+#   pip install -r requirements/voice.txt
+#   pip install -r requirements/dev.txt
 
-# ---- Core runtime ----
-pydantic
-fastapi
-uvicorn
-requests
-aiohttp
-python-dotenv
-rich
-
-# ---- Dashboard ----
-jinja2
-colorama
-
-# ---- LLM + Memory ----
-ollama
-google-genai
-chromadb
-sentence-transformers
-numpy
-
-# ---- Web Research ----
-ddgs
-beautifulsoup4
-lxml
-
-# ---- Logging / Audit ----
-cryptography
-
-# ---- Utility (direct imports) ----
-overrides
-typing_extensions
-
-# ---- Testing ----
-pytest
-pytest-asyncio
-pytest-mock
-pytest-timeout
-
-# ---- Dev / Quality ----
-mypy
-black
-ruff
-types-requests
-types-setuptools
-
-# ---- Voice (NO native build) ----
-sounddevice
-soundfile
-whispercpp
-
-# ---- Automation integrations (Path B) ----
-python-telegram-bot>=20.0
-google-auth
-google-auth-oauthlib
-notion-client
-spotipy
+-r requirements/base.txt

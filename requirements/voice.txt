@@ -1,0 +1,10 @@
+-r base.txt
+
+# Optional voice stack
+sounddevice
+faster-whisper
+SpeechRecognition
+pyttsx3
+edge-tts
+pvporcupine
+pvrecorder
