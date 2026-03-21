@@ -4,17 +4,18 @@ All calls are logged before execution. Sandbox enforcement is applied.
 """
 
 import asyncio
+import inspect
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Coroutine, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger("Jarvis.ToolRouter")
 
 TOOL_TIMEOUT_SECONDS = 15
 MAX_TOOL_CALLS_PER_GOAL = 10
 
-ToolHandler = Callable[..., Coroutine[Any, Any, Any]]
+ToolHandler = Callable[..., Any]
 
 
 @dataclass
@@ -82,19 +83,30 @@ class ToolRouter:
         start = time.monotonic()
 
         try:
-            result = await asyncio.wait_for(
-                handler(**arguments),
-                timeout=TOOL_TIMEOUT_SECONDS,
-            )
+            if inspect.iscoroutinefunction(handler):
+                result = await asyncio.wait_for(
+                    handler(**arguments),
+                    timeout=TOOL_TIMEOUT_SECONDS,
+                )
+            else:
+                result = await asyncio.wait_for(
+                    asyncio.to_thread(handler, **arguments),
+                    timeout=TOOL_TIMEOUT_SECONDS,
+                )
             duration = time.monotonic() - start
+            success, output_summary, error_message = _normalize_tool_result(result)
             obs = ToolObservation(
                 tool_name=tool_name,
                 arguments=arguments,
-                execution_status="success",
-                output_summary=str(result)[:1000],
+                execution_status="success" if success else "failure",
+                output_summary=output_summary[:1000],
+                error_message=(error_message or None),
                 duration_seconds=duration,
             )
-            logger.info(f"[TOOL OK] {tool_name} → {obs.output_summary[:120]}")
+            if success:
+                logger.info(f"[TOOL OK] {tool_name} → {obs.output_summary[:120]}")
+            else:
+                logger.warning(f"[TOOL FAIL] {tool_name} → {obs.error_message}")
         except asyncio.TimeoutError:
             duration = time.monotonic() - start
             obs = ToolObservation(
@@ -127,4 +139,47 @@ class ToolRouter:
     def clear_observations(self):
         self._observations.clear()
 
+
+def _normalize_tool_result(result: Any) -> tuple[bool, str, str]:
+    if isinstance(result, dict) and "success" in result:
+        success = bool(result.get("success", False))
+        output = _first_non_empty(
+            result.get("output"),
+            result.get("data"),
+            result.get("metadata"),
+        )
+        error = str(result.get("error", "") or "")
+        if success:
+            return True, output or "Tool completed successfully.", ""
+        return False, output, error or "Tool returned an error."
+
+    success_attr = getattr(result, "success", None)
+    if success_attr is None:
+        text = _stringify_payload(result)
+        return True, text or "Tool completed successfully.", ""
+
+    success = bool(success_attr)
+    output = _first_non_empty(
+        getattr(result, "output", None),
+        getattr(result, "data", None),
+        getattr(result, "metadata", None),
+    )
+    error = str(getattr(result, "error", "") or "")
+    if success:
+        return True, output or "Tool completed successfully.", ""
+    return False, output, error or _stringify_payload(result) or "Tool returned an error."
+
+
+def _first_non_empty(*values: Any) -> str:
+    for value in values:
+        text = _stringify_payload(value)
+        if text:
+            return text
+    return ""
+
+
+def _stringify_payload(value: Any) -> str:
+    if value in (None, "", {}, []):
+        return ""
+    return str(value)
 

@@ -264,6 +264,20 @@ SYSTEM_TOOL_SCHEMA: dict[str, Any] = {
     ]
 }
 
+_GUI_AUTOMATION_TOOL_NAMES = {
+    "click",
+    "double_click",
+    "right_click",
+    "type_text",
+    "hotkey",
+    "move_mouse",
+    "mouse_click",
+    "keyboard_type",
+    "take_screenshot",
+}
+_APP_LAUNCH_TOOL_NAMES = {"launch_application"}
+_WEB_TOOL_NAMES = {"web_search", "web_scrape"}
+
 _SYSTEM_PROMPT = """You are Jarvis, a local AI assistant planner. Your only job is to return valid JSON.
 
 Rules:
@@ -328,8 +342,32 @@ def _build_tool_schema() -> dict[str, Any]:
     return merged
 
 
-def _build_tools_prompt_block() -> str:
-    schema = _build_tool_schema()
+def _filter_tool_schema(
+    schema: dict[str, Any],
+    *,
+    allow_gui_automation: bool,
+    allow_app_launch: bool,
+    allow_web_search: bool,
+) -> dict[str, Any]:
+    filtered_tools: list[dict[str, Any]] = []
+    for tool in schema.get("tools", []):
+        if not isinstance(tool, dict):
+            continue
+        name = str(tool.get("name", "")).strip()
+        if not name:
+            continue
+        if not allow_gui_automation and name in _GUI_AUTOMATION_TOOL_NAMES:
+            continue
+        if not allow_app_launch and name in _APP_LAUNCH_TOOL_NAMES:
+            continue
+        if not allow_web_search and name in _WEB_TOOL_NAMES:
+            continue
+        filtered_tools.append(dict(tool))
+    return {"tools": filtered_tools}
+
+
+def _build_tools_prompt_block(schema: dict[str, Any] | None = None) -> str:
+    schema = schema or _build_tool_schema()
     return (
         "\n## Available System Tools\n"
         "Use only these tools when planning executable steps.\n\n"
@@ -361,9 +399,47 @@ def _extract_json(text: str) -> str:
 
 class TaskPlanner:
     def __init__(self, config) -> None:
+        self._config = config
         self._base_url = config.get("ollama", "base_url", fallback="http://localhost:11434")
         self._model = config.get("ollama", "planner_model", fallback="deepseek-r1:8b")
         self._timeout = int(config.get("ollama", "request_timeout_s", fallback="120"))
+
+    def _tool_schema(self) -> dict[str, Any]:
+        allow_gui_automation = False
+        allow_app_launch = True
+        allow_web_search = True
+        if self._config is not None:
+            try:
+                allow_gui_automation = self._config.getboolean(
+                    "execution",
+                    "allow_gui_automation",
+                    fallback=False,
+                )
+            except Exception:
+                allow_gui_automation = False
+            try:
+                allow_app_launch = self._config.getboolean(
+                    "execution",
+                    "allow_app_launch",
+                    fallback=True,
+                )
+            except Exception:
+                allow_app_launch = True
+            try:
+                allow_web_search = self._config.getboolean(
+                    "execution",
+                    "allow_web_search",
+                    fallback=True,
+                )
+            except Exception:
+                allow_web_search = True
+
+        return _filter_tool_schema(
+            _build_tool_schema(),
+            allow_gui_automation=allow_gui_automation,
+            allow_app_launch=allow_app_launch,
+            allow_web_search=allow_web_search,
+        )
 
     def plan(self, intent: str, context: str = "") -> dict[str, Any]:
         if not intent.strip():
@@ -391,7 +467,7 @@ class TaskPlanner:
             {
                 "model": self._model,
                 "prompt": prompt,
-                "system": _SYSTEM_PROMPT + _build_tools_prompt_block(),
+                "system": _SYSTEM_PROMPT + _build_tools_prompt_block(self._tool_schema()),
                 "stream": False,
                 "options": {"temperature": 0.1, "num_predict": 1024},
             }

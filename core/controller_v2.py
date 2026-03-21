@@ -36,6 +36,35 @@ from core.tools.tool_router import ToolRouter
 
 logger = logging.getLogger(__name__)
 
+_DESKTOP_CONTROL_KEYWORDS = (
+    "mouse",
+    "cursor",
+    "desktop",
+    "screen",
+    "keyboard",
+    "hotkey",
+    "click",
+)
+_AGENTIC_KEYWORDS = (
+    "search",
+    "look up",
+    "find",
+    "check",
+    "scrape",
+    "get",
+    "download",
+    "fetch",
+    "read",
+    "analyze",
+    "mouse",
+    "cursor",
+    "desktop",
+    "screen",
+    "keyboard",
+    "hotkey",
+    "click",
+)
+
 
 class JarvisControllerV2:
     def __init__(
@@ -54,6 +83,11 @@ class JarvisControllerV2:
         )
         self.voice_enabled = bool(voice)
         self.session_id = uuid.uuid4().hex[:8]
+        self._gui_automation_enabled = self.config.getboolean(
+            "execution",
+            "allow_gui_automation",
+            fallback=False,
+        )
 
         settings, services = build_controller_services(
             self.config,
@@ -189,6 +223,16 @@ class JarvisControllerV2:
         self.memory.store_conversation(text, response, self.session_id)
         return response
 
+    def _looks_like_desktop_control_request(self, lowered: str) -> bool:
+        return any(keyword in lowered for keyword in _DESKTOP_CONTROL_KEYWORDS)
+
+    def _desktop_control_disabled_message(self) -> str:
+        return (
+            "Desktop control is disabled. Set [execution] allow_gui_automation = true "
+            "in config/jarvis.ini, install the desktop extras with "
+            "'pip install -r requirements/desktop.txt', then restart Jarvis."
+        )
+
     async def process(self, user_input: str, trace_id: str | None = None) -> str:
         if not trace_id:
             trace_id = uuid.uuid4().hex[:8]
@@ -241,20 +285,13 @@ class JarvisControllerV2:
         if desktop_res := await handle_desktop_command(text):
             return _respond(desktop_res)
 
-        agent_keywords = [
-            "search",
-            "look up",
-            "find",
-            "check",
-            "scrape",
-            "get",
-            "download",
-            "fetch",
-            "read",
-            "click",
-            "analyze",
-        ]
-        if len(text.split()) > 2 and any(kw in lowered for kw in agent_keywords):
+        if (
+            self._looks_like_desktop_control_request(lowered)
+            and not self._gui_automation_enabled
+        ):
+            return _respond(self._desktop_control_disabled_message())
+
+        if len(text.split()) > 2 and any(kw in lowered for kw in _AGENTIC_KEYWORDS):
             self._dashboard_update(state="PLANNING", last_input=user_input)
             plan = await asyncio.to_thread(self.task_planner.plan, text)
             if plan and plan.get("tools_required"):

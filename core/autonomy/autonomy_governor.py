@@ -12,8 +12,79 @@ from enum import IntEnum
 
 logger = logging.getLogger("Jarvis.AutonomyGovernor")
 
-READ_ONLY_TOOLS = {"get_time", "get_system_stats", "list_directory", "read_file", "search_memory"}
-WRITE_TOOLS = {"write_file_safe", "log_event"}
+READ_ONLY_TOOLS = {
+    "get_time",
+    "get_system_stats",
+    "list_directory",
+    "read_file",
+    "search_memory",
+    "capture_screen",
+    "capture_region",
+    "find_text_on_screen",
+    "describe_screen",
+    "get_active_window",
+    "web_search",
+    "web_scrape",
+    "list_hardware_devices",
+    "ping_device",
+    "read_sensor",
+    "take_screenshot",
+    "read_emails",
+    "search_emails",
+    "get_current_weather",
+    "get_updates",
+    "list_events",
+    "find_free_slot",
+    "list_unread",
+    "summarize_unread",
+    "query_database",
+    "get_page",
+    "pause",
+    "search_track",
+    "get_current_track",
+    "get_entity_state",
+    "list_entities",
+    "list_open_issues",
+    "list_open_prs",
+    "get_pr_diff",
+}
+WRITE_TOOLS = {
+    "write_file",
+    "write_file_safe",
+    "delete_file",
+    "log_event",
+    "launch_application",
+    "execute_shell",
+    "click",
+    "double_click",
+    "right_click",
+    "type_text",
+    "hotkey",
+    "move_mouse",
+    "mouse_click",
+    "keyboard_type",
+    "send_hardware_command",
+    "send_email",
+    "send_whatsapp",
+    "add_event",
+    "send_telegram",
+    "create_event",
+    "delete_event",
+    "send_gmail",
+    "mark_as_read",
+    "create_page",
+    "append_block",
+    "play_track",
+    "create_playlist",
+    "turn_on_entity",
+    "turn_off_entity",
+    "toggle_entity",
+    "set_thermostat",
+    "call_service",
+    "create_issue",
+    "close_issue",
+    "create_gist",
+}
 
 
 class AutonomyLevel(IntEnum):
@@ -68,9 +139,7 @@ class AutonomyGovernor:
         descriptions = {
             0: "Chat only — no tool execution.",
             1: "Suggest only — describes actions but never runs them.",
-            2: "Read-only — can query system/files/memory automatically.",
-            3: "Write with confirmation — can modify files/memory after your approval.",
+            2: "Read-only — can inspect files, web, screen, and status automatically.",
+            3: "Write with confirmation — can change files, apps, and desktop state after your approval.",
         }
         return f"LEVEL_{self.level}: {descriptions[self.level]}"
-
-

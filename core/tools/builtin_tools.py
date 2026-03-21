@@ -156,11 +156,42 @@ async def log_event(content: str, category: str = "general") -> str:
 
 def register_all_tools(router, llm=None, config=None) -> None:
     """Register all built-in tools with a ToolRouter instance."""
+    allow_gui_automation = False
+    allow_app_launch = True
+    if config is not None:
+        try:
+            allow_gui_automation = config.getboolean(
+                "execution",
+                "allow_gui_automation",
+                fallback=False,
+            )
+        except Exception:
+            allow_gui_automation = False
+        try:
+            allow_app_launch = config.getboolean(
+                "execution",
+                "allow_app_launch",
+                fallback=True,
+            )
+        except Exception:
+            allow_app_launch = True
+
+    from core.tools.system_automation import (
+        async_delete_file,
+        async_execute_shell,
+        async_launch_application,
+        async_write_file,
+    )
     # ── Core tools ─────────────────────────────────────────────────────────
     router.register("get_time", get_time)
     router.register("get_system_stats", get_system_stats)
     router.register("list_directory", list_directory)
     router.register("read_file", read_file)
+    router.register("write_file", async_write_file)
+    router.register("delete_file", async_delete_file)
+    if allow_app_launch:
+        router.register("launch_application", async_launch_application)
+    router.register("execute_shell", async_execute_shell)
     router.register("write_file_safe", write_file_safe)
     router.register("search_memory", search_memory)
     router.register("log_event", log_event)
@@ -189,33 +220,36 @@ def register_all_tools(router, llm=None, config=None) -> None:
             find_text_on_screen,
             describe_screen,
         )
+        from core.tools.gui_control import get_active_window
         router.register("capture_screen", capture_screen)
         router.register("capture_region", capture_region)
         router.register("find_text_on_screen", find_text_on_screen)
         router.register("describe_screen", describe_screen)
+        router.register("get_active_window", get_active_window)
         logger.info("Screen tools registered (Session 7)")
     except Exception as e:
         logger.warning("Screen tools unavailable: %s", e)
 
     # ── GUI control tools (Session 7) ──────────────────────────────────────
-    try:
-        from core.tools.gui_control import (
-            click,
-            double_click,
-            right_click,
-            type_text,
-            hotkey,
-            get_active_window,
-        )
-        router.register("click", click)
-        router.register("double_click", double_click)
-        router.register("right_click", right_click)
-        router.register("type_text", type_text)
-        router.register("hotkey", hotkey)
-        router.register("get_active_window", get_active_window)
-        logger.info("GUI control tools registered (Session 7)")
-    except Exception as e:
-        logger.warning("GUI control tools unavailable: %s", e)
+    if allow_gui_automation:
+        try:
+            from core.tools.gui_control import (
+                click,
+                double_click,
+                right_click,
+                type_text,
+                hotkey,
+            )
+            router.register("click", click)
+            router.register("double_click", double_click)
+            router.register("right_click", right_click)
+            router.register("type_text", type_text)
+            router.register("hotkey", hotkey)
+            logger.info("GUI control tools registered (Session 7)")
+        except Exception as e:
+            logger.warning("GUI control tools unavailable: %s", e)
+    else:
+        logger.info("GUI control tools skipped because allow_gui_automation=false")
 
     # ── Web Research tools ─────────────────────────────────────────────────
     try:

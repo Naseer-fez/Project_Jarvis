@@ -141,6 +141,7 @@ ollama pull llava
 pip install -r requirements.txt
 pip install -r requirements/integrations.txt   # Telegram + GitHub SDKs
 pip install -r requirements/voice.txt          # STT / TTS / wake word
+pip install -r requirements/desktop.txt        # screen + mouse + keyboard control
 pip install -r requirements/dev.txt            # tests + lint + typing
 ```
 
@@ -168,6 +169,7 @@ For optional features, add one or more of:
 ```powershell
 pip install -r requirements/integrations.txt
 pip install -r requirements/voice.txt
+pip install -r requirements/desktop.txt
 pip install -r requirements/dev.txt
 ```
 
@@ -283,6 +285,27 @@ Jarvis accepts both explicit commands and natural-language inputs:
 - `i prefer concise answers`
 - `remind me to review the deployment checklist tomorrow`
 - `show goals`
+
+### Desktop automation
+
+Jarvis can inspect the screen and drive the mouse and keyboard, but this path is opt-in.
+
+1. Install the desktop extras:
+
+```powershell
+pip install -r requirements/desktop.txt
+```
+
+2. Enable desktop control in `config/jarvis.ini`:
+
+```ini
+[execution]
+allow_gui_automation = true
+```
+
+3. Restart Jarvis.
+
+After that, requests like `open Notepad and click in the editor` or `look at the screen and click the Continue button` can go through the agent loop. OCR-based text finding also benefits from the native Tesseract app being installed and available on `PATH`.
 
 ### Goal and reminder behavior
 
