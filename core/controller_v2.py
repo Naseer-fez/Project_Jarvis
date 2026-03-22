@@ -63,6 +63,49 @@ _AGENTIC_KEYWORDS = (
     "keyboard",
     "hotkey",
     "click",
+    # Web / research triggers
+    "browse",
+    "internet",
+    "online",
+    "web",
+    "website",
+    "latest",
+    "current",
+    "news",
+    "price",
+    "weather",
+    "what is",
+    "what are",
+    "who is",
+    "how to",
+    "when did",
+    "where is",
+    "tell me about",
+    "look it up",
+    "google",
+)
+
+# Phrases that unambiguously indicate the user wants a live web search.
+# When any of these are detected Jarvis skips the LLM planner entirely
+# and calls web_search directly, then synthesises the answer.
+_WEB_SEARCH_EXPLICIT_PHRASES = (
+    "search the web",
+    "search the internet",
+    "search online",
+    "browse the web",
+    "browse the internet",
+    "browse online",
+    "look it up online",
+    "look up online",
+    "google it",
+    "google for",
+    "find online",
+    "find on the internet",
+    "find on the web",
+    "search for",
+    "search web for",
+    "web search",
+    "internet search",
 )
 
 
@@ -233,6 +276,62 @@ class JarvisControllerV2:
             "'pip install -r requirements/desktop.txt', then restart Jarvis."
         )
 
+    def _is_explicit_web_search(self, lowered: str) -> bool:
+        """Return True when the user unambiguously asks for a live web search."""
+        return any(phrase in lowered for phrase in _WEB_SEARCH_EXPLICIT_PHRASES)
+
+    async def _handle_web_search(self, user_input: str, trace_id: str) -> str:
+        """Perform a live web search and synthesise a natural-language reply."""
+        try:
+            from core.tools.web_tools import web_search as _web_search
+
+            # Extract a clean query from the raw user input via basic cleanup
+            from core.tools.web_tools import _basic_query_cleanup
+            query = _basic_query_cleanup(user_input)
+            if not query:
+                query = user_input.strip()
+
+            logger.info("[trace=%s] Explicit web search: %r", trace_id, query)
+            raw_results = await _web_search(query, max_results=5)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[trace=%s] Web search failed: %s", trace_id, exc)
+            # Fall back to the LLM which can at least tell the user search failed
+            return await self._dispatch_llm(user_input, trace_id=trace_id)
+
+        if not raw_results or raw_results.startswith("Search failed") or raw_results.startswith("Web search is disabled"):
+            # Search didn't work — fall back to LLM
+            return await self._dispatch_llm(user_input, trace_id=trace_id)
+
+        # Ask the LLM to turn the raw search output into a natural answer
+        synthesis_prompt = (
+            f"The user asked: {user_input}\n\n"
+            f"Here are the live web search results:\n{raw_results}\n\n"
+            "Please give a concise, helpful reply based only on these results. "
+            "Cite URLs where relevant. Do not invent information not present in the results."
+        )
+        self.memory.build_context_block(user_input)
+        selected_model = self.model_router.get_best_available("chat")
+        self.llm.model = selected_model
+        self.llm.model_name = selected_model
+        messages = [{"role": "user", "content": synthesis_prompt}]
+        try:
+            response = await self.llm.chat_async(
+                messages,
+                query_for_memory=user_input,
+                profile_summary=self.profile.get_communication_style() if self.profile else "",
+                trace_id=trace_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[trace=%s] Web search synthesis LLM call failed: %s", trace_id, exc)
+            # Return the raw results if synthesis fails
+            return raw_results
+
+        if not response or response == "LLM Offline.":
+            return raw_results
+
+        self.memory.store_conversation(user_input, response, self.session_id)
+        return response
+
     async def process(self, user_input: str, trace_id: str | None = None) -> str:
         if not trace_id:
             trace_id = uuid.uuid4().hex[:8]
@@ -290,6 +389,15 @@ class JarvisControllerV2:
             and not self._gui_automation_enabled
         ):
             return _respond(self._desktop_control_disabled_message())
+
+        # ── Explicit web-search fast-path ─────────────────────────────────────
+        # If the user clearly asks to search / browse the web, skip the LLM
+        # planner (which can fail to emit the right tool JSON) and call
+        # web_search directly, then synthesise a natural-language reply.
+        if self._is_explicit_web_search(lowered):
+            self._dashboard_update(state="EXECUTE", last_input=user_input)
+            web_response = await self._handle_web_search(text, trace_id=trace_id)
+            return _respond(web_response)
 
         if len(text.split()) > 2 and any(kw in lowered for kw in _AGENTIC_KEYWORDS):
             self._dashboard_update(state="PLANNING", last_input=user_input)
