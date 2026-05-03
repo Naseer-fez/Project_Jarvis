@@ -85,6 +85,6 @@ scripts/
 *.dll
 
 # Runtime artifacts — generated at run time, not source
-runtime/
+/runtime/
 bench/
 workspace/
