@@ -1,13 +1,21 @@
 """
 Production-ready Jarvis entry point.
 
-Usage:
+Usage (cross-platform):
   python main.py
   python main.py --voice
   python main.py --gui
   python main.py --headless --gui
   python main.py --health-check
   python main.py --verify
+
+Windows PowerShell convenience:
+  .\run-jarvis.ps1
+  .\run-jarvis.ps1 --voice
+  .\run-jarvis.ps1 --gui
+  .\run-jarvis.ps1 --headless --gui
+  .\run-jarvis.ps1 --health-check
+  .\run-jarvis.ps1 --verify
 """
 
 from __future__ import annotations
