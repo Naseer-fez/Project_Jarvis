@@ -46,7 +46,7 @@ jobs:
         if: steps.date_check.outputs.skip == 'false'
         run: |
           git config user.name  "Naseer-fez"
-          git config user.email "naseer@example.com"   # ← replace with your GitHub email
+          git config user.email "feznaseer777@gmail.com"   # ← replace with your GitHub email
 
       # ── 4. Count files in the pool ─────────────────────────────────
       - name: Count pool files
