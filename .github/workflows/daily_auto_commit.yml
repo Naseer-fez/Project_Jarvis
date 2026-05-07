@@ -1,0 +1,176 @@
+name: 🚀 Daily Auto-Commit from Pool
+
+# ─────────────────────────────────────────────────────────────────────
+# Runs every day at 9:00 AM UTC starting from 2025-06-01
+# Picks 2–3 files from to_commit_pool/, commits them, then deletes them
+# Stops automatically when the pool is empty
+# ─────────────────────────────────────────────────────────────────────
+
+on:
+  schedule:
+    - cron: "0 9 * * *"      # 09:00 UTC every day
+  workflow_dispatch:          # allow manual trigger for testing
+
+jobs:
+  auto_commit:
+    name: Pick & Commit Files from Pool
+    runs-on: ubuntu-latest
+
+    # ── Only run on/after the start date ──────────────────────────────
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && (format('{0}', github.run_number) != '' )) }}
+
+    steps:
+      # ── 1. Checkout with PAT so we can push back ───────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_PAT }}
+          fetch-depth: 0
+
+      # ── 2. Enforce start date (skip if before 2025-06-01) ──────────
+      - name: Check start date
+        id: date_check
+        run: |
+          START="2026-05-10"                        # ← change if needed
+          TODAY=$(date -u +%Y-%m-%d)
+          echo "Today : $TODAY  |  Start : $START"
+          if [[ "$TODAY" < "$START" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⏳ Before start date ($START). Skipping."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ── 3. Configure git identity ──────────────────────────────────
+      - name: Configure git
+        if: steps.date_check.outputs.skip == 'false'
+        run: |
+          git config user.name  "Naseer-fez"
+          git config user.email "naseer@example.com"   # ← replace with your GitHub email
+
+      # ── 4. Count files in the pool ─────────────────────────────────
+      - name: Count pool files
+        if: steps.date_check.outputs.skip == 'false'
+        id: pool_check
+        run: |
+          POOL="to_commit_pool"
+          # Count code files (not the manifest or hidden files)
+          COUNT=$(find "$POOL" \
+            -type f \
+            ! -name "_MANIFEST.txt" \
+            ! -name ".*" \
+            2>/dev/null | wc -l)
+          echo "pool_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "📦 Files in pool: $COUNT"
+
+      # ── 5. Log if pool is empty and stop gracefully ────────────────
+      - name: Check pool empty
+        if: steps.date_check.outputs.skip == 'false' && steps.pool_check.outputs.pool_count == '0'
+        run: |
+          echo "✅ Pool empty — streak done! Nothing to commit today."
+          # This step exits successfully so the workflow doesn't fail
+
+      # ── 6. Pick 2–3 files and commit them ─────────────────────────
+      - name: Pick files and commit
+        if: steps.date_check.outputs.skip == 'false' && steps.pool_check.outputs.pool_count != '0'
+        run: |
+          POOL="to_commit_pool"
+          BATCH_SIZE=1          # files to commit per run
+
+          # Collect all code files in FIFO order (by modification time)
+          mapfile -t FILES < <(find "$POOL" \
+            -type f \
+            ! -name "_MANIFEST.txt" \
+            ! -name ".*" \
+            | sort \
+            | head -n "$BATCH_SIZE")
+
+          echo "Files selected for today:"
+          printf '  %s\n' "${FILES[@]}"
+
+          for FILE in "${FILES[@]}"; do
+            # Normalise Windows backslashes → forward slashes (just in case)
+            FILE="${FILE//\\//}"
+
+            EXT="${FILE##*.}"
+            BASENAME=$(basename "$FILE")
+            NAME="${BASENAME%.*}"
+
+            # ── Natural commit message generator ──────────────────────
+            case "$EXT" in
+              py)         MSG="Add Python module: ${NAME}" ;;
+              js|jsx)     MSG="Add JavaScript component: ${NAME}" ;;
+              ts|tsx)     MSG="Add TypeScript module: ${NAME}" ;;
+              html)       MSG="Add HTML page: ${NAME}" ;;
+              css|scss)   MSG="Add stylesheet: ${NAME}" ;;
+              java)       MSG="Add Java class: ${NAME}" ;;
+              cpp|c|h|hpp) MSG="Add C/C++ source: ${NAME}" ;;
+              go)         MSG="Add Go package: ${NAME}" ;;
+              rb)         MSG="Add Ruby script: ${NAME}" ;;
+              php)        MSG="Add PHP module: ${NAME}" ;;
+              rs)         MSG="Add Rust module: ${NAME}" ;;
+              swift)      MSG="Add Swift file: ${NAME}" ;;
+              kt)         MSG="Add Kotlin file: ${NAME}" ;;
+              cs)         MSG="Add C# class: ${NAME}" ;;
+              sh|bash)    MSG="Add shell script: ${NAME}" ;;
+              sql)        MSG="Add SQL migration: ${NAME}" ;;
+              json|yaml|yml|toml) MSG="Add config: ${NAME}.${EXT}" ;;
+              md|txt|rst) MSG="Add documentation: ${NAME}" ;;
+              *)          MSG="Add file: ${BASENAME}" ;;
+            esac
+
+            # ── Stage the file ─────────────────────────────────────────
+            git add "$FILE"
+
+            # ── Commit it ─────────────────────────────────────────────
+            git commit -m "$MSG"
+            echo "✔ Committed: $BASENAME  →  \"$MSG\""
+
+            # ── Remove from pool after successful commit ───────────────
+            git rm "$FILE"
+            git commit -m "chore: remove ${BASENAME} from pool after commit"
+            echo "🗑 Removed from pool: $FILE"
+          done
+
+      # ── 7. Update the manifest (if pool still has files) ──────────
+      - name: Update manifest
+        if: steps.date_check.outputs.skip == 'false' && steps.pool_check.outputs.pool_count != '0'
+        run: |
+          POOL="to_commit_pool"
+          MANIFEST="$POOL/_MANIFEST.txt"
+          REMAINING=$(find "$POOL" -type f ! -name "_MANIFEST.txt" ! -name ".*" 2>/dev/null | sort)
+          COUNT=$(echo "$REMAINING" | grep -c . || true)
+
+          {
+            echo "# to_commit_pool manifest — updated $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "# Remaining files: $COUNT"
+            echo ""
+            echo "$REMAINING"
+          } > "$MANIFEST"
+
+          git add "$MANIFEST"
+          git diff --staged --quiet || git commit -m "chore: update pool manifest (${COUNT} files remaining)"
+
+      # ── 8. Push all commits to GitHub ─────────────────────────────
+      - name: Push commits
+        if: steps.date_check.outputs.skip == 'false' && steps.pool_check.outputs.pool_count != '0'
+        run: |
+          git push origin HEAD
+
+      # ── 9. Final status summary ────────────────────────────────────
+      - name: Workflow summary
+        if: always()
+        run: |
+          echo ""
+          echo "══════════════════════════════════════════"
+          echo "  Auto-Commit Workflow — Run Complete"
+          echo "══════════════════════════════════════════"
+          POOL="to_commit_pool"
+          REMAINING=$(find "$POOL" -type f ! -name "_MANIFEST.txt" ! -name ".*" 2>/dev/null | wc -l)
+          echo "  Files remaining in pool : $REMAINING"
+          if [[ "$REMAINING" -eq 0 ]]; then
+            echo "  Status : ✅ Pool empty — streak complete!"
+          else
+            echo "  Status : ⚡ Pool active — next run tomorrow 09:00 UTC"
+          fi
+          echo "══════════════════════════════════════════"
