@@ -123,7 +123,8 @@ jobs:
             git add "$FILE"
 
             # ── Commit it ─────────────────────────────────────────────
-            git commit -m "$MSG"
+            # Allow empty commit in case the file is already tracked and unmodified
+            git commit --allow-empty -m "$MSG"
             echo "✔ Committed: $BASENAME  →  \"$MSG\""
 
             # ── Remove from pool after successful commit ───────────────
