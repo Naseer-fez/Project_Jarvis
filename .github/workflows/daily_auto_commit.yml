@@ -11,13 +11,13 @@ on:
     - cron: "0 9 * * *"      # 09:00 UTC every day
   workflow_dispatch:          # allow manual trigger for testing
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # ← fixes Node.js 20 deprecation warning
+
 jobs:
   auto_commit:
     name: Pick & Commit Files from Pool
     runs-on: ubuntu-latest
-
-    # ── Only run on/after the start date ──────────────────────────────
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'schedule' && (format('{0}', github.run_number) != '' )) }}
 
     steps:
       # ── 1. Checkout with PAT so we can push back ───────────────────
@@ -31,7 +31,7 @@ jobs:
       - name: Check start date
         id: date_check
         run: |
-          START="2026-05-10"                        # ← change if needed
+          START="2026-05-10"
           TODAY=$(date -u +%Y-%m-%d)
           echo "Today : $TODAY  |  Start : $START"
           if [[ "$TODAY" < "$START" ]]; then
@@ -46,7 +46,7 @@ jobs:
         if: steps.date_check.outputs.skip == 'false'
         run: |
           git config user.name  "Naseer-fez"
-          git config user.email "feznaseer777@gmail.com"   # ← replace with your GitHub email
+          git config user.email "feznaseer777@gmail.com"
 
       # ── 4. Count files in the pool ─────────────────────────────────
       - name: Count pool files
@@ -54,7 +54,6 @@ jobs:
         id: pool_check
         run: |
           POOL="to_commit_pool"
-          # Count code files (not the manifest or hidden files)
           COUNT=$(find "$POOL" \
             -type f \
             ! -name "_MANIFEST.txt" \
@@ -66,18 +65,15 @@ jobs:
       # ── 5. Log if pool is empty and stop gracefully ────────────────
       - name: Check pool empty
         if: steps.date_check.outputs.skip == 'false' && steps.pool_check.outputs.pool_count == '0'
-        run: |
-          echo "✅ Pool empty — streak done! Nothing to commit today."
-          # This step exits successfully so the workflow doesn't fail
+        run: echo "✅ Pool empty — streak done! Nothing to commit today."
 
-      # ── 6. Pick 2–3 files and commit them ─────────────────────────
+      # ── 6. Pick files and commit them ─────────────────────────────
       - name: Pick files and commit
         if: steps.date_check.outputs.skip == 'false' && steps.pool_check.outputs.pool_count != '0'
         run: |
           POOL="to_commit_pool"
-          BATCH_SIZE=1          # files to commit per run
+          BATCH_SIZE=1
 
-          # Collect all code files in FIFO order (by modification time)
           mapfile -t FILES < <(find "$POOL" \
             -type f \
             ! -name "_MANIFEST.txt" \
@@ -89,7 +85,6 @@ jobs:
           printf '  %s\n' "${FILES[@]}"
 
           for FILE in "${FILES[@]}"; do
-            # Normalise Windows backslashes → forward slashes (just in case)
             FILE="${FILE//\\//}"
 
             EXT="${FILE##*.}"
@@ -122,15 +117,25 @@ jobs:
             # ── Stage the file ─────────────────────────────────────────
             git add "$FILE"
 
-            # ── Commit it ─────────────────────────────────────────────
-            # Allow empty commit in case the file is already tracked and unmodified
-            git commit --allow-empty -m "$MSG"
-            echo "✔ Committed: $BASENAME  →  \"$MSG\""
+            # ── Commit only if something is actually staged ────────────
+            # (avoids exit code 1 when file is already at HEAD unchanged)
+            if ! git diff --staged --quiet; then
+              git commit -m "$MSG"
+              echo "✔ Committed: $BASENAME  →  \"$MSG\""
+            else
+              echo "⚠ Nothing new to stage for $BASENAME — skipping add-commit."
+            fi
 
-            # ── Remove from pool after successful commit ───────────────
-            git rm "$FILE"
-            git commit -m "chore: remove ${BASENAME} from pool after commit"
-            echo "🗑 Removed from pool: $FILE"
+            # ── Remove from pool after commit ──────────────────────────
+            git rm --force --ignore-unmatch "$FILE"
+
+            # ── Only commit the removal if git rm staged something ─────
+            if ! git diff --staged --quiet; then
+              git commit -m "chore: remove ${BASENAME} from pool after commit"
+              echo "🗑 Removed from pool: $FILE"
+            else
+              echo "⚠ $FILE was already gone from index — nothing to remove-commit."
+            fi
           done
 
       # ── 7. Update the manifest (if pool still has files) ──────────
@@ -155,8 +160,7 @@ jobs:
       # ── 8. Push all commits to GitHub ─────────────────────────────
       - name: Push commits
         if: steps.date_check.outputs.skip == 'false' && steps.pool_check.outputs.pool_count != '0'
-        run: |
-          git push origin HEAD
+        run: git push origin HEAD
 
       # ── 9. Final status summary ────────────────────────────────────
       - name: Workflow summary
