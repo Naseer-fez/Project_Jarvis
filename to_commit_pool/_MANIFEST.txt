@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-12T05:29:28Z
-# Remaining files: 47
+# to_commit_pool manifest — updated 2026-05-12T11:21:08Z
+# Remaining files: 46
 
-to_commit_pool/Jarvis/README.MD
 to_commit_pool/Jarvis/Req.md
 to_commit_pool/Jarvis/SETUP_GUIDE.md
 to_commit_pool/Jarvis/core/agent/agent_loop.py
