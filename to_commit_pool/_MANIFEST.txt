@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-11T12:10:16Z
-# Remaining files: 48
+# to_commit_pool manifest — updated 2026-05-12T05:29:28Z
+# Remaining files: 47
 
-to_commit_pool/Jarvis/API_KEYS_LLM_GUIDE.md
 to_commit_pool/Jarvis/README.MD
 to_commit_pool/Jarvis/Req.md
 to_commit_pool/Jarvis/SETUP_GUIDE.md
