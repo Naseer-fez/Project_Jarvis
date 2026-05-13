@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # to_commit_pool manifest — generated 2026-05-13T13:31:11.017013
 # GitHub user : Naseer-fez
 # Scan mode   : relative
@@ -28,3 +29,54 @@ D:\AI\Jarvis\tests\test_desktop_reliability.py
 D:\AI\Jarvis\tests\test_runtime_phase1.py
 
 ## Loose code files
+=======
+# to_commit_pool manifest — updated 2026-05-12T11:21:08Z
+# Remaining files: 46
+
+to_commit_pool/Jarvis/Req.md
+to_commit_pool/Jarvis/SETUP_GUIDE.md
+to_commit_pool/Jarvis/core/agent/agent_loop.py
+to_commit_pool/Jarvis/core/agent/desktop_bridge.py
+to_commit_pool/Jarvis/core/autonomy/risk_evaluator.py
+to_commit_pool/Jarvis/core/controller/services.py
+to_commit_pool/Jarvis/core/controller_v2.py
+to_commit_pool/Jarvis/core/desktop_actions.py
+to_commit_pool/Jarvis/core/execution/dispatcher.py
+to_commit_pool/Jarvis/core/introspection/health.py
+to_commit_pool/Jarvis/core/llm/model_router.py
+to_commit_pool/Jarvis/core/logging/logger.py
+to_commit_pool/Jarvis/core/security/__init__.py
+to_commit_pool/Jarvis/files.zip
+to_commit_pool/Jarvis/finder.py
+to_commit_pool/Jarvis/memory/user_profile.json
+to_commit_pool/Jarvis/plan.md
+to_commit_pool/Jarvis/run-tests.ps1
+to_commit_pool/Jarvis/tests/test_desktop_control_agentic.py
+to_commit_pool/Jarvis/tests/test_desktop_reliability.py
+to_commit_pool/Jarvis/tests/test_runtime_model_routing.py
+to_commit_pool/Jarvis/tests/test_runtime_phase1.py
+to_commit_pool/Jarvis/tests/test_smoke.py
+to_commit_pool/README.MD
+to_commit_pool/Req.md
+to_commit_pool/core/agent/agent_loop.py
+to_commit_pool/core/agent/desktop_bridge.py
+to_commit_pool/core/autonomy/risk_evaluator.py
+to_commit_pool/core/controller/services.py
+to_commit_pool/core/controller_v2.py
+to_commit_pool/core/desktop_actions.py
+to_commit_pool/core/execution/dispatcher.py
+to_commit_pool/core/introspection/health.py
+to_commit_pool/core/llm/model_router.py
+to_commit_pool/core/logging/logger.py
+to_commit_pool/core/security/__init__.py
+to_commit_pool/files.zip
+to_commit_pool/finder.py
+to_commit_pool/memory/user_profile.json
+to_commit_pool/plan.md
+to_commit_pool/run-tests.ps1
+to_commit_pool/tests/test_desktop_control_agentic.py
+to_commit_pool/tests/test_desktop_reliability.py
+to_commit_pool/tests/test_runtime_model_routing.py
+to_commit_pool/tests/test_runtime_phase1.py
+to_commit_pool/tests/test_smoke.py
+>>>>>>> 3398aa0dbf61912cfd35e6d0f23483da62941352
