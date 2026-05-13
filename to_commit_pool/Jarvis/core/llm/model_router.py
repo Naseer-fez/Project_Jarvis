@@ -40,6 +40,10 @@ class ModelRouter:
             return True
         return self._resolve_available_variant(model) is not None
 
+    def pick_model(self, task_type: str) -> str:
+        """Public entry point — returns the best model name for a task type."""
+        return self.get_best_available(task_type)
+
     def get_best_available(self, task_type: str) -> str:
         desired = self.route(task_type)
         available = self._resolve_available_variant(desired)

@@ -1,5 +1,5 @@
-# to_commit_pool manifest — generated 2026-05-07T13:24:29.478548
-# GitHub user : FEZ NASEER
+# to_commit_pool manifest — generated 2026-05-13T13:31:11.017013
+# GitHub user : Naseer-fez
 # Scan mode   : relative
 # Script dir  : D:\AI\Jarvis
 
@@ -12,20 +12,17 @@ D:\AI\Jarvis\core\controller_v2.py
 D:\AI\Jarvis\core\desktop_actions.py
 D:\AI\Jarvis\core\execution\dispatcher.py
 D:\AI\Jarvis\core\introspection\health.py
+D:\AI\Jarvis\core\llm\__init__.py
+D:\AI\Jarvis\core\llm\client.py
 D:\AI\Jarvis\core\llm\model_router.py
 D:\AI\Jarvis\core\logging\logger.py
 D:\AI\Jarvis\memory\user_profile.json
 D:\AI\Jarvis\tests\test_desktop_control_agentic.py
 D:\AI\Jarvis\tests\test_runtime_model_routing.py
 D:\AI\Jarvis\tests\test_smoke.py
-D:\AI\Jarvis\API_KEYS_LLM_GUIDE.md
-D:\AI\Jarvis\Req.md
-D:\AI\Jarvis\SETUP_GUIDE.md
 D:\AI\Jarvis\core\agent\desktop_bridge.py
+D:\AI\Jarvis\core\llm\ollama_client.py
 D:\AI\Jarvis\core\security\__init__.py
-D:\AI\Jarvis\files.zip
-D:\AI\Jarvis\finder.py
-D:\AI\Jarvis\plan.md
 D:\AI\Jarvis\run-tests.ps1
 D:\AI\Jarvis\tests\test_desktop_reliability.py
 D:\AI\Jarvis\tests\test_runtime_phase1.py
