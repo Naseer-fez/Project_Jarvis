@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-13T11:29:55Z
-# Remaining files: 42
+# to_commit_pool manifest — updated 2026-05-14T11:13:14Z
+# Remaining files: 41
 
-to_commit_pool/Jarvis/core/agent/desktop_bridge.py
 to_commit_pool/Jarvis/core/autonomy/risk_evaluator.py
 to_commit_pool/Jarvis/core/controller/services.py
 to_commit_pool/Jarvis/core/controller_v2.py
