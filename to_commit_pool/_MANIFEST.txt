@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-17T10:21:43Z
-# Remaining files: 38
+# to_commit_pool manifest — updated 2026-05-18T12:29:05Z
+# Remaining files: 37
 
-to_commit_pool/Jarvis/core/desktop_actions.py
 to_commit_pool/Jarvis/core/execution/dispatcher.py
 to_commit_pool/Jarvis/core/introspection/health.py
 to_commit_pool/Jarvis/core/llm/__init__.py
