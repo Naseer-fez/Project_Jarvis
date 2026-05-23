@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-22T11:44:34Z
-# Remaining files: 32
+# to_commit_pool manifest — updated 2026-05-23T10:25:33Z
+# Remaining files: 31
 
-to_commit_pool/Jarvis/core/llm/ollama_client.py
 to_commit_pool/Jarvis/core/logging/logger.py
 to_commit_pool/Jarvis/core/security/__init__.py
 to_commit_pool/Jarvis/files.zip
