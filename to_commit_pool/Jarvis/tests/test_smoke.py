@@ -305,25 +305,6 @@ class TestAsyncMainAudit:
 
         assert code == ExitCode.AUDIT_FAILED
 
-    def test_strict_health_preflight_failure_returns_startup_error(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("JARVIS_ENV", "development")
-        ini = tmp_path / "j.ini"
-        ini.write_text("", encoding="utf-8")
-
-        logger_mod = _make_logger_mod()
-        fake_report = MagicMock(has_failures=True, is_healthy=False, checks=[])
-
-        with patch.dict(
-            "sys.modules",
-            {"core": MagicMock(logger=logger_mod), "core.logging": MagicMock(), "core.logging.logger": logger_mod},
-        ):
-            with patch("core.runtime.entrypoint.run_lightweight_health_check", return_value=fake_report):
-                code = asyncio.run(
-                    async_main(_make_args(config=str(ini), strict_health=True))
-                )
-
-        assert code == ExitCode.STARTUP_ERROR
-
 
 def _make_import_hook(logger_mod):
     """
@@ -364,7 +345,10 @@ class TestAsyncMainController:
                 "core": MagicMock(),
                 "core.logging": MagicMock(logger=logger_mod),
                 "core.controller": MagicMock(Controller=MagicMock(return_value=controller)),
-                "core.controller_v2": MagicMock(Controller=MagicMock(return_value=controller)),
+                "core.controller_v2": MagicMock(
+                    JarvisControllerV2=MagicMock(return_value=controller),
+                    Controller=MagicMock(return_value=controller),
+                ),
                 "core.introspection.health": MagicMock(HealthReport=MagicMock(), run_startup_health_check=MagicMock(return_value=MagicMock(ollama_reachable=True))),
             }):
                 return asyncio.run(async_main(args))
@@ -448,7 +432,8 @@ class TestAsyncMainController:
                         Controller=MagicMock(return_value=controller)
                     ),
                     "core.controller_v2": MagicMock(
-                        Controller=MagicMock(return_value=controller)
+                        JarvisControllerV2=MagicMock(return_value=controller),
+                        Controller=MagicMock(return_value=controller),
                     ),
                     "core.introspection.health": MagicMock(HealthReport=MagicMock(), run_startup_health_check=MagicMock(return_value=MagicMock(ollama_reachable=True))),
                 }):

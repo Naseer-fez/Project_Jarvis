@@ -57,6 +57,22 @@ def test_model_router_prefers_quick_model_for_available_quick_tasks():
     assert router.get_best_available("tool_parameter_extraction") == "gemma3:latest"
 
 
+def test_model_router_discovers_models_from_ollama_and_resolves_aliases():
+    cfg = ConfigParser()
+    cfg["models"] = {
+        "chat_model": "mistral:7b",
+        "vision_model": "llava",
+    }
+    router = ModelRouter(cfg)
+
+    with patch(
+        "core.llm.model_router.list_models_sync",
+        return_value=["mistral:latest", "llava:latest"],
+    ):
+        assert router.get_best_available("chat") == "mistral:latest"
+        assert router.get_best_available("vision") == "llava:latest"
+
+
 def test_model_router_lists_available_models_sorted():
     router = ModelRouter(ConfigParser())
     router.set_available_models(["mistral:latest", "deepseek-r1:8b"])

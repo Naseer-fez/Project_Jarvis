@@ -55,6 +55,11 @@ class C:
 
 def enable_ansi():
     if sys.platform == "win32":
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+            sys.stderr.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
         import ctypes
         kernel32 = ctypes.windll.kernel32
         kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
@@ -302,12 +307,13 @@ def push_pool_to_github(pool_root: Path, repo_root: Path, copied: int):
     ok(f"Committed: {msg}")
 
     # Push
-    _, push_err, push_code = run_git(["push", "origin", "HEAD"], repo_root)
-    if push_code != 0:
-        err(f"Git push failed: {push_err}")
-        warn("Try running manually: git push origin main")
-    else:
-        ok("✅ Pushed to GitHub successfully!")
+    warn("Git push skipped as per user instruction (dont push to github till i say).")
+    # _, push_err, push_code = run_git(["push", "origin", "HEAD"], repo_root)
+    # if push_code != 0:
+    #     err(f"Git push failed: {push_err}")
+    #     warn("Try running manually: git push origin main")
+    # else:
+    #     ok("✅ Pushed to GitHub successfully!")
 
 # ──────────────────────────────────────────────
 # MAIN

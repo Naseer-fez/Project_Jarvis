@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,12 @@ from core.controller_v2 import JarvisControllerV2
 from core.llm.task_planner import TaskPlanner
 from core.tools.builtin_tools import register_all_tools
 from core.tools.tool_router import ToolRouter
+
+
+@dataclass
+class _ObservedDesktopState:
+    active_window: dict
+    low_confidence_reason: str = ""
 
 
 def _make_config(
@@ -57,7 +64,21 @@ def test_task_planner_hides_gui_tools_when_disabled():
 
     assert "click" not in tool_names
     assert "type_text" not in tool_names
+    assert "click_screen_target" not in tool_names
     assert "capture_screen" in tool_names
+    assert "read_screen_text" in tool_names
+    assert "wait_for_text_on_screen" in tool_names
+
+
+def test_task_planner_exposes_screen_target_tools_when_enabled():
+    planner = TaskPlanner(_make_config(gui_enabled=True))
+    tool_names = {tool["name"] for tool in planner._tool_schema()["tools"]}
+
+    assert "click_text_on_screen" in tool_names
+    assert "click_screen_target" in tool_names
+    assert "move_mouse" in tool_names
+    assert "press_key" in tool_names
+    assert "wait_for_text_on_screen" in tool_names
 
 
 def test_register_all_tools_respects_gui_flag_and_registers_core_automation():
@@ -68,6 +89,8 @@ def test_register_all_tools_respects_gui_flag_and_registers_core_automation():
     assert "click" not in tool_names
     assert "type_text" not in tool_names
     assert "capture_screen" in tool_names
+    assert "read_screen_text" in tool_names
+    assert "wait_for_text_on_screen" in tool_names
     assert {"write_file", "launch_application", "execute_shell"}.issubset(tool_names)
 
 
@@ -152,4 +175,21 @@ async def test_controller_routes_desktop_request_into_agent_loop_when_enabled(tm
     assert response == "Clicked continue."
     plan_mock.assert_called_once()
     run_mock.assert_awaited_once()
+    llm_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_controller_answers_active_window_request_from_observer(tmp_path):
+    ctrl = _make_controller(tmp_path, gui_enabled=False)
+    ctrl.desktop_observer.observe = AsyncMock(
+        return_value=_ObservedDesktopState(
+            active_window={"title": "main.py - Jarvis - Visual Studio Code"},
+        )
+    )
+
+    with patch.object(ctrl, "_dispatch_llm", new=AsyncMock(return_value="llm")) as llm_mock:
+        response = await ctrl.process("Watch the screen and tell me what app is active right now.")
+
+    assert "Visual Studio Code" in response
+    ctrl.desktop_observer.observe.assert_awaited_once()
     llm_mock.assert_not_awaited()

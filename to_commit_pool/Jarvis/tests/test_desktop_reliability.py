@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.agent.desktop_bridge import DesktopBridge
 from core.desktop import (
     DesktopAction,
     DesktopActionExecutor,
@@ -245,3 +246,77 @@ async def test_mission_pauses_for_unapproved_risky_action():
     assert calls == []
     assert record.steps[0].approval["required"] is True
     assert record.steps[0].recovery_decision == "ask_user"
+
+
+@pytest.mark.asyncio
+async def test_desktop_bridge_returns_tool_observation_with_arguments_and_metadata():
+    async def launch_handler(target, args=None):
+        return {"success": True, "data": {"target": target, "args": args}}
+
+    bridge = DesktopBridge(
+        action_executor=DesktopActionExecutor(
+            audit_writer=_audit_sink([]),
+            action_handlers={DesktopActionType.LAUNCH_APP: launch_handler},
+        ),
+        observer=SequenceObserver(
+            [
+                _observation("Desktop", "before"),
+                _observation("Notepad", "after"),
+            ]
+        ),
+        approval_callback=lambda action, reason: True,
+        max_retries=0,
+    )
+
+    observation, record = await bridge.execute_step(
+        "launch_application",
+        {"target": "notepad.exe", "args": None},
+        goal="open notepad",
+        description="Open Notepad.",
+    )
+
+    assert observation.execution_status == "success"
+    assert observation.arguments == {"target": "notepad.exe", "args": None}
+    assert observation.metadata["mission_status"] == "succeeded"
+    assert record.status == DesktopMissionStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_desktop_bridge_supports_click_text_on_screen_actions():
+    async def click_text_handler(text, occurrence=1, button="left", match_mode="contains"):
+        return {
+            "success": True,
+            "data": {
+                "text": text,
+                "occurrence": occurrence,
+                "button": button,
+                "match_mode": match_mode,
+            },
+        }
+
+    bridge = DesktopBridge(
+        action_executor=DesktopActionExecutor(
+            audit_writer=_audit_sink([]),
+            action_handlers={DesktopActionType.CLICK_TEXT_ON_SCREEN: click_text_handler},
+        ),
+        observer=SequenceObserver(
+            [
+                _observation("Dialog", "before"),
+                _observation("Dialog", "after"),
+            ]
+        ),
+        approval_callback=lambda action, reason: True,
+        max_retries=0,
+    )
+
+    observation, record = await bridge.execute_step(
+        "click_text_on_screen",
+        {"text": "Continue", "occurrence": 1},
+        goal="click continue",
+        description="Click the Continue button by visible text.",
+    )
+
+    assert observation.execution_status == "success"
+    assert observation.arguments == {"text": "Continue", "occurrence": 1}
+    assert observation.metadata["mission_status"] == "succeeded"
+    assert record.status == DesktopMissionStatus.SUCCEEDED

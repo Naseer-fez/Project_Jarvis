@@ -1,0 +1,12 @@
+-r base.txt
+
+# Test + quality tooling
+pytest
+pytest-asyncio
+pytest-mock
+pytest-timeout
+pytest-cov
+mypy
+black
+ruff
+types-requests
