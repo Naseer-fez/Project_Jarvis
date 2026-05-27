@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-25T12:29:49Z
-# Remaining files: 87
+# to_commit_pool manifest — updated 2026-05-27T04:41:27Z
+# Remaining files: 86
 
-to_commit_pool/Jarvis/config/jarvis.ini
 to_commit_pool/Jarvis/config/jarvis.json
 to_commit_pool/Jarvis/core/agent/agent_loop.py
 to_commit_pool/Jarvis/core/agent/desktop_bridge.py
