@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-28T12:25:48Z
-# Remaining files: 83
+# to_commit_pool manifest — updated 2026-05-29T11:50:20Z
+# Remaining files: 82
 
-to_commit_pool/Jarvis/core/autonomy/autonomy_governor.py
 to_commit_pool/Jarvis/core/autonomy/risk_evaluator.py
 to_commit_pool/Jarvis/core/config/__init__.py
 to_commit_pool/Jarvis/core/controller/request_pipeline.py
