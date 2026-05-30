@@ -121,31 +121,14 @@ Config section: `[automation]` in `config/jarvis.ini`
 ---
 
 ## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        main.py                              │
-│                    (Entry Point)                            │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│              JarvisControllerV2                             │
-│         (Orchestrates everything)                           │
-├─────────────┬───────────────┬───────────────────────────────┤
-│             │               │                               │
-│  ┌──────────▼────────┐  ┌──▼──────────────┐  ┌────────────┐│
-│  │   LLM Subsystem   │  │  Agent Loop     │  │   Tools    ││
-│  │                    │  │                 │  │            ││
-│  │  LLMClientV2      │  │  Plan → Risk    │  │ Web Search ││
-│  │    ↓ ModelRouter   │  │  → Confirm      │  │ File I/O   ││
-│  │    ↓ OllamaClient │  │  → Execute      │  │ Shell      ││
-│  │    ↓ CloudLLMClient│  │  → Reflect      │  │ Desktop    ││
-│  └───────────────────┘  └─────────────────┘  │ Screen     ││
-│                                               └────────────┘│
-├─────────────────────────────────────────────────────────────┤
-│                     Integrations                            │
-│  Telegram │ Spotify │ Gmail │ Calendar │ Notion │ GitHub    │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    Main[main.py<br/>Entry Point] --> Ctrl[JarvisControllerV2<br/>Orchestrates everything]
+    
+    Ctrl --> LLM[LLM Subsystem<br/>LLMClientV2<br/>↓ ModelRouter<br/>↓ OllamaClient / CloudLLMClient]
+    Ctrl --> Loop[Agent Loop<br/>Plan → Risk → Confirm → Execute → Reflect]
+    Ctrl --> Tools[Tools<br/>Web Search / File I/O / Shell / Desktop / Screen]
+    Ctrl --> Int[Integrations<br/>Telegram / Spotify / Gmail / Calendar / Notion / GitHub]
 ```
 
 ### LLM Subsystem (core/llm/)
