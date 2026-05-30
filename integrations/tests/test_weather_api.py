@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import integrations.weather_api.client as weather_client
-from integrations.base_integration import RiskLevel, ToolResult
+from integrations.base import IntegrationRiskLevel, ToolResult
 from integrations.weather_api.client import WeatherIntegration
 
 
@@ -44,7 +44,7 @@ class TestIntegrationMetadata:
         assert integration.tool_name == "get_current_weather"
 
     def test_risk_level_is_read_only(self, integration: WeatherIntegration) -> None:
-        assert integration.risk_level == RiskLevel.READ_ONLY
+        assert integration.risk_level == IntegrationRiskLevel.READ_ONLY
 
     def test_schema_has_required_keys(self, integration: WeatherIntegration) -> None:
         schema = integration.tool_schema

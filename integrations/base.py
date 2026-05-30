@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 
 IntegrationResult = dict[str, Any]
-
-
-from enum import Enum
 
 @dataclass
 class ToolResult:
@@ -39,10 +37,14 @@ class ToolResult:
         return f"ToolResult(success=False, error={self.error!r})"
 
 
-class RiskLevel(str, Enum):
+class IntegrationRiskLevel(str, Enum):
     READ_ONLY = "READ_ONLY_TOOLS"
     CONFIRM = "CONFIRM_TOOLS"
     HIGH_RISK = "HIGH_RISK_TOOLS"
+
+
+# Backward compatibility alias
+RiskLevel = IntegrationRiskLevel
 
 
 class BaseIntegration(ABC):
@@ -75,5 +77,5 @@ class BaseIntegration(ABC):
         """
 
 
-__all__ = ["BaseIntegration", "IntegrationResult", "ToolResult", "RiskLevel"]
+__all__ = ["BaseIntegration", "IntegrationResult", "ToolResult", "IntegrationRiskLevel", "RiskLevel"]
 

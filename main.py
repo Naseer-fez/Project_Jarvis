@@ -53,3 +53,20 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+__all__ = [
+    "ExitCode",
+    "PROJECT_ROOT",
+    "_ShutdownCoordinator",
+    "_bootstrap",
+    "_uprint",
+    "apply_cli_overrides",
+    "async_main",
+    "load_config",
+    "main",
+    "parse_args",
+    "run_entrypoint",
+    "signal",
+    "sys",
+]

@@ -1,0 +1,101 @@
+{
+  "id": "screenshot-ocr-notes",
+  "name": "OCR Screenshots Into Notes",
+  "version": "1.0.0",
+  "description": "When screenshots are saved, OCR important text, summarize it, and store the result in the local notes memory.",
+  "mode": "beginner",
+  "tags": ["screenshots", "ocr", "memory", "summarization"],
+  "trigger": {
+    "type": "filesystem.folder_watcher",
+    "config_ref": "user.screenshots_folder"
+  },
+  "permissions": [
+    {
+      "scope": "filesystem",
+      "access": "read",
+      "reason": "Read screenshots from the folder selected by the user."
+    },
+    {
+      "scope": "screen",
+      "access": "read",
+      "reason": "Run local OCR on screenshot image content."
+    },
+    {
+      "scope": "memory",
+      "access": "write",
+      "reason": "Save useful extracted text into the local knowledge base."
+    }
+  ],
+  "nodes": [
+    {
+      "id": "watch_screenshots",
+      "type": "filesystem.folder_watcher",
+      "tool": "watch_folder",
+      "name": "Watch Screenshots",
+      "category": "Filesystem",
+      "config": {
+        "folder_ref": "user.screenshots_folder",
+        "file_glob": "*.{png,jpg,jpeg,webp}",
+        "ignore_existing": true
+      }
+    },
+    {
+      "id": "ocr_image",
+      "type": "vision.ocr",
+      "tool": "read_screen_text",
+      "name": "Read Text From Image",
+      "category": "Search",
+      "config": {
+        "image_ref": "${watch_screenshots.file_path}",
+        "engine_ref": "vision.default_ocr_engine"
+      }
+    },
+    {
+      "id": "summarize_text",
+      "type": "ai.summarizer",
+      "tool": "summarize_text",
+      "name": "Summarize Important Text",
+      "category": "AI",
+      "config": {
+        "text_ref": "${ocr_image.text}",
+        "style": "notes_with_actions",
+        "provider_ref": "ai.default_provider"
+      }
+    },
+    {
+      "id": "approval",
+      "type": "human.approval",
+      "tool": "request_approval",
+      "name": "Preview Before Saving",
+      "category": "Security",
+      "config": {
+        "summary_ref": "${summarize_text.summary}",
+        "prompt": "Save this screenshot summary to notes?"
+      }
+    },
+    {
+      "id": "save_notes",
+      "type": "memory.note_writer",
+      "tool": "memory_write",
+      "name": "Save Notes",
+      "category": "Memory",
+      "config": {
+        "title_template": "Screenshot Notes: ${watch_screenshots.file_name}",
+        "body_ref": "${summarize_text.summary}",
+        "collection_ref": "memory.default_notes_collection"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "watch_screenshots", "to": "ocr_image"},
+    {"from": "ocr_image", "to": "summarize_text"},
+    {"from": "summarize_text", "to": "approval"},
+    {"from": "approval", "to": "save_notes"}
+  ],
+  "marketplace": {
+    "one_click_install": true,
+    "difficulty": "beginner",
+    "preview_required": true,
+    "local_first": true
+  }
+}

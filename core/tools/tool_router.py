@@ -26,6 +26,7 @@ class ToolObservation:
     output_summary: str
     error_message: Optional[str] = None
     duration_seconds: float = 0.0
+    metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -35,6 +36,7 @@ class ToolObservation:
             "output_summary": self.output_summary,
             "error_message": self.error_message,
             "duration_seconds": round(self.duration_seconds, 3),
+            "metadata": dict(self.metadata or {}),
         }
 
 
@@ -182,4 +184,3 @@ def _stringify_payload(value: Any) -> str:
     if value in (None, "", {}, []):
         return ""
     return str(value)
-

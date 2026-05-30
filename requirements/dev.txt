@@ -5,6 +5,7 @@ pytest
 pytest-asyncio
 pytest-mock
 pytest-timeout
+pytest-cov
 mypy
 black
 ruff

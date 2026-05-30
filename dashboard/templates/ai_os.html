@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <section class="ai-os-hero">
+    <p class="eyebrow">Local-first automation platform</p>
+    <h1>{{ overview.blueprint.product_name or "Jarvis AI OS" }}</h1>
+    <p class="lede">{{ overview.blueprint.mission or "Blueprint unavailable." }}</p>
+  </section>
+
+  {% if overview.errors %}
+    <section class="panel warn-panel">
+      <h2>Setup Notes</h2>
+      <ul>
+        {% for error in overview.errors %}
+          <li>{{ error }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  <section class="grid-panels">
+    <article class="panel">
+      <h2>Principles</h2>
+      <ul>
+        {% for principle in overview.blueprint.principles or [] %}
+          <li>{{ principle }}</li>
+        {% endfor %}
+      </ul>
+    </article>
+
+    <article class="panel">
+      <h2>Architecture Layers</h2>
+      <ul>
+        {% for layer in overview.blueprint.layers or [] %}
+          <li>{{ layer }}</li>
+        {% endfor %}
+      </ul>
+    </article>
+
+    <article class="panel">
+      <h2>Workflow Nodes</h2>
+      <ul>
+        {% for category in overview.blueprint.node_categories or [] %}
+          <li>{{ category }}</li>
+        {% endfor %}
+      </ul>
+    </article>
+
+    <article class="panel">
+      <h2>Security</h2>
+      <ul>
+        {% for control in overview.blueprint.security_controls or [] %}
+          <li>{{ control }}</li>
+        {% endfor %}
+      </ul>
+    </article>
+  </section>
+
+  <section class="panel">
+    <h2>Installed Extension Packs</h2>
+    {% if overview.plugins.plugins %}
+      <table>
+        <thead>
+          <tr>
+            <th>Plugin</th>
+            <th>Types</th>
+            <th>Permissions</th>
+            <th>Local</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for plugin in overview.plugins.plugins %}
+            <tr>
+              <td>{{ plugin.name }} <span class="muted">({{ plugin.id }} {{ plugin.version }})</span></td>
+              <td>{{ plugin.types | join(", ") }}</td>
+              <td>{{ plugin.permissions | join(", ") }}</td>
+              <td>{{ "Yes" if plugin.local_first else "No" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="placeholder">No manifest plugins discovered yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>Starter Workflow Templates</h2>
+    {% if overview.workflows.templates %}
+      <div class="template-list">
+        {% for workflow in overview.workflows.templates %}
+          <article class="template-card">
+            <h3>{{ workflow.name }}</h3>
+            <p class="muted">{{ workflow.id }} | {{ workflow.mode }} | {{ workflow.node_count }} nodes</p>
+            <p>Permissions: {{ workflow.permission_scopes | join(", ") }}</p>
+            <p>Tags: {{ workflow.tags | join(", ") }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="placeholder">No workflow templates discovered yet.</p>
+    {% endif %}
+  </section>
+{% endblock %}

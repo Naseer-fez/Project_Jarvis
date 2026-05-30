@@ -28,7 +28,22 @@ class AutonomyPolicy:
         "delete_file",
         "execute_shell",
         "click",
+        "double_click",
+        "right_click",
+        "click_text_on_screen",
+        "click_screen_target",
+        "double_click_screen_target",
+        "right_click_screen_target",
+        "mouse_click",
+        "middle_click",
         "type_text",
+        "press_key",
+        "hotkey",
+        "keyboard_type",
+        "clipboard_paste",
+        "drag",
+        "move_mouse",
+        "scroll",
     }
 
     def __init__(self, belief_state) -> None:

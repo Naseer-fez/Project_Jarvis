@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.agent.agent_loop import AgentLoopEngine
-from core.agent.state_machine import StateMachine
+from core.state_machine import StateMachine
 from core.agentic.scheduler import Scheduler
 from core.autonomy.autonomy_governor import AutonomyGovernor
 from core.autonomy.goal_manager import GoalManager
@@ -22,8 +22,9 @@ from core.controller.intents import (
     handle_preference_intent,
 )
 from core.controller.services import build_controller_services
-from core.desktop_actions import handle_desktop_command
+from core.desktop_actions import handle_desktop_command, plan_desktop_command
 from core.llm.client import LLMClientV2
+from core.llm.defaults import DEFAULT_MODEL
 from core.llm.model_router import ModelRouter
 from core.llm.task_planner import TaskPlanner
 from core.memory.hybrid_memory import HybridMemory
@@ -83,6 +84,20 @@ _AGENTIC_KEYWORDS = (
     "tell me about",
     "look it up",
     "google",
+    # System / File tools keywords
+    "sort",
+    "organize",
+    "list",
+    "write",
+    "delete",
+    "create",
+    "copy",
+    "move",
+    "run",
+    "execute",
+    "launch",
+    "open",
+    "command",
 )
 
 # Phrases that unambiguously indicate the user wants a live web search.
@@ -106,6 +121,8 @@ _WEB_SEARCH_EXPLICIT_PHRASES = (
     "search web for",
     "web search",
     "internet search",
+    "use internet",
+    "use the internet",
 )
 
 
@@ -116,8 +133,9 @@ class JarvisControllerV2:
         voice: bool = False,
         db_path: str = "memory/memory.db",
         chroma_path: str = "data/chroma",
-        model_name: str = "deepseek-r1:8b",
+        model_name: str = DEFAULT_MODEL,
         embedding_model: str = "all-MiniLM-L6-v2",
+        container: Any = None,
     ) -> None:
         self.config = (
             config
@@ -131,9 +149,15 @@ class JarvisControllerV2:
             "allow_gui_automation",
             fallback=False,
         )
+        self._app_launch_enabled = self.config.getboolean(
+            "execution",
+            "allow_app_launch",
+            fallback=True,
+        )
 
         settings, services = build_controller_services(
             self.config,
+            container=container,
             db_path=db_path,
             chroma_path=chroma_path,
             model_name=model_name,
@@ -171,6 +195,10 @@ class JarvisControllerV2:
         self.scheduler = services.scheduler
         self.notifier = services.notifier
         self.monitor = services.monitor
+        self.desktop_executor = services.desktop_executor
+        self.desktop_observer = services.desktop_observer
+        self.desktop_bridge = services.desktop_bridge
+        self.container = services.container
 
         self._conversation_buffer: list[str] = []
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
@@ -181,6 +209,25 @@ class JarvisControllerV2:
         self._goal_check_interval_seconds = settings.goal_check_interval_seconds
         self._goals_file = settings.goals_file
         self._load_goal_state()
+
+        self.live_automation = None
+        if self.config.has_section("automation") and self.config.getboolean("automation", "enabled", fallback=False):
+            try:
+                from core.automation.live_automation import LiveAutomationEngine
+
+                async def command_handler(cmd: str) -> str:
+                    return await self.process(cmd)
+
+                self.live_automation = LiveAutomationEngine(
+                    config=self.config,
+                    memory=self.memory,
+                    llm=self.llm,
+                    command_handler=command_handler,
+                    desktop_observer=services.desktop_observer,
+                    notifier=self.notifier,
+                )
+            except Exception as exc:
+                logger.warning("Failed to initialize LiveAutomationEngine: %s", exc)
 
         self._voice_layer = None
         if voice:
@@ -242,7 +289,6 @@ class JarvisControllerV2:
 
         selected_model = self.model_router.get_best_available("chat")
         self.llm.model = selected_model
-        self.llm.model_name = selected_model
 
         messages = [{"role": "user", "content": text}]
         profile_summary = (
@@ -276,6 +322,12 @@ class JarvisControllerV2:
             "'pip install -r requirements/desktop.txt', then restart Jarvis."
         )
 
+    def _app_launch_disabled_message(self) -> str:
+        return (
+            "Application launch is disabled. Set [execution] allow_app_launch = true "
+            "in config/jarvis.ini, then restart Jarvis."
+        )
+
     def _is_explicit_web_search(self, lowered: str) -> bool:
         """Return True when the user unambiguously asks for a live web search."""
         return any(phrase in lowered for phrase in _WEB_SEARCH_EXPLICIT_PHRASES)
@@ -295,12 +347,14 @@ class JarvisControllerV2:
             raw_results = await _web_search(query, max_results=5)
         except Exception as exc:  # noqa: BLE001
             logger.warning("[trace=%s] Web search failed: %s", trace_id, exc)
-            # Fall back to the LLM which can at least tell the user search failed
-            return await self._dispatch_llm(user_input, trace_id=trace_id)
+            return f"Web search failed: {exc}"
 
-        if not raw_results or raw_results.startswith("Search failed") or raw_results.startswith("Web search is disabled"):
+        if not raw_results or raw_results.startswith("Web search is disabled"):
             # Search didn't work — fall back to LLM
             return await self._dispatch_llm(user_input, trace_id=trace_id)
+
+        if raw_results.startswith("Search failed"):
+            return raw_results
 
         # Ask the LLM to turn the raw search output into a natural answer
         synthesis_prompt = (
@@ -312,7 +366,6 @@ class JarvisControllerV2:
         self.memory.build_context_block(user_input)
         selected_model = self.model_router.get_best_available("chat")
         self.llm.model = selected_model
-        self.llm.model_name = selected_model
         messages = [{"role": "user", "content": synthesis_prompt}]
         try:
             response = await self.llm.chat_async(
@@ -323,14 +376,53 @@ class JarvisControllerV2:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[trace=%s] Web search synthesis LLM call failed: %s", trace_id, exc)
-            # Return the raw results if synthesis fails
-            return raw_results
+            # Return parsed raw results if synthesis fails
+            return self._format_raw_fallback(raw_results)
 
         if not response or response == "LLM Offline.":
-            return raw_results
+            return self._format_raw_fallback(raw_results)
 
         self.memory.store_conversation(user_input, response, self.session_id)
         return response
+
+    def _format_raw_fallback(self, raw_results: str) -> str:
+        """Parse and format raw search results nicely when LLM synthesis is not available."""
+        import re
+        lines = raw_results.splitlines()
+        formatted_lines = []
+        current_title = None
+        current_num = None
+
+        for line in lines:
+            line_stripped = line.strip()
+            # Match "1. Title"
+            match = re.match(r"^(\d+)\.\s+(.*)$", line_stripped)
+            if match:
+                if current_title is not None:
+                    formatted_lines.append(f"{current_num}. {current_title}")
+                current_num = match.group(1)
+                current_title = match.group(2)
+                continue
+
+            # Match "URL: https://..."
+            if line_stripped.startswith("URL:") and current_title is not None:
+                url = line_stripped[4:].strip()
+                formatted_lines.append(f"{current_num}. {current_title} ({url})")
+                current_title = None
+                current_num = None
+                continue
+
+            if current_title is not None:
+                formatted_lines.append(f"{current_num}. {current_title}")
+                current_title = None
+                current_num = None
+
+            formatted_lines.append(line)
+
+        if current_title is not None:
+            formatted_lines.append(f"{current_num}. {current_title}")
+
+        return "\n".join(formatted_lines)
 
     async def process(self, user_input: str, trace_id: str | None = None) -> str:
         if not trace_id:
@@ -375,14 +467,39 @@ class JarvisControllerV2:
                 "open <app>, search <query> in <browser>"
             )
 
+        # Check for live automation commands
+        if hasattr(self, "live_automation") and self.live_automation is not None:
+            if lowered == "automation status":
+                status_info = self.live_automation.status()
+                response = f"{self.live_automation.status_line()}\nDrop Root: {status_info.get('drop_root')}\nCommands Dir: {status_info.get('commands_dir')}\nRAG Dir: {status_info.get('rag_dir')}"
+                return _respond(response)
+            elif lowered == "automation scan":
+                scan_res = await self.live_automation.force_scan()
+                response = f"Scan completed: commands={scan_res.get('commands_processed', 0)} files={scan_res.get('files_ingested', 0)} chunks={scan_res.get('chunks_ingested', 0)}"
+                return _respond(response)
+            elif lowered.startswith("rag search "):
+                query = text[len("rag search "):].strip()
+                response = self.live_automation.search_rag(query)
+                return _respond(response)
+
         if goal_res := await self._handle_goal_intent(lowered, text):
             return _respond(goal_res)
 
         if pref_res := await self._handle_preference_intent(lowered, text):
             return _respond(pref_res)
 
-        if desktop_res := await handle_desktop_command(text):
-            return _respond(desktop_res)
+        from core.controller.request_rules import is_active_window_request
+        if is_active_window_request(lowered):
+            obs = await self.desktop_observer.observe()
+            title = obs.active_window.get("title", "")
+            return _respond(f"The active window is: {title}")
+
+        desktop_plan = plan_desktop_command(text)
+        if desktop_plan is not None:
+            if not self._app_launch_enabled:
+                return _respond(self._app_launch_disabled_message())
+            if desktop_res := await handle_desktop_command(text):
+                return _respond(desktop_res)
 
         if (
             self._looks_like_desktop_control_request(lowered)
@@ -426,6 +543,8 @@ class JarvisControllerV2:
             self.monitor.start(),
             name="jarvis_resource_monitor_start",
         )
+        if self.live_automation is not None:
+            await self.live_automation.start()
 
     async def run_cli(self) -> None:
         if self._goal_check_task is None or self._goal_check_task.done():
@@ -433,10 +552,6 @@ class JarvisControllerV2:
                 self._check_due_goals(),
                 name="jarvis_goal_due_checker",
             )
-        asyncio.create_task(
-            self.monitor.start(),
-            name="jarvis_resource_monitor_start_cli",
-        )
 
         if self._voice_layer is not None:
             logger.info("Starting in voice mode...")
@@ -469,6 +584,8 @@ class JarvisControllerV2:
 
     async def shutdown(self) -> None:
         await self.monitor.stop()
+        if self.live_automation is not None:
+            await self.live_automation.stop()
 
         if self._goal_check_task is not None and not self._goal_check_task.done():
             self._goal_check_task.cancel()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Callable
+from typing import Callable, Any
 
 
 class IllegalTransitionError(RuntimeError):
@@ -61,9 +61,10 @@ _ALLOWED_TRANSITIONS: dict[State, set[State]] = {
 
 
 class StateMachine:
-    def __init__(self) -> None:
+    def __init__(self, event_bus: Any = None) -> None:
         self._state = State.IDLE
         self._listeners: list[Callable[[State, State], None]] = []
+        self.event_bus = event_bus
 
     @property
     def state(self) -> State:
@@ -79,6 +80,15 @@ class StateMachine:
             return False
         return candidate in _ALLOWED_TRANSITIONS.get(self._state, set())
 
+    def _notify(self, old_state: State, new_state: State) -> None:
+        for listener in list(self._listeners):
+            listener(old_state, new_state)
+        if self.event_bus:
+            self.event_bus.publish(
+                "state_transition",
+                {"old_state": old_state.value, "new_state": new_state.value}
+            )
+
     def transition(self, new_state: State) -> State:
         candidate = State(new_state)
         if not self.can_transition(candidate):
@@ -88,8 +98,7 @@ class StateMachine:
 
         old_state = self._state
         self._state = candidate
-        for listener in list(self._listeners):
-            listener(old_state, candidate)
+        self._notify(old_state, candidate)
         return self._state
 
     def reset(self) -> State:
@@ -99,8 +108,7 @@ class StateMachine:
             )
         old_state = self._state
         self._state = State.IDLE
-        for listener in list(self._listeners):
-            listener(old_state, self._state)
+        self._notify(old_state, self._state)
         return self._state
 
     def force_idle(self) -> State:
@@ -108,8 +116,7 @@ class StateMachine:
             return self._state
         old_state = self._state
         self._state = State.IDLE
-        for listener in list(self._listeners):
-            listener(old_state, self._state)
+        self._notify(old_state, self._state)
         return self._state
 
 

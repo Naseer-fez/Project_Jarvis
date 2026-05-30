@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jarvis Dashboard - Login</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .login-container {
+      max-width: 400px;
+      margin: 80px auto;
+      padding: 30px;
+      background: var(--bg2);
+      border: 1px solid rgba(78, 204, 163, 0.3);
+      border-radius: 16px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    .login-container h2 {
+      margin-top: 0;
+      color: var(--accent);
+      text-align: center;
+      letter-spacing: 0.1rem;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 0.9rem;
+      opacity: 0.9;
+    }
+    .form-group input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(78, 204, 163, 0.35);
+      background: #0f0f20;
+      color: var(--text);
+      font-family: var(--font);
+    }
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .login-btn {
+      width: 100%;
+      margin-top: 10px;
+    }
+    .error-msg {
+      color: var(--danger);
+      margin-bottom: 15px;
+      font-size: 0.9rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <h2>JARVIS SYSTEM ACCESS</h2>
+    
+    {% if error %}
+      <div class="error-msg">{{ error }}</div>
+    {% endif %}
+    
+    <form method="POST" action="/login">
+      <div class="form-group">
+        <label for="username">USERNAME</label>
+        <input type="text" id="username" name="username" required autocomplete="username" autofocus>
+      </div>
+      
+      <div class="form-group">
+        <label for="password">PASSWORD</label>
+        <input type="password" id="password" name="password" required autocomplete="current-password">
+      </div>
+      
+      <button class="btn login-btn" type="submit">AUTHENTICATE</button>
+    </form>
+  </div>
+</body>
+</html>

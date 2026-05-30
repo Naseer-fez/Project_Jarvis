@@ -5,3 +5,5 @@ pyautogui
 pygetwindow
 pytesseract
 pillow
+pyperclip
+opencv-python

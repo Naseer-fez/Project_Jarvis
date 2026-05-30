@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+jspm_packages/
+
+# Environments & Hidden IDE files
+.env
+.env.*
+.claude/
+
+# Build caches and output
+.next/
+.nuxt/
+dist/
+build/
+out/
+.cache/
+
+# System and logs
+*.log
+.DS_Store
+
+# Legacy and Duplicate reference folders
+archive_legacy/
+to_commit_pool/
+Jarvis-2.0/

@@ -30,6 +30,20 @@ class GoalIntentResult:
     mutated: bool = False
 
 
+_neural_scheduler = None
+
+
+def get_neural_scheduler() -> Any:
+    global _neural_scheduler
+    if _neural_scheduler is None:
+        try:
+            from core.agentic.neural_scheduler import NeuralScheduler
+            _neural_scheduler = NeuralScheduler()
+        except Exception as exc:
+            logger.warning("Failed to load neural scheduler: %s", exc)
+    return _neural_scheduler
+
+
 def handle_goal_intent(
     text: str,
     user_input: str,
@@ -48,7 +62,23 @@ def handle_goal_intent(
             ).strip()
         description = description.strip(" .?!")
         if description:
-            goal_id = goal_manager.create_goal(description=description)
+            # Predict priority and delay using neural scheduler
+            pred_priority, pred_delay = 5, 0.0
+            ns = get_neural_scheduler()
+            if ns and ns.loaded:
+                try:
+                    pred_priority, pred_delay = ns.predict(user_input)
+                except Exception as exc:
+                    logger.warning("Neural scheduler prediction failed: %s", exc)
+
+            # Fallback/hybrid delay logic: use explicit regex extracted delay if present
+            regex_delay = extract_goal_delay_seconds(user_input)
+            delay_seconds = regex_delay if regex_delay > 0.0 else pred_delay
+
+            goal_id = goal_manager.create_goal(
+                description=description,
+                priority=pred_priority,
+            )
             try:
                 goal_manager.start_goal(goal_id)
             except (ValueError, KeyError) as exc:
@@ -56,11 +86,18 @@ def handle_goal_intent(
             scheduler.enqueue(
                 mission_id=goal_id,
                 goal_id=goal_id,
-                delay_seconds=extract_goal_delay_seconds(user_input),
+                delay_seconds=delay_seconds,
                 description=description,
             )
+            
+            # Nicely format response mentioning the predicted parameters
+            if delay_seconds > 0.0:
+                response = f"Goal set: {description} (priority: {pred_priority}, scheduled in {int(delay_seconds)}s)"
+            else:
+                response = f"Goal set: {description} (priority: {pred_priority}, scheduled immediately)"
+            
             return GoalIntentResult(
-                response=f"Goal set: {description}",
+                response=response,
                 mutated=True,
             )
 

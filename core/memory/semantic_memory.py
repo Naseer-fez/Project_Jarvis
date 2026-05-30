@@ -62,11 +62,11 @@ class SemanticMemory:
         self,
         chroma_path: str = CHROMA_PATH,
         model_name: str = DEFAULT_MODEL,
+        embedding_manager: Any = None,
     ):
         self.chroma_path = chroma_path
         self.model_name  = model_name
-        # typed as Any because SentenceTransformer is imported lazily
-        self._model: Any = None
+        self.embedding_manager = embedding_manager
         self._client: Any = None
         self._collections: Dict[str, Any] = {}
         self._initialized = False
@@ -86,9 +86,14 @@ class SemanticMemory:
             return False
              
         try:
-            logger.info(f"Loading embedding model: {self.model_name}")
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.model_name)
+            if self.embedding_manager is None:
+                from core.memory.embeddings import get_embedding_manager
+                self.embedding_manager = get_embedding_manager(self.model_name)
+
+            if not self.embedding_manager.is_ready():
+                if not self.embedding_manager.initialize():
+                    logger.warning("Embedding manager failed to initialize; disabling semantic memory.")
+                    return False
 
             logger.info(f"Connecting to ChromaDB at: {self.chroma_path}")
             self._client = chromadb.PersistentClient(
@@ -118,7 +123,7 @@ class SemanticMemory:
 
     def _embed(self, text: str) -> List[float]:
         """Generate a normalized embedding vector for the given text."""
-        return self._model.encode(text, normalize_embeddings=True).tolist()
+        return self.embedding_manager.embed(text)
 
     def _collection(self, name: str):
         return self._collections[name]

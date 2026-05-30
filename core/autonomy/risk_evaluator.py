@@ -1,4 +1,4 @@
-﻿"""Deterministic table-driven risk evaluator for planned tool actions."""
+"""Deterministic table-driven risk evaluator for planned tool actions."""
 
 from __future__ import annotations
 
@@ -95,8 +95,19 @@ class RiskEvaluator:
             "click",
             "double_click",
             "right_click",
+            "click_text_on_screen",
+            "click_screen_target",
+            "double_click_screen_target",
+            "right_click_screen_target",
+            "move_mouse",
+            "scroll",
+            "drag",
+            "focus_window",
             "type_text",
+            "press_key",
             "hotkey",
+            "clipboard_set",
+            "clipboard_paste",
             "send_hardware_command",
             # Path B — Automation integrations (irreversible / outbound actions)
             "send_telegram",
@@ -116,6 +127,11 @@ class RiskEvaluator:
             "create_issue",
             "close_issue",
             "create_gist",
+            # New File System Write Operations
+            "sort_files",
+            "copy_file",
+            "move_file",
+            "create_directory",
         }
     )
 
@@ -127,7 +143,6 @@ class RiskEvaluator:
             "spawn_process",
             "popen",
             "app_open",
-            "vision_click",
             "gui_click",
             "gui_type",
             "gui_hotkey",
@@ -145,12 +160,9 @@ class RiskEvaluator:
             "open_file",
             "screen_capture",
             "screenshot",
-            "screen_understand",
             "sensor_read",
             "web_search",
             "ui_interaction",
-            "click",
-            "type_text",
             "key_press",
             "notification",
             "send_notification",
@@ -175,12 +187,17 @@ class RiskEvaluator:
             "read_file",
             "search_code",
             "run_linter",
+            # New File System Read Operations
+            "find_files",
             # Session 7 — read-only screen + hardware tools
             "capture_screen",
             "capture_region",
             "find_text_on_screen",
+            "read_screen_text",
+            "wait_for_text_on_screen",
             "describe_screen",
             "get_active_window",
+            "clipboard_get",
             "list_hardware_devices",
             "ping_device",
             "read_sensor",
@@ -213,6 +230,52 @@ class RiskEvaluator:
         if config is not None:
             self._load_config(config)
 
+    def register_critical_action(self, action: str) -> None:
+        """Dynamically register an action as CRITICAL risk level."""
+        action_clean = action.strip().lower()
+        self._critical.add(action_clean)
+        self._confirm.discard(action_clean)
+        self._high.discard(action_clean)
+        self._medium.discard(action_clean)
+        self._low.discard(action_clean)
+
+    def register_confirm_action(self, action: str) -> None:
+        """Dynamically register an action as CONFIRM risk level."""
+        action_clean = action.strip().lower()
+        self._confirm.add(action_clean)
+        self._critical.discard(action_clean)
+        self._high.discard(action_clean)
+        self._medium.discard(action_clean)
+        self._low.discard(action_clean)
+
+    def register_high_action(self, action: str) -> None:
+        """Dynamically register an action as HIGH risk level."""
+        action_clean = action.strip().lower()
+        self._high.add(action_clean)
+        self._critical.discard(action_clean)
+        self._confirm.discard(action_clean)
+        self._medium.discard(action_clean)
+        self._low.discard(action_clean)
+
+    def register_medium_action(self, action: str) -> None:
+        """Dynamically register an action as MEDIUM risk level."""
+        action_clean = action.strip().lower()
+        self._medium.add(action_clean)
+        self._critical.discard(action_clean)
+        self._confirm.discard(action_clean)
+        self._high.discard(action_clean)
+        self._low.discard(action_clean)
+
+    def register_low_action(self, action: str) -> None:
+        """Dynamically register an action as LOW risk level."""
+        action_clean = action.strip().lower()
+        self._low.add(action_clean)
+        self._critical.discard(action_clean)
+        self._confirm.discard(action_clean)
+        self._high.discard(action_clean)
+        self._medium.discard(action_clean)
+
+
     def _load_config(self, config) -> None:
         def _parse(section: str, key: str) -> set[str]:
             raw = config.get(section, key, fallback="")
@@ -225,15 +288,35 @@ class RiskEvaluator:
         low = _parse("risk", "low_risk_actions")
 
         if critical:
-            self._critical = critical
+            self._critical.update(critical)
+            self._confirm.difference_update(critical)
+            self._high.difference_update(critical)
+            self._medium.difference_update(critical)
+            self._low.difference_update(critical)
         if confirm:
-            self._confirm = confirm
+            self._confirm.update(confirm)
+            self._critical.difference_update(confirm)
+            self._high.difference_update(confirm)
+            self._medium.difference_update(confirm)
+            self._low.difference_update(confirm)
         if high:
-            self._high = high
+            self._high.update(high)
+            self._critical.difference_update(high)
+            self._confirm.difference_update(high)
+            self._medium.difference_update(high)
+            self._low.difference_update(high)
         if medium:
-            self._medium = medium
+            self._medium.update(medium)
+            self._critical.difference_update(medium)
+            self._confirm.difference_update(medium)
+            self._high.difference_update(medium)
+            self._low.difference_update(medium)
         if low:
-            self._low = low
+            self._low.update(low)
+            self._critical.difference_update(low)
+            self._confirm.difference_update(low)
+            self._high.difference_update(low)
+            self._medium.difference_update(low)
 
     def evaluate(self, actions: Sequence[str]) -> RiskResult:
         if not actions:

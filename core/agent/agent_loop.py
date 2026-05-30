@@ -15,10 +15,11 @@ try:
 except Exception:  # noqa: BLE001
     httpx = None  # type: ignore[assignment]
 
-from core.agent.state_machine import AgentState, StateMachine
+from core.state_machine import State as AgentState, StateMachine
 from core.autonomy.autonomy_governor import AutonomyGovernor
 from core.autonomy.risk_evaluator import RiskEvaluator
 from core.llm.task_planner import TaskPlanner
+from core.agent.desktop_bridge import DesktopBridge, is_desktop_action
 from core.metrics.confidence import ConfidenceModel
 from core.tools.tool_router import ToolObservation, ToolRouter
 
@@ -87,25 +88,29 @@ class ExecutionTrace:
 class AgentLoopEngine:
     def __init__(
         self,
-        state_machine: StateMachine,
-        task_planner: TaskPlanner,
-        tool_router: ToolRouter,
-        risk_evaluator: RiskEvaluator,
-        autonomy_governor: AutonomyGovernor,
+        state_machine: StateMachine | None = None,
+        task_planner: TaskPlanner | None = None,
+        tool_router: ToolRouter | None = None,
+        risk_evaluator: RiskEvaluator | None = None,
+        autonomy_governor: AutonomyGovernor | None = None,
         model: str = "mistral",
         ollama_url: str = "http://localhost:11434",
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
         llm: Any = None,  # Optional[LLMClientV2] — avoids import cycle
+        desktop_bridge: DesktopBridge | None = None,
+        container: Any = None,
     ):
-        self.sm = state_machine
-        self.planner = task_planner
-        self.router = tool_router
-        self.risk = risk_evaluator
-        self.gov = autonomy_governor
+        self.container = container
+        self.sm = state_machine or (container.resolve("state_machine") if container else None)
+        self.planner = task_planner or (container.resolve("task_planner") if container else None)
+        self.router = tool_router or (container.resolve("tool_router") if container else None)
+        self.risk = risk_evaluator or (container.resolve("risk_evaluator") if container else None)
+        self.gov = autonomy_governor or (container.resolve("autonomy_governor") if container else None)
         self.model = model or "deepseek-r1:8b"
         self.ollama_url = ollama_url
         self.max_iterations = max(1, int(max_iterations or _DEFAULT_MAX_ITERATIONS))
-        self.llm = llm  # LLMClientV2 instance, if provided
+        self.llm = llm or (container.resolve("llm") if container else None)
+        self.desktop_bridge = desktop_bridge or (container.resolve("desktop_bridge") if container else None)
         self.confidence = ConfidenceModel()
         self._interrupt = asyncio.Event()
 
@@ -258,7 +263,17 @@ class AgentLoopEngine:
             if self.sm.state in {AgentState.RISK_EVALUATION, AgentState.AWAITING_CONFIRMATION, AgentState.OBSERVING}:
                 self.sm.transition(AgentState.ACTING)
 
-            observation = await self.router.execute(action, params)
+            # Desktop actions go through observe→act→verify→recover bridge.
+            if self.desktop_bridge is not None and is_desktop_action(action):
+                observation, mission_record = await self.desktop_bridge.execute_step(
+                    action,
+                    params,
+                    goal=goal,
+                    description=description,
+                )
+            else:
+                observation = await self.router.execute(action, params)
+
             observations.append(observation)
             self.sm.transition(AgentState.OBSERVING)
 

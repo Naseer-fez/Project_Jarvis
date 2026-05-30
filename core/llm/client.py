@@ -1,8 +1,14 @@
-"""Async Ollama client with optional memory and workspace context injection."""
+"""Async LLM client — single entry point for all Jarvis LLM calls.
+
+Architecture:
+    LLMClientV2.complete(prompt, task_type)
+        → ModelRouter.pick_model(task_type)   → model name
+        → OllamaClient.complete(prompt, model) → response (or raise)
+        → CloudLLMClient.complete(prompt)      → fallback response
+"""
 
 from __future__ import annotations
 
-from core.config.defaults import OLLAMA_BASE_URL
 import asyncio
 import json
 import logging
@@ -11,7 +17,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-import aiohttp
+from core.config.defaults import OLLAMA_BASE_URL
+from core.llm.ollama_client import OllamaClient
+from core.llm.model_router import ModelRouter
+from core.llm.defaults import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -20,18 +29,11 @@ try:
 except Exception:  # pragma: no cover - cloud fallback is optional
     CloudLLMClient = None  # type: ignore[assignment]
 
-DEFAULT_MODEL = "deepseek-r1:8b"
-TIMEOUT_S = 120
-
 JARVIS_SYSTEM = (
     "You are Jarvis, a local personal AI assistant.\n"
     "You are concise, technical, and truthful.\n"
     "You run on the user's local machine."
 )
-
-
-def _strip_think(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL).strip()
 
 
 def _strip_fences(text: str) -> str:
@@ -46,7 +48,7 @@ def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> st
     """Build a compact directory view to ground model responses in local files."""
     global _WORKSPACE_CACHE
     now = time.time()
-    
+
     if path in _WORKSPACE_CACHE and now - _WORKSPACE_CACHE[path]["time"] < 60:
         return _WORKSPACE_CACHE[path]["data"]
 
@@ -82,12 +84,29 @@ def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> st
 
 
 class LLMClientV2:
-    def __init__(self, hybrid_memory: Any = None, model: str = DEFAULT_MODEL, profile: Any = None, base_url: str = OLLAMA_BASE_URL):
+    """Public interface — all LLM calls in Jarvis enter here.
+
+    Wiring (in order):
+        1. ``ModelRouter.pick_model(task_type)`` → model name
+        2. ``OllamaClient.complete(prompt, model=…)`` → try local first
+        3. ``CloudLLMClient.complete(prompt)`` → fallback if Ollama fails
+    """
+
+    def __init__(
+        self,
+        hybrid_memory: Any = None,
+        model: str = DEFAULT_MODEL,
+        profile: Any = None,
+        base_url: str = OLLAMA_BASE_URL,
+    ) -> None:
         self.memory = hybrid_memory
         self.model = model
         self.profile = profile
         self.base_url = base_url
-        self.model_router = None
+
+        # ── Component wiring ─────────────────────────────────────────────
+        self._ollama = OllamaClient(base_url=base_url)
+        self.model_router: ModelRouter | None = None
 
         self._cloud_client = None
         import os
@@ -100,8 +119,10 @@ class LLMClientV2:
             except Exception as e:
                 logger.warning("Could not init CloudLLMClient: %s", e)
 
-    def set_router(self, router) -> None:
+    def set_router(self, router: ModelRouter) -> None:
         self.model_router = router
+
+    # ── Core complete() — the single path every prompt takes ─────────────
 
     async def complete(
         self,
@@ -111,98 +132,43 @@ class LLMClientV2:
         task_type: str = "chat",
         keep_think: bool = False,
     ) -> str:
-        """Text completion via Ollama /api/generate."""
+        """Text completion: ModelRouter → OllamaClient → CloudLLMClient fallback.
+
+        Steps:
+            1. Ask ModelRouter for the best model name for this task_type.
+            2. Call OllamaClient.complete() with that model.
+            3. If Ollama raises ANY exception, fall back to CloudLLMClient.
+        """
+        # Step 1 — pick model
         if self.model_router is not None:
-            model_to_use = self.model_router.get_best_available(task_type)
+            model_to_use = self.model_router.pick_model(task_type)
         else:
             model_to_use = self.model
 
-        if model_to_use.startswith("gemini-"):
-            return await self._complete_gemini(model_to_use, prompt, system, temperature)
-
-        payload = {
-            "model": model_to_use,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": temperature, "top_p": 0.9},
-        }
-        if system:
-            payload["system"] = system
-
-        raw = ""
-        for attempt in range(3):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        f"{self.base_url}/api/generate",
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
-                    ) as response:
-                        if response.status != 200:
-                            logger.error("Ollama HTTP %s on attempt %d", response.status, attempt + 1)
-                        else:
-                            data = await response.json()
-                            raw = str(data.get("response", ""))
-                            if not keep_think:
-                                raw = _strip_think(raw)
-                        break
-            except asyncio.TimeoutError:
-                logger.error("LLM timeout after %ss on attempt %d", TIMEOUT_S, attempt + 1)
-                break
-            except aiohttp.ClientError as exc:
-                if attempt == 2:
-                    logger.error("LLM completion failed after 3 attempts: %s", exc)
-                else:
-                    await asyncio.sleep(0.5 * (2 ** attempt))
-            except Exception as exc:  # noqa: BLE001
-                logger.error("LLM completion unexpected failure: %s", exc)
-                break
-
-        if not raw and self._cloud_client is not None:
-            logger.warning("Ollama returned empty. Attempting cloud fallback.")
-            try:
-                return await self._cloud_client.complete(prompt, system=system, temperature=temperature)
-            except Exception as exc:
-                logger.error("Cloud fallback also failed: %s", exc)
-                
-        return raw
-
-    async def _complete_gemini(self, model: str, prompt: str, system: str, temperature: float) -> str:
-        """Text completion via Google Gemini API."""
-        import os
+        # Step 2 — try Ollama
         try:
-            from google import genai
-            from google.genai import types
-        except ImportError:
-            logger.error("google-genai not installed: pip install google-genai")
-            return ""
-
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key:
-            logger.error("GEMINI_API_KEY environment variable not set")
-            return ""
-
-        try:
-            client = genai.Client(api_key=api_key)
-            config = types.GenerateContentConfig(
+            return await self._ollama.complete(
+                prompt,
+                system=system,
                 temperature=temperature,
-                system_instruction=system if system else None,
+                model=model_to_use,
+                keep_think=keep_think,
             )
-            # Run the synchronous SDK call in an executor since google-genai handles its own threads better this way
-            loop = asyncio.get_running_loop()
-            
-            def _call():
-                return client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                    config=config
-                )
-                
-            response = await loop.run_in_executor(None, _call)
-            return getattr(response, "text", "") or ""
         except Exception as exc:
-            logger.error("Gemini completion failed: %s", exc)
-            return ""
+            logger.warning("Ollama failed (%s). Attempting cloud fallback.", exc)
+
+        # Step 3 — cloud fallback
+        if self._cloud_client is not None:
+            try:
+                return await self._cloud_client.complete(
+                    prompt, system=system, temperature=temperature
+                )
+            except Exception as cloud_exc:
+                logger.error("Cloud fallback also failed: %s", cloud_exc)
+
+        return ""
+
+    # ── JSON completion helper ───────────────────────────────────────────
 
     async def complete_json(
         self,
@@ -220,6 +186,8 @@ class LLMClientV2:
         except json.JSONDecodeError as exc:
             logger.error("JSON parse failed: %s", exc)
             return None
+
+    # ── Chat interface (backward-compat for controller / agent loop) ─────
 
     async def chat_async(
         self,
@@ -250,13 +218,6 @@ class LLMClientV2:
         trace_id: str | None = None,
     ) -> str:
         """Sync bridge — ONLY call from truly synchronous, non-async contexts."""
-        self._build_system(
-            query=query_for_memory,
-            profile=profile_summary,
-            workspace_path=workspace_path,
-        )
-        self._messages_to_prompt(messages)
-
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(
@@ -274,6 +235,23 @@ class LLMClientV2:
     ):
         response = self.chat(messages, query_for_memory, profile_summary, workspace_path)
         yield response
+
+    # ── Health check ─────────────────────────────────────────────────────
+
+    def is_ollama_running(self) -> bool:
+        """Sync health check — runs in its own thread to avoid event loop conflicts."""
+        import concurrent.futures
+
+        async def _check() -> bool:
+            return await self._ollama.is_running()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            try:
+                return pool.submit(asyncio.run, _check()).result(timeout=5)
+            except Exception:
+                return False
+
+    # ── Internal helpers ─────────────────────────────────────────────────
 
     def _build_system(self, query: str = "", profile: str = "", workspace_path: str = "") -> str:
         parts = [JARVIS_SYSTEM]
@@ -328,31 +306,6 @@ class LLMClientV2:
             content = str(message.get("content", ""))
             lines.append(f"{role}: {content}")
         return "\n".join(lines)
-
-    def is_ollama_running(self) -> bool:
-        """Sync health check — runs in its own thread to avoid event loop conflicts."""
-        import concurrent.futures
-
-        # We must capture self.base_url for the nested _check to use without binding self wrongly if thread issues arise,
-        # but since we run this in a threadpool with asyncio.run(_check()), safely pass it in or capture it.
-        url = self.base_url
-
-        async def _check() -> bool:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(
-                        url,
-                        timeout=aiohttp.ClientTimeout(total=3),
-                    ) as response:
-                        return response.status == 200
-            except Exception:
-                return False
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            try:
-                return pool.submit(asyncio.run, _check()).result(timeout=5)
-            except Exception:
-                return False
 
 
 __all__ = ["LLMClientV2"]

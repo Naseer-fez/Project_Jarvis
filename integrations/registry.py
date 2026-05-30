@@ -1,4 +1,4 @@
-﻿"""Registry and execution router for active Jarvis integrations."""
+"""Registry and execution router for active Jarvis integrations."""
 
 from __future__ import annotations
 
@@ -50,6 +50,52 @@ class IntegrationRegistry:
 
         self._integrations[name] = integration
         logger.info("Integration registered: %s (%d tools)", name, len(tools))
+
+    def register_safety_rules(
+        self,
+        autonomy_governor: Any,
+        risk_evaluator: Any,
+        dispatcher: Any = None,
+    ) -> None:
+        """Scan all registered tools and configure active AutonomyGovernor, RiskEvaluator, and Dispatcher."""
+        tools = self.get_tools() or []
+        for tool in tools:
+            tool_name = str(tool.get("name", "")).strip()
+            if not tool_name:
+                continue
+
+            # Risk level string from tool definition
+            risk_str = str(tool.get("risk", "")).strip().lower()
+
+            # Determine classification: low/read-only vs write/confirm
+            is_write = True
+            if risk_str in ("low", "read_only", "read-only"):
+                is_write = False
+
+            # Register with AutonomyGovernor
+            if autonomy_governor is not None:
+                if is_write:
+                    autonomy_governor.register_write_tool(tool_name)
+                else:
+                    autonomy_governor.register_read_only_tool(tool_name)
+
+            # Register with RiskEvaluator
+            if risk_evaluator is not None:
+                if risk_str == "low":
+                    risk_evaluator.register_low_action(tool_name)
+                elif risk_str == "medium":
+                    risk_evaluator.register_medium_action(tool_name)
+                else:  # default/confirm/high
+                    risk_evaluator.register_confirm_action(tool_name)
+
+            # Register with Dispatcher risk registry if provided
+            if dispatcher is not None:
+                score = 0.8
+                if risk_str == "low":
+                    score = 0.1
+                elif risk_str == "medium":
+                    score = 0.6
+                dispatcher.register_integration_tool_risk(tool_name, score)
 
     def get_tools(self) -> list[dict[str, Any]]:
         merged: list[dict[str, Any]] = []

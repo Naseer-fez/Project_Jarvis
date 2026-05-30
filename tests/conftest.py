@@ -4,6 +4,10 @@ tests/conftest.py — shared pytest fixtures for Jarvis Session 8.
 
 from __future__ import annotations
 
+import os
+os.environ["JARVIS_MOCK_EMBEDDINGS"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "1"
+
 import sys
 from configparser import ConfigParser
 from pathlib import Path

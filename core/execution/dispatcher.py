@@ -1,4 +1,4 @@
-﻿"""Execution dispatcher with core-tool and dynamic-integration routing."""
+"""Execution dispatcher with core-tool and dynamic-integration routing."""
 
 from __future__ import annotations
 
@@ -9,12 +9,24 @@ from pathlib import Path
 from typing import Any
 
 from core.agentic.autonomy_policy import AutonomyPolicy, PolicyDecision, PolicyVerdict
+from core.desktop.actions import DesktopActionExecutor
+from core.desktop.contracts import (
+    DesktopAction,
+    DesktopActionType,
+)
+from core.execution.dispatch_pipeline import DispatchPipeline, DispatchRequest
+from core.execution.dispatch_rules import (
+    core_or_desktop_risk_score,
+    integration_risk_score,
+    is_core_tool,
+    is_desktop_action,
+    is_integration_tool,
+)
 from core.tools.system_automation import (
     TOOL_REGISTRY,
     ToolResult,
     async_delete_file,
     async_execute_shell,
-    async_launch_application,
     async_list_directory,
     async_read_file,
     async_write_file,
@@ -82,11 +94,40 @@ class DispatchError(Exception):
     pass
 
 
+# Desktop action names routed through DesktopActionExecutor.
+_DESKTOP_ACTION_MAP: dict[str, DesktopActionType] = {
+    "click": DesktopActionType.CLICK,
+    "double_click": DesktopActionType.DOUBLE_CLICK,
+    "right_click": DesktopActionType.RIGHT_CLICK,
+    "type_text": DesktopActionType.TYPE_TEXT,
+    "hotkey": DesktopActionType.HOTKEY,
+    "move_mouse": DesktopActionType.MOVE_MOUSE,
+    "scroll": DesktopActionType.SCROLL,
+    "drag": DesktopActionType.DRAG,
+    "focus_window": DesktopActionType.FOCUS_WINDOW,
+    "clipboard_get": DesktopActionType.CLIPBOARD_GET,
+    "clipboard_set": DesktopActionType.CLIPBOARD_SET,
+    "clipboard_paste": DesktopActionType.CLIPBOARD_PASTE,
+    "launch_application": DesktopActionType.LAUNCH_APP,
+}
+
+
 class Dispatcher:
-    def __init__(self, autonomy_policy: AutonomyPolicy, reflection_engine, voice_layer=None):
+    def __init__(
+        self,
+        autonomy_policy: AutonomyPolicy,
+        reflection_engine,
+        voice_layer=None,
+        desktop_executor: DesktopActionExecutor | None = None,
+    ):
         self.policy = autonomy_policy
         self.reflection = reflection_engine
         self.voice = voice_layer
+        self.desktop_executor = desktop_executor or DesktopActionExecutor()
+
+        # Dynamic risk registries
+        self.core_risk_registry = dict(CORE_TOOL_RISK_REGISTRY)
+        self.integration_risk_registry = dict(INTEGRATION_RISK_REGISTRY)
 
         # Rate limiting — 30 tool calls per 60-second window per instance
         self._call_count: int = 0
@@ -98,19 +139,24 @@ class Dispatcher:
             "read_file": self._run_read_file,
             "write_file": self._run_write_file,
             "delete_file": self._run_delete_file,
-            "launch_application": self._run_launch_application,
             "execute_shell": self._run_execute_shell,
             "capture_screen": self._run_capture_screen,
             "capture_region": self._run_capture_region,
             "find_text_on_screen": self._run_find_text_on_screen,
             "describe_screen": self._run_describe_screen,
-            "click": self._run_click,
-            "double_click": self._run_double_click,
-            "right_click": self._run_right_click,
-            "type_text": self._run_type_text,
-            "hotkey": self._run_hotkey,
             "get_active_window": self._run_get_active_window,
         }
+        self._dispatch_pipeline = self._build_dispatch_pipeline()
+
+    def register_core_tool_risk(self, tool_name: str, risk_score: float) -> None:
+        """Register or override a core/desktop tool risk score dynamically."""
+        self.core_risk_registry[tool_name] = float(risk_score)
+        logger.debug("Registered core tool '%s' risk score: %.2f", tool_name, risk_score)
+
+    def register_integration_tool_risk(self, tool_name: str, risk_score: float) -> None:
+        """Register or override an integration tool risk score dynamically."""
+        self.integration_risk_registry[tool_name] = float(risk_score)
+        logger.debug("Registered integration tool '%s' risk score: %.2f", tool_name, risk_score)
 
     def _sanitize_args(self, args: dict) -> dict:
         """Strip null bytes and truncate oversized string values."""
@@ -139,27 +185,95 @@ class Dispatcher:
 
         # Sanitize args before dispatching
         args = self._sanitize_args(args)
+        request = DispatchRequest(
+            tool_name=tool_name,
+            args=args,
+            rationale=rationale,
+        )
 
-        # 1) Built-in core tool registry first.
-        if tool_name in self._core_tools:
-            risk_score = float(CORE_TOOL_RISK_REGISTRY.get(tool_name, 1.0))
-            logger.info("Dispatch core tool='%s' risk=%.2f rationale='%s'", tool_name, risk_score, rationale)
-            return await self._dispatch_core_tool(tool_name, args, risk_score)
+        routed = await self._dispatch_pipeline.run(request)
+        if routed is None:
+            return await self._route_unknown_tool(request)
+        return routed
 
-        # 2) Dynamic integrations second.
-        if self._has_integration_tool(tool_name):
-            risk_score = float(INTEGRATION_RISK_REGISTRY.get(tool_name, 0.6))
-            logger.info(
-                "Dispatch integration tool='%s' risk=%.2f rationale='%s'",
-                tool_name,
-                risk_score,
-                rationale,
-            )
-            return await self._dispatch_integration_tool(tool_name, args, risk_score)
+    def _build_dispatch_pipeline(self) -> DispatchPipeline:
+        return DispatchPipeline(
+            [
+                self._route_desktop_action,
+                self._route_core_tool,
+                self._route_integration_tool,
+                self._route_unknown_tool,
+            ]
+        )
 
-        result = ToolResult(False, error=f"Unknown tool: '{tool_name}'")
-        await self._feed_reflection(tool_name, args, result)
+    async def _route_desktop_action(self, request: DispatchRequest) -> ToolResult | None:
+        # Allow explicit core-tool overrides (useful in tests and staged migrations).
+        if is_core_tool(request.tool_name, self._core_tools):
+            return None
+        if not is_desktop_action(request.tool_name, _DESKTOP_ACTION_MAP):
+            return None
+
+        risk_score = core_or_desktop_risk_score(
+            request.tool_name,
+            self.core_risk_registry,
+        )
+        logger.info(
+            "Dispatch desktop action='%s' risk=%.2f rationale='%s'",
+            request.tool_name,
+            risk_score,
+            request.rationale,
+        )
+        return await self._dispatch_desktop_action(
+            request.tool_name,
+            request.args,
+            risk_score,
+        )
+
+    async def _route_core_tool(self, request: DispatchRequest) -> ToolResult | None:
+        if not is_core_tool(request.tool_name, self._core_tools):
+            return None
+
+        risk_score = core_or_desktop_risk_score(
+            request.tool_name,
+            self.core_risk_registry,
+        )
+        logger.info(
+            "Dispatch core tool='%s' risk=%.2f rationale='%s'",
+            request.tool_name,
+            risk_score,
+            request.rationale,
+        )
+        return await self._dispatch_core_tool(
+            request.tool_name,
+            request.args,
+            risk_score,
+        )
+
+    async def _route_integration_tool(self, request: DispatchRequest) -> ToolResult | None:
+        if not is_integration_tool(request.tool_name, self._has_integration_tool):
+            return None
+
+        risk_score = integration_risk_score(
+            request.tool_name,
+            self.integration_risk_registry,
+        )
+        logger.info(
+            "Dispatch integration tool='%s' risk=%.2f rationale='%s'",
+            request.tool_name,
+            risk_score,
+            request.rationale,
+        )
+        return await self._dispatch_integration_tool(
+            request.tool_name,
+            request.args,
+            risk_score,
+        )
+
+    async def _route_unknown_tool(self, request: DispatchRequest) -> ToolResult:
+        result = ToolResult(False, error=f"Unknown tool: '{request.tool_name}'")
+        await self._feed_reflection(request.tool_name, request.args, result)
         return result
+
 
     def _integration_tool_names(self) -> set[str]:
         if integration_registry is None:
@@ -186,6 +300,52 @@ class Dispatcher:
                 pass
 
         return tool_name in self._integration_tool_names()
+
+    async def _dispatch_desktop_action(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        risk_score: float,
+    ) -> ToolResult:
+        """Route a desktop action through the DesktopActionExecutor contract."""
+        allowed = await self._check_policy(tool_name, args, risk_score)
+        if not allowed:
+            result = ToolResult(False, error=f"Action '{tool_name}' blocked by policy or user rejection")
+            await self._feed_reflection(tool_name, args, result)
+            return result
+
+        action_type = _DESKTOP_ACTION_MAP[tool_name]
+        desktop_action = DesktopAction(
+            action_type=action_type,
+            params=dict(args),
+            description=f"Dispatcher: {tool_name}",
+            metadata={"source": "dispatcher", "risk_score": risk_score},
+            requires_approval=False,  # policy already checked above
+        )
+
+        try:
+            action_result = await self.desktop_executor.execute(desktop_action, approved=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Desktop action '%s' failed", tool_name)
+            result = ToolResult(False, error=f"Dispatcher error: {exc}")
+            await self._feed_reflection(tool_name, args, result)
+            return result
+
+        result = ToolResult(
+            success=action_result.success,
+            output=action_result.output or "",
+            error=action_result.error or "",
+            metadata={
+                "action_id": action_result.action_id,
+                "risk_tier": action_result.risk_tier.value,
+                "status": action_result.status.value,
+                "audit_hash": action_result.audit_hash,
+                "duration_seconds": action_result.duration_seconds,
+                **(action_result.metadata or {}),
+            },
+        )
+        await self._feed_reflection(tool_name, args, result)
+        return result
 
     async def _dispatch_core_tool(self, tool_name: str, args: dict[str, Any], risk_score: float) -> ToolResult:
         allowed = await self._check_policy(tool_name, args, risk_score)
@@ -293,9 +453,6 @@ class Dispatcher:
     async def _run_delete_file(self, args: dict[str, Any]) -> ToolResult:
         return await async_delete_file(args["path"])
 
-    async def _run_launch_application(self, args: dict[str, Any]) -> ToolResult:
-        return await async_launch_application(args["target"], args.get("args"))
-
     async def _run_execute_shell(self, args: dict[str, Any]) -> ToolResult:
         return await async_execute_shell(args["command"], args.get("working_dir"))
 
@@ -328,40 +485,6 @@ class Dispatcher:
         from core.tools.screen import describe_screen
 
         return _coerce_tool_result(await asyncio.to_thread(describe_screen))
-
-    async def _run_click(self, args: dict[str, Any]) -> ToolResult:
-        from core.tools.gui_control import click
-
-        return _coerce_tool_result(
-            await click(
-                int(args["x"]),
-                int(args["y"]),
-                str(args.get("button", "left") or "left"),
-            )
-        )
-
-    async def _run_double_click(self, args: dict[str, Any]) -> ToolResult:
-        from core.tools.gui_control import double_click
-
-        return _coerce_tool_result(await double_click(int(args["x"]), int(args["y"])))
-
-    async def _run_right_click(self, args: dict[str, Any]) -> ToolResult:
-        from core.tools.gui_control import right_click
-
-        return _coerce_tool_result(await right_click(int(args["x"]), int(args["y"])))
-
-    async def _run_type_text(self, args: dict[str, Any]) -> ToolResult:
-        from core.tools.gui_control import type_text
-
-        interval = float(args.get("interval", 0.05) or 0.05)
-        return _coerce_tool_result(await type_text(str(args["text"]), interval=interval))
-
-    async def _run_hotkey(self, args: dict[str, Any]) -> ToolResult:
-        from core.tools.gui_control import hotkey
-
-        raw_keys = args.get("keys", [])
-        keys = [str(item) for item in raw_keys] if isinstance(raw_keys, (list, tuple)) else [str(raw_keys)]
-        return _coerce_tool_result(await hotkey(*[key for key in keys if key]))
 
     async def _run_get_active_window(self, args: dict[str, Any]) -> ToolResult:
         del args
@@ -527,10 +650,7 @@ class ToolDispatcher:
             return self._action_file_read(params)
         if action in ("file_write", "write_file"):
             return self._action_file_write(params)
-        if action in ("screen_understand",):
-            return self._action_screen_understand(params)
-        if action in ("vision_click",):
-            return self._action_vision_click(params)
+
         if action == "physical_actuate":
             return self._action_physical_actuate(params)
         if action == "sensor_read":
@@ -619,62 +739,7 @@ class ToolDispatcher:
         except Exception as exc:  # noqa: BLE001
             return _StepResult(False, error=str(exc))
 
-    def _action_screen_understand(self, params: dict[str, Any]) -> _StepResult:
-        capture_mode = params.get("capture_mode", "active_monitor")
-        output_path = Path("screen_capture.png")
-        try:
-            img_path, offset = self._capture_screen_image(output_path, capture_mode)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Screen capture failed: {exc}")
-
-        if self.vision is None:
-            return _StepResult(False, error="No vision backend available")
-
-        try:
-            description = self.vision.analyze(str(img_path))
-            return _StepResult(True, output=description)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Vision analysis failed: {exc}")
-
-    def _action_vision_click(self, params: dict[str, Any]) -> _StepResult:
-        if not self._allow_gui:
-            return _StepResult(False, error="GUI automation disabled by config")
-
-        target = str(params.get("target", ""))
-        dry_run = bool(params.get("dry_run", False))
-        capture_mode = params.get("capture_mode", "active_monitor")
-        output_path = Path("vision_click_capture.png")
-
-        try:
-            img_path, offset = self._capture_screen_image(output_path, capture_mode)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Screen capture failed: {exc}")
-
-        if self.vision is None:
-            return _StepResult(False, error="No vision backend available")
-
-        prompt = f"Find '{target}'. Return JSON: {{x, y, confidence, reason, not_found}}"
-        try:
-            raw = self.vision.analyze(str(img_path), prompt)
-            import json as _json
-            data = _json.loads(raw)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Vision response parse failed: {exc}")
-
-        if data.get("not_found"):
-            return _StepResult(False, error=f"Target '{target}' not found on screen")
-
-        rel_x, rel_y = int(data.get("x", 0)), int(data.get("y", 0))
-        ox, oy = offset if offset else (0, 0)
-        screen_x, screen_y = rel_x + ox, rel_y + oy
-        out = f"Found '{target}' at rel=({rel_x},{rel_y}) screen=({screen_x},{screen_y})"
-
-        if not dry_run:
-            self._gui_click({"x": screen_x, "y": screen_y})
-
-        return _StepResult(True, output=out)
-
-    # ── Hookable helpers (monkeypatched in tests) ─────────────────────────
+# ── Hookable helpers (monkeypatched in tests) ─────────────────────────
 
     def _capture_screen_image(self, output_path: Path, capture_mode: str) -> tuple[Path, tuple[int, int]]:
         """Capture screen. Returns (image_path, (offset_x, offset_y)). Override in tests."""

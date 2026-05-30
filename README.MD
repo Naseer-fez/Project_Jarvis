@@ -92,6 +92,32 @@ python main.py --health-check
 .\run-jarvis.ps1 --gui
 ```
 
+### Live Automation + RAG Dropbox
+
+Jarvis can run an always-on automation loop that:
+
+- Watches a command inbox and auto-executes commands you drop as text files
+- Watches a RAG folder and ingests files into memory
+- Watches screenshots and screen recordings and indexes OCR text for retrieval
+- Polls live desktop OCR and stores updates in memory
+
+Default folders:
+
+- `workspace/jarvis_dropbox/commands`
+- `workspace/jarvis_dropbox/rag`
+- `outputs/screenshots`
+- `outputs/screen_recordings`
+
+Control it from chat:
+
+- `automation status`
+- `automation on`
+- `automation off`
+- `automation scan`
+- `rag search <query>`
+
+Config section: `[automation]` in `config/jarvis.ini`
+
 ---
 
 ## Architecture

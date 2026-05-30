@@ -6,6 +6,7 @@ requests
 aiohttp
 python-dotenv
 jinja2
+python-multipart
 
 # LLM + memory
 ollama

@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -232,9 +233,80 @@ class HybridMemory:
 
         return {
             "preferences": self.recall_preferences(query, top_k=top_k),
-            "episodes": [],
-            "conversations": [],
+            "episodes": self._recall_sqlite_episodes(query, top_k=top_k),
+            "conversations": self._recall_sqlite_conversations(query, top_k=top_k),
         }
+
+    @staticmethod
+    def _query_tokens(query: str) -> list[str]:
+        tokens = re.findall(r"[a-z0-9]{3,}", str(query or "").lower())
+        return tokens[:10]
+
+    @staticmethod
+    def _score_text(text: str, tokens: list[str]) -> float:
+        if not tokens:
+            return 0.5
+        lowered = str(text or "").lower()
+        hits = sum(1 for token in tokens if token in lowered)
+        if hits <= 0:
+            return 0.0
+        return min(1.0, hits / max(1.0, float(len(tokens))))
+
+    def _recall_sqlite_episodes(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+        tokens = self._query_tokens(query)
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT event, category, timestamp FROM episodes ORDER BY timestamp DESC LIMIT 200"
+            ).fetchall()
+
+        ranked: list[dict[str, Any]] = []
+        for row in rows:
+            event = str(row["event"] or "")
+            category = str(row["category"] or "")
+            haystack = f"{event} {category}".strip()
+            score = self._score_text(haystack, tokens)
+            if tokens and score <= 0.0:
+                continue
+            ranked.append(
+                {
+                    "event": event,
+                    "category": category,
+                    "timestamp": str(row["timestamp"] or ""),
+                    "score": score if tokens else 0.4,
+                    "document": event,
+                }
+            )
+
+        ranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        return ranked[: max(1, top_k)]
+
+    def _recall_sqlite_conversations(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+        tokens = self._query_tokens(query)
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT user_input, assistant_response, timestamp FROM conversations ORDER BY timestamp DESC LIMIT 200"
+            ).fetchall()
+
+        ranked: list[dict[str, Any]] = []
+        for row in rows:
+            user_text = str(row["user_input"] or "")
+            assistant_text = str(row["assistant_response"] or "")
+            haystack = f"{user_text} {assistant_text}".strip()
+            score = self._score_text(haystack, tokens)
+            if tokens and score <= 0.0:
+                continue
+            ranked.append(
+                {
+                    "user_input": user_text,
+                    "assistant_response": assistant_text,
+                    "timestamp": str(row["timestamp"] or ""),
+                    "score": score if tokens else 0.4,
+                    "document": f"User: {user_text}\nAssistant: {assistant_text}",
+                }
+            )
+
+        ranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        return ranked[: max(1, top_k)]
 
     def build_context_block(self, query: str, n_results: int = 5) -> str:
         try:

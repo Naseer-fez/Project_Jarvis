@@ -39,7 +39,8 @@ function reconnect() {
 }
 
 function connectWs() {
-  ws = new WebSocket("ws://localhost:7070/ws");
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  ws = new WebSocket(`${proto}//${window.location.host}/ws`);
   ws.onmessage = (event) => {
     try {
       render(JSON.parse(event.data));
@@ -65,11 +66,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     spinner?.classList.remove("hidden");
     try {
-      await fetch("http://localhost:7070/command", {
+      await fetch("/command", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
-          "X-Dashboard-Token": "jarvis"
+          "Content-Type": "application/json"
         },
         body: JSON.stringify({ text })
       });

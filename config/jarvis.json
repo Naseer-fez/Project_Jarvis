@@ -44,6 +44,18 @@
     "tavily_api_key_env":"TAVILY_API_KEY"
   },
 
+  "automation":{
+    "enabled":true,
+    "drop_root":"D:/AI/Jarvis/workspace/jarvis_dropbox",
+    "commands_folder":"D:/AI/Jarvis/workspace/jarvis_dropbox/commands",
+    "rag_folder":"D:/AI/Jarvis/workspace/jarvis_dropbox/rag",
+    "watch_screenshots":true,
+    "screenshots_folder":"D:/AI/Jarvis/outputs/screenshots",
+    "watch_recordings":true,
+    "recordings_folder":"D:/AI/Jarvis/outputs/screen_recordings",
+    "live_screen_enabled":true
+  },
+
   "db_schema":{
     "preferences":"id,key UNIQUE,value,updated_at",
     "episodic_memory":"id,event,timestamp,category",

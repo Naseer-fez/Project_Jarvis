@@ -36,6 +36,11 @@ class AuthManager:
         self.secret_key = secret_key or os.environ.get("JARVIS_SECRET_KEY", "")
         if not self.secret_key:
             self.secret_key = "development-only-secret"
+            import logging
+            logging.getLogger("Jarvis.Security").warning(
+                "Using fallback secret key 'development-only-secret'. "
+                "For security-sensitive environments, please set the JARVIS_SECRET_KEY environment variable!"
+            )
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -84,6 +89,10 @@ class AuthManager:
         username = username.strip()
         if not username:
             raise ValueError("username is required")
+        if "|" in username:
+            raise ValueError("Username cannot contain the pipe character '|'")
+        if any(c.isspace() for c in username):
+            raise ValueError("Username cannot contain spaces or whitespace")
         if len(password) < 12:
             raise ValueError("password must be at least 12 characters")
         with self._connect() as conn:

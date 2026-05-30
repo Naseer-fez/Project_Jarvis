@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from integrations.base import BaseIntegration, RiskLevel, ToolResult
+from integrations.base import BaseIntegration, IntegrationRiskLevel, ToolResult
 
 
 WEATHER_API_KEY = os.getenv("WEATHER_API_KEY", "")
@@ -45,7 +45,7 @@ class WeatherIntegration(BaseIntegration):
     description = "Fetch current weather for a city"
 
     tool_name = "get_current_weather"
-    risk_level = RiskLevel.READ_ONLY
+    risk_level = IntegrationRiskLevel.READ_ONLY
     tool_schema = {
         "name": tool_name,
         "description": "Get the current weather for a city.",
@@ -59,7 +59,7 @@ class WeatherIntegration(BaseIntegration):
         },
         "_jarvis": {
             "autonomy_level_required": 2,
-            "risk_level": RiskLevel.READ_ONLY.value,
+            "risk_level": IntegrationRiskLevel.READ_ONLY.value,
         },
     }
 
