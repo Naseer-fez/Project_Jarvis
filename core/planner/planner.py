@@ -1,10 +1,12 @@
-"""Lightweight planner with a stable schema for legacy and runtime paths."""
+"""Asynchronous task planner to generate execution plans."""
 
 from __future__ import annotations
 
 import copy
 import json
+import logging
 import re
+import inspect
 from typing import Any
 
 from core.autonomy.risk_evaluator import RiskLevel, RiskEvaluator
@@ -82,6 +84,8 @@ def _strip_planner_artifacts(raw: str) -> str:
     cleaned = re.sub(r"\n?```$", "", cleaned)
     return cleaned.strip()
 
+logger = logging.getLogger("Jarvis.Planner")
+
 
 class TaskPlanner:
     def __init__(self, config=None, llm=None) -> None:
@@ -107,20 +111,21 @@ class TaskPlanner:
             ]
         return schema
 
-    def _call_ollama(self, prompt: str) -> str:
+    async def _call_ollama(self, prompt: str) -> str:
         if not self.llm or not hasattr(self.llm, "complete"):
             return ""
-        import asyncio
-        import concurrent.futures
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, self.llm.complete(prompt, task_type="planning")).result()
-        except Exception:
+            res = self.llm.complete(prompt, task_type="planning")
+            if inspect.isawaitable(res):
+                return await res
+            return str(res)
+        except Exception as exc:
+            logger.error("LLM completion failed: %s", exc)
             return ""
 
-    def plan(self, user_input: str, context: str = "") -> dict[str, Any]:
+    async def plan(self, user_input: str, context: str = "") -> dict[str, Any]:
         text = str(user_input or "").strip()
-        raw = self._call_ollama(self._build_prompt(text, context))
+        raw = await self._call_ollama(self._build_prompt(text, context))
 
         if raw:
             parsed = self._parse_llm_plan(raw)
@@ -338,6 +343,3 @@ class TaskPlanner:
                 }
             )
         return normalized
-
-
-__all__ = ["SYSTEM_TOOL_SCHEMA", "TaskPlanner"]

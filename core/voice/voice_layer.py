@@ -1,4 +1,4 @@
-﻿"""Thin wiring layer around VoiceLoop."""
+"""Thin wiring layer around VoiceLoop."""
 
 from __future__ import annotations
 

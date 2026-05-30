@@ -1,4 +1,4 @@
-﻿"""Weather integration backed by Open-Meteo public APIs."""
+"""Weather integration backed by Open-Meteo public APIs."""
 
 from __future__ import annotations
 

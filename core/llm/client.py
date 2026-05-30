@@ -201,7 +201,7 @@ class LLMClientV2:
         if trace_id:
             logger.info("[trace=%s] Client chat_async starting", trace_id)
 
-        system = self._build_system(
+        system = await self._build_system(
             query=query_for_memory,
             profile=profile_summary,
             workspace_path=workspace_path,
@@ -253,7 +253,7 @@ class LLMClientV2:
 
     # ── Internal helpers ─────────────────────────────────────────────────
 
-    def _build_system(self, query: str = "", profile: str = "", workspace_path: str = "") -> str:
+    async def _build_system(self, query: str = "", profile: str = "", workspace_path: str = "") -> str:
         parts = [JARVIS_SYSTEM]
 
         profile_obj = getattr(self, "profile", None)
@@ -286,9 +286,9 @@ class LLMClientV2:
 
         if query and self.memory is not None and hasattr(self.memory, "build_context_block"):
             try:
-                context = self.memory.build_context_block(query, n_results=3)
+                context = await self.memory.build_context_block(query, n_results=3)
             except TypeError:
-                context = self.memory.build_context_block(query)
+                context = await self.memory.build_context_block(query)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Memory context injection failed: %s", exc)
                 context = ""

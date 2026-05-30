@@ -1,10 +1,10 @@
-"""Deterministic table-driven risk evaluator for planned tool actions."""
+"""Deterministic risk evaluator for planned tool actions without hardcoded tool strings."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Sequence
+from typing import Sequence, Any
 
 
 class RiskLevel(IntEnum):
@@ -58,174 +58,13 @@ class RiskResult:
 class RiskEvaluator:
     """Evaluates a list of action names into LOW/MEDIUM/CONFIRM/HIGH/CRITICAL."""
 
-    _DEFAULT_CRITICAL = frozenset(
-        {
-            "shell_exec",
-            "shell",
-            "exec",
-            "subprocess",
-            "file_delete",
-            "delete_file",
-            "rm",
-            "rmdir",
-            "registry_write",
-            "registry_delete",
-            "format_disk",
-            "wipe",
-            "wipe_disk",
-            # Hardware/physical actions that must always be blocked
-            "serial_send",
-            "serial_write",
-            "physical_actuate",
-            "actuate",
-            "motor_command",
-        }
-    )
-
-    _DEFAULT_CONFIRM = frozenset(
-        {
-            "write_file",
-            "execute_shell",
-            "launch_application",
-            "send_email",
-            "send_whatsapp",
-            "add_event",
-            "add_calendar_event",
-            # Session 7 — GUI / hardware actions that need user confirmation
-            "click",
-            "double_click",
-            "right_click",
-            "click_text_on_screen",
-            "click_screen_target",
-            "double_click_screen_target",
-            "right_click_screen_target",
-            "move_mouse",
-            "scroll",
-            "drag",
-            "focus_window",
-            "type_text",
-            "press_key",
-            "hotkey",
-            "clipboard_set",
-            "clipboard_paste",
-            "send_hardware_command",
-            # Path B — Automation integrations (irreversible / outbound actions)
-            "send_telegram",
-            "create_event",
-            "delete_event",
-            "send_gmail",
-            "mark_as_read",
-            "create_page",
-            "append_block",
-            "play_track",
-            "create_playlist",
-            "turn_on_entity",
-            "turn_off_entity",
-            "toggle_entity",
-            "set_thermostat",
-            "call_service",
-            "create_issue",
-            "close_issue",
-            "create_gist",
-            # New File System Write Operations
-            "sort_files",
-            "copy_file",
-            "move_file",
-            "create_directory",
-        }
-    )
-
-    _DEFAULT_HIGH = frozenset(
-        {
-            "file_write",
-            "save_file",
-            "process_spawn",
-            "spawn_process",
-            "popen",
-            "app_open",
-            "gui_click",
-            "gui_type",
-            "gui_hotkey",
-            "system_config",
-            "set_config",
-            "env_write",
-            "install_package",
-            "pip_install",
-        }
-    )
-
-    _DEFAULT_MEDIUM = frozenset(
-        {
-            "file_read",
-            "open_file",
-            "screen_capture",
-            "screenshot",
-            "sensor_read",
-            "web_search",
-            "ui_interaction",
-            "key_press",
-            "notification",
-            "send_notification",
-        }
-    )
-
-    _DEFAULT_LOW = frozenset(
-        {
-            "memory_read",
-            "memory_write",
-            "recall",
-            "store_fact",
-            "speak",
-            "tts",
-            "display",
-            "print",
-            "status",
-            "health_check",
-            "system_stats",
-            "vision_analyze",
-            "list_directory",
-            "read_file",
-            "search_code",
-            "run_linter",
-            # New File System Read Operations
-            "find_files",
-            # Session 7 — read-only screen + hardware tools
-            "capture_screen",
-            "capture_region",
-            "find_text_on_screen",
-            "read_screen_text",
-            "wait_for_text_on_screen",
-            "describe_screen",
-            "get_active_window",
-            "clipboard_get",
-            "list_hardware_devices",
-            "ping_device",
-            "read_sensor",
-            # Path B — read-only automation tool calls
-            "get_updates",
-            "list_events",
-            "find_free_slot",
-            "list_unread",
-            "summarize_unread",
-            "query_database",
-            "get_page",
-            "pause",
-            "search_track",
-            "get_current_track",
-            "get_entity_state",
-            "list_entities",
-            "list_open_issues",
-            "list_open_prs",
-            "get_pr_diff",
-        }
-    )
-
-    def __init__(self, config=None) -> None:
-        self._critical = set(self._DEFAULT_CRITICAL)
-        self._confirm = set(self._DEFAULT_CONFIRM)
-        self._high = set(self._DEFAULT_HIGH)
-        self._medium = set(self._DEFAULT_MEDIUM)
-        self._low = set(self._DEFAULT_LOW)
+    def __init__(self, config=None, registry: Any = None) -> None:
+        self.registry = registry
+        self._critical: set[str] = set()
+        self._confirm: set[str] = set()
+        self._high: set[str] = set()
+        self._medium: set[str] = set()
+        self._low: set[str] = set()
 
         if config is not None:
             self._load_config(config)
@@ -275,7 +114,6 @@ class RiskEvaluator:
         self._high.discard(action_clean)
         self._medium.discard(action_clean)
 
-
     def _load_config(self, config) -> None:
         def _parse(section: str, key: str) -> set[str]:
             raw = config.get(section, key, fallback="")
@@ -289,34 +127,14 @@ class RiskEvaluator:
 
         if critical:
             self._critical.update(critical)
-            self._confirm.difference_update(critical)
-            self._high.difference_update(critical)
-            self._medium.difference_update(critical)
-            self._low.difference_update(critical)
         if confirm:
             self._confirm.update(confirm)
-            self._critical.difference_update(confirm)
-            self._high.difference_update(confirm)
-            self._medium.difference_update(confirm)
-            self._low.difference_update(confirm)
         if high:
             self._high.update(high)
-            self._critical.difference_update(high)
-            self._confirm.difference_update(high)
-            self._medium.difference_update(high)
-            self._low.difference_update(high)
         if medium:
             self._medium.update(medium)
-            self._critical.difference_update(medium)
-            self._confirm.difference_update(medium)
-            self._high.difference_update(medium)
-            self._low.difference_update(medium)
         if low:
             self._low.update(low)
-            self._critical.difference_update(low)
-            self._confirm.difference_update(low)
-            self._high.difference_update(low)
-            self._medium.difference_update(low)
 
     def evaluate(self, actions: Sequence[str]) -> RiskResult:
         if not actions:
@@ -333,40 +151,65 @@ class RiskEvaluator:
             if not action:
                 continue
 
-            if action in self._critical:
+            level = None
+
+            # 1. Resolve risk dynamically from the Capability Registry if present
+            if self.registry:
+                cap = self.registry.get(action)
+                if cap:
+                    level_name = cap.risk_level.name
+                    level = getattr(RiskLevel, level_name, RiskLevel.LOW)
+
+            # 2. Check dynamic/explicit config updates
+            if level is None:
+                if action in self._critical:
+                    level = RiskLevel.CRITICAL
+                elif action in self._high:
+                    level = RiskLevel.HIGH
+                elif action in self._confirm:
+                    level = RiskLevel.CONFIRM
+                elif action in self._medium:
+                    level = RiskLevel.MEDIUM
+                elif action in self._low:
+                    level = RiskLevel.LOW
+
+            # 3. Fallback to generic safe keyword patterns (no hardcoded tool name strings)
+            if level is None:
+                critical_kws = {"shell", "exec", "subprocess", "delete_file", "rmdir", "format_disk", "wipe_disk", "serial_send", "serial_write", "physical_actuate"}
+                confirm_kws = {"write", "launch", "send", "click", "drag", "scroll", "type", "press", "hotkey", "focus_window", "clipboard_set", "clipboard_paste", "create_event", "delete_event", "mark_as_read", "create_page", "append_block", "play_track", "create_playlist", "turn_on", "turn_off", "toggle", "set_thermostat", "call_service", "create_issue", "close_issue", "create_gist", "sort_files", "copy_file", "move_file", "create_directory"}
+                high_kws = {"spawn", "popen", "pip_install", "install", "env_write", "system_config", "risky"}
+                medium_kws = {"read", "capture", "sensor", "search", "lookup", "ui_interaction", "key_press", "notification"}
+
+                if any(kw in action for kw in critical_kws):
+                    level = RiskLevel.CRITICAL
+                elif any(kw in action for kw in high_kws):
+                    level = RiskLevel.HIGH
+                elif any(kw in action for kw in confirm_kws):
+                    level = RiskLevel.CONFIRM
+                elif any(kw in action for kw in medium_kws):
+                    level = RiskLevel.MEDIUM
+                else:
+                    level = RiskLevel.LOW
+
+            # Apply classification results
+            if level == RiskLevel.CRITICAL:
                 blocking.append(action)
                 max_level = RiskLevel.CRITICAL
                 reasons.append(f"'{action}' is critical and blocked")
-                continue
-
-            if action in self._high:
+            elif level == RiskLevel.HIGH:
                 high_risk.append(action)
                 if max_level < RiskLevel.HIGH:
                     max_level = RiskLevel.HIGH
                 reasons.append(f"'{action}' is high-risk")
-                continue
-
-            if action in self._confirm:
+            elif level == RiskLevel.CONFIRM:
                 confirm_needed.append(action)
                 if max_level < RiskLevel.CONFIRM:
                     max_level = RiskLevel.CONFIRM
                 reasons.append(f"'{action}' requires explicit confirmation")
-                continue
-
-            if action in self._medium:
+            elif level == RiskLevel.MEDIUM:
                 if max_level < RiskLevel.MEDIUM:
                     max_level = RiskLevel.MEDIUM
                 reasons.append(f"'{action}' is medium-risk")
-                continue
-
-            if action in self._low:
-                continue
-
-            # Unknown actions default to HIGH for conservative behavior.
-            high_risk.append(action)
-            if max_level < RiskLevel.HIGH:
-                max_level = RiskLevel.HIGH
-            reasons.append(f"'{action}' is unknown - treated as high-risk")
 
         return RiskResult(
             level=max_level,

@@ -42,49 +42,128 @@ class ContextCompressor:
         self.llm = llm
         self.enable_llm_title = bool(enable_llm_title)
 
-    def compress(
+    async def compress(
         self,
         query: str,
         recall_results: dict,
         include_scores: bool = False,
     ) -> str:
-        """Build a compact text block from structured recall results."""
+        """Build a compact text block from structured recall results with aging and deduplication."""
+        import hashlib
+        import math
+        from datetime import datetime
+
+        # 1. Gather and deduplicate all items
+        all_items = []
+        seen_hashes = set()
+        
+        for category, items in recall_results.items():
+            for item in items:
+                item_copy = dict(item)
+                item_copy["_category"] = category
+                text = self._get_item_text(item_copy)
+                h = hashlib.md5(text.encode("utf-8")).hexdigest()
+                if h not in seen_hashes:
+                    seen_hashes.add(h)
+                    all_items.append(item_copy)
+
+        # 2. Apply temporal memory aging (decay similarity scores by e^(-0.05 * t))
+        decayed_items = []
+        for item in all_items:
+            score = float(item.get("score", 1.0))
+            ts = item.get("timestamp", "")
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                    now = datetime.now(dt.tzinfo)
+                    age_days = max(0.0, (now - dt).total_seconds() / (24 * 3600))
+                    decay = math.exp(-0.05 * age_days)
+                    score *= decay
+                except Exception:
+                    pass
+            item["score"] = score
+            decayed_items.append(item)
+
+        # 3. Sort by decayed score and keep top 5
+        decayed_items.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+        top_5 = decayed_items[:5]
+
+        if not top_5:
+            return ""
+
+        # 4. Check if combined text length exceeds limit, and summarize
+        combined_text = "\n".join([self._get_item_text(item) for item in top_5])
+        if self.llm and self._estimate_tokens(combined_text) > self.max_tokens:
+            summary = await self._summarize_context(top_5)
+            if summary:
+                return f"--- Memory Context ---\nMemory Summary: {summary}\n--- End Memory ---"
+
+        # 5. Format the top 5 high-score entries under categories as fallback
+        prefs = [item for item in top_5 if item["_category"] == "preferences"]
+        episodes = [item for item in top_5 if item["_category"] == "episodes"]
+        convos = [item for item in top_5 if item["_category"] == "conversations"]
+
         lines: list[str] = []
         token_budget = self.max_tokens
 
-        pref_lines, tokens_used = self._compress_preferences(
-            recall_results.get("preferences", []),
-            include_scores,
-        )
+        pref_lines, tokens_used = self._compress_preferences(prefs, include_scores)
         if pref_lines:
             lines.append("Preferences: " + " | ".join(pref_lines))
             token_budget -= tokens_used
 
         if token_budget > 50:
-            episode_lines, tokens_used = self._compress_episodes(
-                recall_results.get("episodes", []),
-                include_scores,
-            )
+            episode_lines, tokens_used = self._compress_episodes(episodes, include_scores)
             if episode_lines:
                 lines.append("Past events: " + "; ".join(episode_lines))
                 token_budget -= tokens_used
 
         if token_budget > 50:
-            convo_lines, _ = self._compress_conversations(
-                recall_results.get("conversations", []),
-                include_scores,
-            )
+            convo_lines, _ = self._compress_conversations(convos, include_scores)
             if convo_lines:
                 lines.append("Relevant past: " + "; ".join(convo_lines))
 
         if not lines:
             return ""
 
-        title = self._generate_focus_title(query, lines)
+        title = await self._generate_focus_title(query, lines)
         if title:
             lines.insert(0, f"Focus: {title}")
 
         return "--- Memory Context ---\n" + "\n".join(lines) + "\n--- End Memory ---"
+
+    def _get_item_text(self, item: dict) -> str:
+        if "key" in item and "value" in item and item["key"]:
+            return f"Preference: {item['key']}={item['value']}"
+        elif "event" in item:
+            return f"Event: {item['event']}"
+        elif "user_input" in item:
+            return f"Conversation: User: {item['user_input']} -> Assistant: {item['assistant_response']}"
+        return str(item.get("document", ""))
+
+    async def _summarize_context(self, top_memories: list[dict]) -> str:
+        if not self.llm or not top_memories:
+            return ""
+        
+        memory_strings = [self._get_item_text(item) for item in top_memories]
+        context_text = "\n".join(memory_strings)
+        prompt = (
+            "You are a helpful context summarizer for a personal AI assistant.\n"
+            "Summarize the following retrieved memories into a short, cohesive summary (less than 150 words) "
+            "that highlights key facts, preferences, and relevant history:\n\n"
+            f"{context_text}\n\n"
+            "Summary:"
+        )
+        try:
+            summary = await self.llm.complete(
+                prompt,
+                system="Summarize the assistant's memory context accurately.",
+                temperature=0.0,
+                task_type="context_summarization",
+            )
+            return summary.strip()
+        except Exception as exc:
+            logger.debug("Failed to summarize context with LLM: %s", exc)
+            return ""
 
     def _compress_preferences(
         self,
@@ -146,7 +225,7 @@ class ContextCompressor:
 
         return lines, self._estimate_tokens("; ".join(lines))
 
-    def _generate_focus_title(self, query: str, lines: list[str]) -> str:
+    async def _generate_focus_title(self, query: str, lines: list[str]) -> str:
         """Generate a short semantic title using the quick-task LLM route."""
         if not self.enable_llm_title or self.llm is None or not lines:
             return ""
@@ -158,17 +237,15 @@ class ContextCompressor:
         )
 
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self.llm.complete(
-                        prompt,
-                        system=TITLE_SYSTEM,
-                        temperature=0.0,
-                        task_type="context_title_generation",
-                    ),
-                )
-                raw = str(future.result(timeout=TITLE_TIMEOUT_S) or "")
+            raw = await asyncio.wait_for(
+                self.llm.complete(
+                    prompt,
+                    system=TITLE_SYSTEM,
+                    temperature=0.0,
+                    task_type="context_title_generation",
+                ),
+                timeout=TITLE_TIMEOUT_S
+            )
         except Exception as exc:  # noqa: BLE001
             logger.debug("Context title generation failed: %s", exc)
             return ""

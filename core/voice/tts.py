@@ -1,4 +1,4 @@
-﻿"""Text-to-speech with fallback chain: edge-tts -> pyttsx3 -> print-to-stdout.
+"""Text-to-speech with fallback chain: edge-tts -> pyttsx3 -> print-to-stdout.
 
 The TTS class provides the synchronous API expected by the V2 acceptance tests:
   - TTS(config)

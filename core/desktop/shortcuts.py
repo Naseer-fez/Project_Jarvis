@@ -7,14 +7,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from core.desktop import (
+from core.desktop.actions import DesktopActionExecutor
+from core.desktop.contracts import (
     DesktopAction,
-    DesktopActionExecutor,
     DesktopActionType,
+)
+from core.desktop.mission import (
     DesktopMissionExecutor,
     DesktopMissionStatus,
-    DesktopObserver,
 )
+from core.desktop.observation import DesktopObserver
 from core.tools.system_automation import async_launch_application
 
 INTERACTIVE_VERBS_PATTERN = re.compile(
@@ -32,7 +34,7 @@ INTERACTIVE_VERBS_PATTERN = re.compile(
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 @dataclass(frozen=True)
@@ -193,6 +195,3 @@ async def handle_desktop_command(user_input: str) -> str | None:
         error = step.error
     error = error or "Unknown launch failure."
     return f"I couldn't open {plan.app_label}: {error}"
-
-
-__all__ = ["DesktopCommandPlan", "handle_desktop_command", "plan_desktop_command"]

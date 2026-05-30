@@ -149,9 +149,9 @@ def launch_application(target: str, args: list[str] | None = None) -> ToolResult
         return ToolResult(False, error=str(exc))
 
 
-def execute_shell(command: str, working_dir: str | None = None) -> ToolResult:
+async def execute_shell(command: str, working_dir: str | None = None) -> ToolResult:
     """
-    Execute a shell command and capture stdout/stderr.
+    Execute a shell command and capture stdout/stderr asynchronously.
     Hard timeout of SHELL_TIMEOUT seconds – never blocks the event loop.
     Uses shell=False (shlex split) to satisfy security policy (no B602).
     """
@@ -159,31 +159,47 @@ def execute_shell(command: str, working_dir: str | None = None) -> ToolResult:
     try:
         cwd = Path(working_dir).expanduser().resolve() if working_dir else None
         # Split command string into a token list — avoids shell=True (B602).
-        # On Windows, shlex still works correctly for typical commands.
         try:
             cmd_tokens = shlex.split(command, posix=(os.name != "nt"))
         except ValueError:
             return ToolResult(False, error=f"Invalid shell command syntax: {command}")
 
-        proc = subprocess.run(  # nosec B603
-            cmd_tokens,
-            shell=False,
-            capture_output=True,
-            text=True,
-            timeout=SHELL_TIMEOUT,
-            cwd=cwd,
-        )
-        success = proc.returncode == 0
+        if not cmd_tokens:
+            return ToolResult(False, error="Empty command.")
+
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd_tokens,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+            )
+        except FileNotFoundError:
+            return ToolResult(False, error=f"Executable not found in command: {command}")
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=SHELL_TIMEOUT,
+            )
+            stdout = stdout_bytes.decode(errors="replace").strip()
+            stderr = stderr_bytes.decode(errors="replace").strip()
+            returncode = proc.returncode
+        except asyncio.TimeoutError:
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception:
+                pass
+            return ToolResult(False, error=f"Command timed out after {SHELL_TIMEOUT}s: {command}")
+
+        success = returncode == 0
         return ToolResult(
             success,
-            output=proc.stdout.strip(),
-            error=proc.stderr.strip(),
-            metadata={"returncode": proc.returncode, "command": command},
+            output=stdout,
+            error=stderr,
+            metadata={"returncode": returncode, "command": command},
         )
-    except subprocess.TimeoutExpired:
-        return ToolResult(False, error=f"Command timed out after {SHELL_TIMEOUT}s: {command}")
-    except FileNotFoundError:
-        return ToolResult(False, error=f"Executable not found in command: {command}")
     except Exception as exc:
         return ToolResult(False, error=str(exc))
 
@@ -208,4 +224,5 @@ async def async_launch_application(target: str, args: list[str] | None = None) -
     return await asyncio.to_thread(launch_application, target, args)
 
 async def async_execute_shell(command: str, working_dir: str | None = None) -> ToolResult:
-    return await asyncio.to_thread(execute_shell, command, working_dir)
+    return await execute_shell(command, working_dir)
+

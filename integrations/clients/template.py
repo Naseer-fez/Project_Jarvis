@@ -1,4 +1,4 @@
-﻿"""Template integration showing the new plugin contract."""
+"""Template integration showing the new plugin contract."""
 
 from __future__ import annotations
 

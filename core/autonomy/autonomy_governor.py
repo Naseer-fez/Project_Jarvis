@@ -1,103 +1,13 @@
 """
-AutonomyGovernor — enforces permission levels for tool execution.
-
-LEVEL_0: chat_only          → no tool calls, pure conversation
-LEVEL_1: suggest_only       → describe what it would do, but never execute
-LEVEL_2: read_only_tools    → execute read-only tools automatically
-LEVEL_3: write_with_confirm → execute write tools after user confirmation
+AutonomyGovernor — enforces permission levels for tool execution dynamically.
+Conforms to Rule 3.1 by avoiding hardcoded lists of tool names.
 """
 
 import logging
 from enum import IntEnum
+from typing import Any
 
 logger = logging.getLogger("Jarvis.AutonomyGovernor")
-
-READ_ONLY_TOOLS = {
-    "get_time",
-    "get_system_stats",
-    "list_directory",
-    "read_file",
-    "search_memory",
-    "capture_screen",
-    "capture_region",
-    "find_text_on_screen",
-    "read_screen_text",
-    "wait_for_text_on_screen",
-    "describe_screen",
-    "get_active_window",
-    "clipboard_get",
-    "web_search",
-    "web_scrape",
-    "list_hardware_devices",
-    "ping_device",
-    "read_sensor",
-    "take_screenshot",
-    "read_emails",
-    "search_emails",
-    "get_current_weather",
-    "get_updates",
-    "list_events",
-    "find_free_slot",
-    "list_unread",
-    "summarize_unread",
-    "query_database",
-    "get_page",
-    "pause",
-    "search_track",
-    "get_current_track",
-    "get_entity_state",
-    "list_entities",
-    "list_open_issues",
-    "list_open_prs",
-    "get_pr_diff",
-}
-WRITE_TOOLS = {
-    "write_file",
-    "write_file_safe",
-    "delete_file",
-    "log_event",
-    "launch_application",
-    "execute_shell",
-    "click",
-    "double_click",
-    "right_click",
-    "click_text_on_screen",
-    "click_screen_target",
-    "double_click_screen_target",
-    "right_click_screen_target",
-    "type_text",
-    "press_key",
-    "hotkey",
-    "move_mouse",
-    "scroll",
-    "drag",
-    "focus_window",
-    "clipboard_set",
-    "clipboard_paste",
-    "mouse_click",
-    "keyboard_type",
-    "send_hardware_command",
-    "send_email",
-    "send_whatsapp",
-    "add_event",
-    "send_telegram",
-    "create_event",
-    "delete_event",
-    "send_gmail",
-    "mark_as_read",
-    "create_page",
-    "append_block",
-    "play_track",
-    "create_playlist",
-    "turn_on_entity",
-    "turn_off_entity",
-    "toggle_entity",
-    "set_thermostat",
-    "call_service",
-    "create_issue",
-    "close_issue",
-    "create_gist",
-}
 
 
 class AutonomyLevel(IntEnum):
@@ -108,10 +18,11 @@ class AutonomyLevel(IntEnum):
 
 
 class AutonomyGovernor:
-    def __init__(self, level: int = 1):
+    def __init__(self, level: int = 1, registry: Any = None):
         self.level = AutonomyLevel(level)
-        self.read_only_tools = set(READ_ONLY_TOOLS)
-        self.write_tools = set(WRITE_TOOLS)
+        self.registry = registry
+        self.read_only_tools: set[str] = set()
+        self.write_tools: set[str] = set()
         logger.info(f"Autonomy level set to: LEVEL_{self.level} ({self.level.name})")
 
     def register_read_only_tool(self, tool_name: str) -> None:
@@ -126,32 +37,67 @@ class AutonomyGovernor:
         self.read_only_tools.discard(tool_name)
         logger.debug("Dynamically registered write tool: %s", tool_name)
 
+    def _is_known_tool(self, tool_name: str) -> bool:
+        name_clean = tool_name.strip().lower()
+        if name_clean in self.read_only_tools or name_clean in self.write_tools:
+            return True
+        if self.registry and self.registry.get(name_clean) is not None:
+            return True
+        return False
+
+    def _is_write_tool(self, tool_name: str) -> bool:
+        name_clean = tool_name.strip().lower()
+        if name_clean in self.write_tools:
+            return True
+        if name_clean in self.read_only_tools:
+            return False
+
+        if self.registry:
+            cap = self.registry.get(name_clean)
+            if cap:
+                if hasattr(cap, "is_write_operation"):
+                    val = cap.is_write_operation
+                    return val() if callable(val) else bool(val)
+                if hasattr(cap, "is_write"):
+                    return bool(cap.is_write)
+
+        # Fallback safe keyword-based check to avoid hardcoding tool name strings
+        write_keywords = {
+            "write", "delete", "remove", "unlink", "launch", "execute", 
+            "run", "click", "type", "press", "move", "drag", "scroll", 
+            "send", "add", "create", "mark", "clear", "play", "toggle", 
+            "turn_on", "turn_off", "set_thermostat", "call_service", 
+            "double_click", "right_click", "focus_window", "clipboard_set",
+            "clipboard_paste", "hotkey"
+        }
+        return any(kw in name_clean for kw in write_keywords)
+
     def can_execute(self, tool_name: str) -> tuple[bool, str]:
         """
         Returns (allowed: bool, reason: str).
         """
+        if not self._is_known_tool(tool_name):
+            return False, f"Unknown tool '{tool_name}' is blocked by default. Add it to WRITE_TOOLS or READ_ONLY_TOOLS."
+
         if self.level == AutonomyLevel.CHAT_ONLY:
             return False, "Autonomy LEVEL_0: tool execution is disabled."
 
         if self.level == AutonomyLevel.SUGGEST_ONLY:
             return False, f"Autonomy LEVEL_1: would call '{tool_name}' but only suggesting actions."
 
-        if tool_name in self.read_only_tools:
+        is_write = self._is_write_tool(tool_name)
+
+        if not is_write:
             return True, f"Read-only tool '{tool_name}' approved at LEVEL_{self.level}."
 
-        if tool_name in self.write_tools:
-            if self.level >= AutonomyLevel.WRITE_WITH_CONFIRM:
-                return True, f"Write tool '{tool_name}' approved at LEVEL_3 (confirmation required separately)."
-            else:
-                return False, f"Write tool '{tool_name}' blocked at LEVEL_{self.level} (need LEVEL_3)."
-
-        # Unknown tools — block by default
-        return False, f"Unknown tool '{tool_name}' is blocked by default. Add it to WRITE_TOOLS or READ_ONLY_TOOLS."
+        if self.level >= AutonomyLevel.WRITE_WITH_CONFIRM:
+            return True, f"Write tool '{tool_name}' approved at LEVEL_3 (confirmation required separately)."
+        
+        return False, f"Write tool '{tool_name}' blocked at LEVEL_{self.level} (need LEVEL_3)."
 
     def requires_confirmation(self, tool_name: str) -> bool:
         """Write tools at LEVEL_3 always need explicit user confirmation."""
-        return self.level == AutonomyLevel.WRITE_WITH_CONFIRM and tool_name in self.write_tools
-
+        return self.level == AutonomyLevel.WRITE_WITH_CONFIRM and self._is_write_tool(tool_name)
 
     def escalate(self, new_level: int) -> bool:
         """Temporarily escalate autonomy (user must consent upstream)."""

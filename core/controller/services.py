@@ -7,7 +7,6 @@ from typing import Any
 
 
 from core.agent.agent_loop import AgentLoopEngine
-from core.agent.desktop_bridge import DesktopBridge
 from core.state_machine import StateMachine
 from core.agentic.scheduler import Scheduler
 from core.autonomy.autonomy_governor import AutonomyGovernor
@@ -17,7 +16,7 @@ from core.desktop.actions import DesktopActionExecutor
 from core.desktop.observation import DesktopObserver
 from core.llm.client import LLMClientV2
 from core.llm.model_router import ModelRouter
-from core.llm.task_planner import TaskPlanner
+from core.planner.planner import TaskPlanner
 from core.llm.defaults import DEFAULT_MODEL
 from core.memory.hybrid_memory import HybridMemory
 from core.profile import UserProfileEngine
@@ -26,6 +25,7 @@ from core.proactive.notifier import NotificationManager
 from core.synthesis import ProfileSynthesizer
 from core.runtime.bootstrap import _resolve_path
 from core.tools.builtin_tools import register_all_tools
+from core.registry.registry import CapabilityRegistry
 from core.tools.tool_router import ToolRouter
 from core.runtime.event_bus import EventBus
 
@@ -61,7 +61,7 @@ class ControllerServices:
     monitor: BackgroundMonitor
     desktop_executor: DesktopActionExecutor = None  # type: ignore[assignment]
     desktop_observer: DesktopObserver = None  # type: ignore[assignment]
-    desktop_bridge: DesktopBridge = None  # type: ignore[assignment]
+    desktop_bridge: Any = None  # type: ignore[assignment]
     event_bus: EventBus = None  # type: ignore[assignment]
     container: Any = None  # type: ignore[assignment]
 
@@ -81,7 +81,7 @@ def build_controller_services(
     synthesizer_cls=ProfileSynthesizer,
     state_machine_cls=StateMachine,
     task_planner_cls=TaskPlanner,
-    tool_router_cls=ToolRouter,
+    tool_router_cls=CapabilityRegistry,
     risk_evaluator_cls=RiskEvaluator,
     autonomy_governor_cls=AutonomyGovernor,
     agent_loop_cls=AgentLoopEngine,
@@ -246,7 +246,7 @@ def build_controller_services(
     if not container.has("desktop_bridge"):
         container.register(
             "desktop_bridge",
-            lambda: DesktopBridge(container=container)
+            lambda: None
         )
 
     # 14. Register Agent Loop Engine
@@ -335,6 +335,7 @@ def build_controller_services(
 
     risk_evaluator = container.resolve("risk_evaluator", config=config)
     autonomy_governor = container.resolve("autonomy_governor", level=3)
+    autonomy_governor.registry = tool_router
     desktop_executor = container.resolve("desktop_executor", risk_evaluator=risk_evaluator)
     desktop_observer = container.resolve("desktop_observer")
     desktop_bridge = container.resolve(

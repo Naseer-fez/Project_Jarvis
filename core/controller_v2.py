@@ -22,18 +22,18 @@ from core.controller.intents import (
     handle_preference_intent,
 )
 from core.controller.services import build_controller_services
-from core.desktop_actions import handle_desktop_command, plan_desktop_command
+from core.desktop.shortcuts import handle_desktop_command, plan_desktop_command
 from core.llm.client import LLMClientV2
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.model_router import ModelRouter
-from core.llm.task_planner import TaskPlanner
+from core.planner.planner import TaskPlanner
 from core.memory.hybrid_memory import HybridMemory
 from core.profile import UserProfileEngine
 from core.proactive.background_monitor import BackgroundMonitor
 from core.proactive.notifier import NotificationManager
 from core.synthesis import ProfileSynthesizer
 from core.tools.builtin_tools import register_all_tools
-from core.tools.tool_router import ToolRouter
+from core.registry.registry import CapabilityRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ class JarvisControllerV2:
             synthesizer_cls=ProfileSynthesizer,
             state_machine_cls=StateMachine,
             task_planner_cls=TaskPlanner,
-            tool_router_cls=ToolRouter,
+            tool_router_cls=CapabilityRegistry,
             risk_evaluator_cls=RiskEvaluator,
             autonomy_governor_cls=AutonomyGovernor,
             agent_loop_cls=AgentLoopEngine,
@@ -244,12 +244,12 @@ class JarvisControllerV2:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("VoiceLayer init failed: %s", exc)
 
-    def initialize(self) -> dict[str, Any]:
+    async def initialize(self) -> dict[str, Any]:
         index_path = ""
         if isinstance(self.config, configparser.ConfigParser):
             index_path = self.config.get("memory", "index_path", fallback="")
 
-        memory_status = self.memory.initialize(index_path=index_path)
+        memory_status = await self.memory.initialize(index_path=index_path)
         return {
             "session_id": self.session_id,
             "memory_mode": memory_status.get("mode"),
@@ -275,14 +275,14 @@ class JarvisControllerV2:
         text: str,
         user_input: str,
     ) -> str | None:
-        return handle_preference_intent(
+        return await handle_preference_intent(
             text,
             user_input,
             memory=self.memory,
         )
 
     async def _dispatch_llm(self, text: str, trace_id: str) -> str:
-        self.memory.build_context_block(text)
+        await self.memory.build_context_block(text)
         profile_injection = self.profile.get_system_prompt_injection()
         style_instruction = self.profile.get_communication_style()
         _ = f"{profile_injection}\n{style_instruction}".strip()
@@ -304,12 +304,12 @@ class JarvisControllerV2:
         )
 
         if not response or response == "LLM Offline.":
-            prefs = self.memory.recall_preferences(text, top_k=1)
+            prefs = await self.memory.recall_preferences(text, top_k=1)
             if prefs and prefs[0].get("value"):
                 return f"Offline fallback from memory: {prefs[0]['value']}"
             return "I don't know while offline."
 
-        self.memory.store_conversation(text, response, self.session_id)
+        await self.memory.store_conversation(text, response, self.session_id)
         return response
 
     def _looks_like_desktop_control_request(self, lowered: str) -> bool:
@@ -363,7 +363,7 @@ class JarvisControllerV2:
             "Please give a concise, helpful reply based only on these results. "
             "Cite URLs where relevant. Do not invent information not present in the results."
         )
-        self.memory.build_context_block(user_input)
+        await self.memory.build_context_block(user_input)
         selected_model = self.model_router.get_best_available("chat")
         self.llm.model = selected_model
         messages = [{"role": "user", "content": synthesis_prompt}]
@@ -382,7 +382,7 @@ class JarvisControllerV2:
         if not response or response == "LLM Offline.":
             return self._format_raw_fallback(raw_results)
 
-        self.memory.store_conversation(user_input, response, self.session_id)
+        await self.memory.store_conversation(user_input, response, self.session_id)
         return response
 
     def _format_raw_fallback(self, raw_results: str) -> str:
@@ -479,7 +479,7 @@ class JarvisControllerV2:
                 return _respond(response)
             elif lowered.startswith("rag search "):
                 query = text[len("rag search "):].strip()
-                response = self.live_automation.search_rag(query)
+                response = await self.live_automation.search_rag(query)
                 return _respond(response)
 
         if goal_res := await self._handle_goal_intent(lowered, text):
@@ -518,12 +518,32 @@ class JarvisControllerV2:
 
         if len(text.split()) > 2 and any(kw in lowered for kw in _AGENTIC_KEYWORDS):
             self._dashboard_update(state="PLANNING", last_input=user_input)
-            plan = await asyncio.to_thread(self.task_planner.plan, text)
+            plan = await self.task_planner.plan(text)
             if plan and plan.get("tools_required"):
                 self._dashboard_update(state="EXECUTE", last_input=user_input)
+                
+                from core.context.context import TaskExecutionContext
+                from core.state_machine import StateMachine
+                
+                event_bus = self.container.resolve("event_bus") if self.container else None
+                task_sm = StateMachine(event_bus=event_bus)
+                
+                def _update_dash_state(old, new):
+                    self._dashboard_update(state=new.value)
+                task_sm.add_listener(_update_dash_state)
+                
+                context = TaskExecutionContext(
+                    task_id=uuid.uuid4().hex[:8],
+                    trace_id=trace_id,
+                    state_machine=task_sm,
+                )
+                
+                context_block = await self.memory.build_context_block(text)
+                context.set("context_block", context_block)
+                
                 trace = await self.agent_loop.run(
                     goal=text,
-                    context=self.memory.build_context_block(text),
+                    context=context,
                 )
                 return _respond(trace.final_response)
 
@@ -538,7 +558,7 @@ class JarvisControllerV2:
 
     async def start(self) -> None:
         self._runtime_loop = asyncio.get_running_loop()
-        self.initialize()
+        await self.initialize()
         asyncio.create_task(
             self.monitor.start(),
             name="jarvis_resource_monitor_start",

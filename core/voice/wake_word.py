@@ -1,4 +1,4 @@
-﻿"""Wake-word detection with porcupine and continuous-listen fallback.
+"""Wake-word detection with porcupine and continuous-listen fallback.
 
 The WakeWordDetector class supports the V2 acceptance test API:
   WakeWordDetector(config, loop, on_wake, on_cancel)

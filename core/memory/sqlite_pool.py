@@ -2,35 +2,52 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
-import queue
-import sqlite3
+import aiosqlite
 
 
 class SQLitePool:
-    """A simple thread-safe connection pool for SQLite."""
+    """A simple async-safe connection pool for SQLite."""
 
     def __init__(self, db_path: str, pool_size: int = 3):
         self.db_path = db_path
         self.pool_size = pool_size
-        self._pool = queue.Queue(maxsize=pool_size)
-        for _ in range(pool_size):
-            conn = sqlite3.connect(db_path, check_same_thread=False, timeout=30.0)
-            conn.row_factory = sqlite3.Row
-            self._pool.put(conn)
+        self._pool: asyncio.Queue | None = None
+        self._lock = asyncio.Lock()
 
-    @contextlib.contextmanager
-    def acquire(self):
+    async def _init_pool(self):
+        if self._pool is not None:
+            return
+        self._pool = asyncio.Queue(maxsize=self.pool_size)
+        for _ in range(self.pool_size):
+            conn = await aiosqlite.connect(self.db_path, timeout=30.0)
+            conn.row_factory = aiosqlite.Row
+            await self._pool.put(conn)
+
+    @contextlib.asynccontextmanager
+    async def acquire(self):
         """Acquire a connection from the pool, committing on success or rolling back on error."""
-        try:
-            conn = self._pool.get(timeout=30.0)
-        except queue.Empty:
-            raise TimeoutError("SQLitePool: timed out waiting for a free connection") from None
+        async with self._lock:
+            if self._pool is None:
+                await self._init_pool()
+
+        conn = await self._pool.get()
         try:
             yield conn
-            conn.commit()
+            await conn.commit()
         except Exception:
-            conn.rollback()
+            await conn.rollback()
             raise
         finally:
-            self._pool.put(conn)
+            await self._pool.put(conn)
+
+    async def close(self):
+        """Close all connections in the pool."""
+        async with self._lock:
+            if self._pool is None:
+                return
+            while not self._pool.empty():
+                conn = await self._pool.get()
+                await conn.close()
+            self._pool = None

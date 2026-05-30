@@ -64,8 +64,33 @@ _MANAGED_STREAM_HANDLER_NAME = "jarvis_stream"
 _MANAGED_FILE_HANDLER_NAME = "jarvis_app_file"
 
 
+class JSONFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        trace_id = getattr(record, "trace_id", None)
+        task_id = getattr(record, "task_id", None)
+        if not trace_id and not task_id:
+            return super().format(record)
+
+        import datetime
+        timestamp = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+        
+        envelope = {
+            "timestamp": timestamp,
+            "level": record.levelname,
+            "trace_id": trace_id,
+            "task_id": task_id,
+            "component": record.name,
+            "event": getattr(record, "event", "log_message"),
+            "metadata": getattr(record, "metadata", {}) or {},
+        }
+        if "message" not in envelope["metadata"]:
+            envelope["metadata"]["message"] = record.getMessage()
+
+        return json.dumps(envelope, ensure_ascii=False)
+
+
 def _build_formatter() -> logging.Formatter:
-    return logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    return JSONFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
 def _find_managed_handler(name: str) -> logging.Handler | None:

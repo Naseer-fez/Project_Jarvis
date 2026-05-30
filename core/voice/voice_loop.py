@@ -1,4 +1,4 @@
-﻿"""Voice loop orchestration: wake -> transcribe -> process -> speak."""
+"""Voice loop orchestration: wake -> transcribe -> process -> speak."""
 
 from __future__ import annotations
 

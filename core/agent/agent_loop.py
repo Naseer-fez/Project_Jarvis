@@ -16,10 +16,10 @@ except Exception:  # noqa: BLE001
     httpx = None  # type: ignore[assignment]
 
 from core.state_machine import State as AgentState, StateMachine
+from core.context.context import TaskExecutionContext
 from core.autonomy.autonomy_governor import AutonomyGovernor
 from core.autonomy.risk_evaluator import RiskEvaluator
-from core.llm.task_planner import TaskPlanner
-from core.agent.desktop_bridge import DesktopBridge, is_desktop_action
+from core.planner.planner import TaskPlanner
 from core.metrics.confidence import ConfidenceModel
 from core.tools.tool_router import ToolObservation, ToolRouter
 
@@ -97,7 +97,6 @@ class AgentLoopEngine:
         ollama_url: str = "http://localhost:11434",
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
         llm: Any = None,  # Optional[LLMClientV2] — avoids import cycle
-        desktop_bridge: DesktopBridge | None = None,
         container: Any = None,
     ):
         self.container = container
@@ -110,7 +109,6 @@ class AgentLoopEngine:
         self.ollama_url = ollama_url
         self.max_iterations = max(1, int(max_iterations or _DEFAULT_MAX_ITERATIONS))
         self.llm = llm or (container.resolve("llm") if container else None)
-        self.desktop_bridge = desktop_bridge or (container.resolve("desktop_bridge") if container else None)
         self.confidence = ConfidenceModel()
         self._interrupt = asyncio.Event()
 
@@ -123,7 +121,7 @@ class AgentLoopEngine:
     async def run(
         self,
         goal: str,
-        context: str = "",
+        context: TaskExecutionContext,
         confirm_callback=None,
     ) -> ExecutionTrace:
         if self._check_interrupt():
@@ -132,13 +130,17 @@ class AgentLoopEngine:
         self._interrupt.clear()
         self.router.reset_call_count()
 
+        # Isolate state machine for this task
+        self.sm = context.state_machine
+
         trace = ExecutionTrace(goal=goal)
         logger.info("Agent loop start: %s", goal)
 
         self._ensure_thinking_state()
         self.sm.transition(AgentState.PLANNING)
 
-        plan = await self._build_plan(goal, context)
+        context_str = context.get("context_block", "")
+        plan = await self._build_plan(goal, context_str)
         if not plan:
             trace.final_response = "I couldn't generate a plan for that goal."
             return self._stop(trace, "planning_failed")
@@ -189,115 +191,59 @@ class AgentLoopEngine:
             if not approved:
                 return self._stop(trace, "user_interrupt")
 
-        steps = self._normalize_steps(plan)
+        # ── DAG Execution Engine integration (Session 8 Target Architecture) ──
+        from core.context.context import TaskExecutionContext
+        from core.executor.engine import DAGExecutor
+        from core.tools.tool_router import ToolObservation
+
+        context.log(f"Starting DAG Executor for goal: {goal}")
+        
+        executor = DAGExecutor(self.router, self.risk, self.gov)
+        self.sm.transition(AgentState.EXECUTING)
+
+        try:
+            # Enforce 5 minute task-level timeout (Part 5)
+            async with asyncio.timeout(300):
+                res = await executor.execute(plan, context)
+        except asyncio.TimeoutError:
+            context.log("Task execution timed out.", level="ERROR")
+            res = {"status": "failure", "error": "Task execution timed out after 300s."}
+        except Exception as exc:
+            context.log(f"Execution engine failure: {exc}", level="ERROR")
+            res = {"status": "failure", "error": str(exc)}
+
+        # Map execution results back into trace observations
         observations: list[ToolObservation] = []
-
-        for step in steps:
-            if self._check_interrupt():
-                return self._stop(trace, "user_interrupt")
-
-            if trace.iterations >= self.max_iterations:
-                return self._stop(trace, "iteration_limit_reached")
-
-            trace.iterations += 1
-            step_id = step["id"]
-            action = step["action"]
-            description = step["description"]
-            params = step["params"]
-
-            step_risk = self.risk.evaluate([action] if action else [])
-            trace.risk_scores.append(
-                {
-                    "scope": f"step:{step_id}",
-                    "action": action,
-                    "level": step_risk.level.label(),
-                    "blocking": list(step_risk.blocking_actions),
-                    "confirm": list(step_risk.confirm_actions),
-                    "high": list(step_risk.high_risk_actions),
-                }
+        for sid, step_res in res.get("results", {}).items():
+            obs = ToolObservation(
+                tool_name=step_res.get("tool_name", ""),
+                arguments=step_res.get("arguments", {}),
+                execution_status=step_res.get("execution_status", "failure"),
+                output_summary=step_res.get("output_summary", ""),
+                error_message=step_res.get("error_message"),
+                duration_seconds=step_res.get("duration_seconds", 0.0),
             )
+            observations.append(obs)
 
-            if step_risk.is_blocked:
-                trace.final_response = f"Stopped at step {step_id}: blocked action '{action}'."
-                return self._stop(trace, "risk_threshold_exceeded")
-
-            if not action:
-                trace.observations.append(
-                    {
-                        "step_id": step_id,
-                        "tool_name": "",
-                        "execution_status": "success",
-                        "output_summary": f"Reasoning step: {description}",
-                    }
-                )
-                continue
-
-            allowed, reason = self.gov.can_execute(action)
-            if not allowed:
-                trace.observations.append(
-                    {
-                        "step_id": step_id,
-                        "tool_name": action,
-                        "execution_status": "failure",
-                        "output_summary": "",
-                        "error_message": reason,
-                    }
-                )
-                continue
-
-            force_confirmation = self.confidence.score() < 0.4
-            needs_confirm = (
-                step_risk.requires_confirmation
-                or self.gov.requires_confirmation(action)
-                or force_confirmation
-            )
-            if needs_confirm:
-                self.sm.transition(AgentState.AWAITING_CONFIRMATION)
-                approved = await self._ask_confirmation(
-                    f"Step {step_id}: run '{action}' with args {params}? [y/N]: ",
-                    confirm_callback,
-                )
-                if not approved:
-                    return self._stop(trace, "user_interrupt")
-
-            if self.sm.state in {AgentState.RISK_EVALUATION, AgentState.AWAITING_CONFIRMATION, AgentState.OBSERVING}:
-                self.sm.transition(AgentState.ACTING)
-
-            # Desktop actions go through observe→act→verify→recover bridge.
-            if self.desktop_bridge is not None and is_desktop_action(action):
-                observation, mission_record = await self.desktop_bridge.execute_step(
-                    action,
-                    params,
-                    goal=goal,
-                    description=description,
-                )
-            else:
-                observation = await self.router.execute(action, params)
-
-            observations.append(observation)
-            self.sm.transition(AgentState.OBSERVING)
-
-            obs_dict = observation.to_dict()
-            obs_dict["step_id"] = step_id
+            obs_dict = obs.to_dict()
+            obs_dict["step_id"] = sid
             obs_dict["output_summary"] = _truncate_obs(str(obs_dict.get("output_summary", "")))
             if obs_dict.get("error_message"):
                 obs_dict["error_message"] = _truncate_obs(str(obs_dict["error_message"]))
             trace.observations.append(obs_dict)
-            tool_success = 1.0 if observation.execution_status == "success" else 0.0
+
+            tool_success = 1.0 if obs.execution_status == "success" else 0.0
             self.confidence.update("tool_reliability", tool_success)
 
-            if observation.execution_status != "success":
-                return self._stop(trace, "unrecoverable_tool_failure")
-
-        if self.sm.state == AgentState.RISK_EVALUATION:
-            self.sm.transition(AgentState.ACTING)
-            self.sm.transition(AgentState.OBSERVING)
-
-        self.sm.transition(AgentState.REFLECTING)
-        response = await self._reflect(goal, plan, observations, trace)
-        trace.reflection = response
-        trace.final_response = response
-        trace.close(True, "goal_completed")
+        if res.get("status") == "success":
+            self.sm.transition(AgentState.REFLECTING)
+            response = await self._reflect(goal, plan, observations, trace)
+            trace.reflection = response
+            trace.final_response = response
+            trace.close(True, "goal_completed")
+        else:
+            trace.final_response = res.get("error") or "Task execution failed."
+            trace.close(False, "unrecoverable_tool_failure")
 
         self.sm.transition(AgentState.SPEAKING)
         self.sm.transition(AgentState.IDLE)

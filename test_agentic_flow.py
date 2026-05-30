@@ -8,7 +8,7 @@ async def main():
     controller = JarvisControllerV2()
     
     # Required for initializing the dashboard logic and other properties
-    controller.initialize()
+    await controller.initialize()
 
     text = "Look up the current weather in New York and fetch the top news headline there today."
     print(f"Sending input: {text}")

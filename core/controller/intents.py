@@ -30,18 +30,25 @@ class GoalIntentResult:
     mutated: bool = False
 
 
-_neural_scheduler = None
-
-
-def get_neural_scheduler() -> Any:
-    global _neural_scheduler
-    if _neural_scheduler is None:
-        try:
-            from core.agentic.neural_scheduler import NeuralScheduler
-            _neural_scheduler = NeuralScheduler()
-        except Exception as exc:
-            logger.warning("Failed to load neural scheduler: %s", exc)
-    return _neural_scheduler
+def parse_time_delay_with_parsedatetime(text: str) -> float:
+    try:
+        import parsedatetime
+        import time
+        from datetime import datetime
+        
+        cal = parsedatetime.Calendar()
+        now_dt = datetime.now()
+        time_struct, parse_status = cal.parse(text, now_dt.timetuple())
+        if parse_status > 0:
+            target_epoch = time.mktime(time_struct)
+            now_epoch = time.time()
+            delay = target_epoch - now_epoch
+            if delay < -60:
+                return 0.0
+            return max(0.0, delay)
+    except Exception as exc:
+        logger.warning("Failed parsing relative time with parsedatetime: %s", exc)
+    return 0.0
 
 
 def handle_goal_intent(
@@ -62,18 +69,14 @@ def handle_goal_intent(
             ).strip()
         description = description.strip(" .?!")
         if description:
-            # Predict priority and delay using neural scheduler
-            pred_priority, pred_delay = 5, 0.0
-            ns = get_neural_scheduler()
-            if ns and ns.loaded:
-                try:
-                    pred_priority, pred_delay = ns.predict(user_input)
-                except Exception as exc:
-                    logger.warning("Neural scheduler prediction failed: %s", exc)
+            # Predict priority and delay using parsedatetime and keyword fallback
+            pred_priority = 5
+            if any(w in user_input.lower() for w in ("urgent", "asap", "high priority", "important")):
+                pred_priority = 9
 
-            # Fallback/hybrid delay logic: use explicit regex extracted delay if present
+            pdt_delay = parse_time_delay_with_parsedatetime(user_input)
             regex_delay = extract_goal_delay_seconds(user_input)
-            delay_seconds = regex_delay if regex_delay > 0.0 else pred_delay
+            delay_seconds = pdt_delay if pdt_delay > 0.0 else regex_delay
 
             goal_id = goal_manager.create_goal(
                 description=description,
@@ -111,7 +114,7 @@ def handle_goal_intent(
     return None
 
 
-def handle_preference_intent(
+async def handle_preference_intent(
     text: str,
     user_input: str,
     *,
@@ -120,25 +123,25 @@ def handle_preference_intent(
     if text.startswith("remember i like "):
         value = user_input[16:].strip()
         if value:
-            memory.store_preference(f"likes_{value[:12]}", value)
+            await memory.store_preference(f"likes_{value[:12]}", value)
             return f"I will remember you like {value}."
 
     if text.startswith("my name is "):
         value = user_input[11:].strip()
         if value:
-            memory.store_preference("name", value)
+            await memory.store_preference("name", value)
             return f"I will remember your name is {value}."
 
     if text.startswith("i prefer "):
         value = user_input[9:].strip()
         if value:
-            memory.store_preference(f"prefer_{value[:12]}", value)
+            await memory.store_preference(f"prefer_{value[:12]}", value)
             return f"I will remember you prefer {value}."
 
     if text.startswith("i work in "):
         value = user_input[10:].strip()
         if value:
-            memory.store_preference("work", value)
+            await memory.store_preference("work", value)
             return f"I will remember you work in {value}."
 
     return None

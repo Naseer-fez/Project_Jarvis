@@ -1,4 +1,4 @@
-﻿"""Hybrid memory: SQLite for structure plus optional Chroma semantic memory."""
+"""Hybrid memory: SQLite for structure plus optional Chroma semantic memory."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import ast
 import hashlib
 import logging
 import re
+import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -59,15 +60,14 @@ class HybridMemory:
         from core.memory.sqlite_pool import SQLitePool
         self._pool = SQLitePool(self.db_path, pool_size=3)
 
-        # Always create SQLite tables on construction so callers don't need
-        # to call initialize() before using store_fact / recall / etc.
-        self._init_sqlite()
+        self._init_lock = asyncio.Lock()
+        self._sqlite_initialized = False
 
-    def initialize(self, index_path: str = "") -> dict[str, Any]:
-        self._init_sqlite()
+    async def initialize(self, index_path: str = "") -> dict[str, Any]:
+        await self._ensure_db_initialized()
         semantic_ready = False
         try:
-            semantic_ready = bool(self.semantic.initialize())
+            semantic_ready = bool(await self.semantic.initialize())
         except Exception as exc:  # noqa: BLE001
             logger.warning("Semantic memory initialization failed: %s", exc)
             semantic_ready = False
@@ -80,7 +80,8 @@ class HybridMemory:
         }
 
         if index_path:
-            result["codebase_index"] = self.index_codebase(index_path)
+            asyncio.create_task(self.index_codebase(index_path))
+            result["codebase_index"] = {"status": "background_indexing_started"}
 
         return result
 
@@ -94,12 +95,17 @@ class HybridMemory:
         self._llm = llm
         self._enable_llm_context_titles = bool(enable_context_titles)
 
-    def _conn(self):
-        return self._pool.acquire()
+    async def _ensure_db_initialized(self) -> None:
+        if self._sqlite_initialized:
+            return
+        async with self._init_lock:
+            if not self._sqlite_initialized:
+                await self._init_sqlite()
+                self._sqlite_initialized = True
 
-    def _init_sqlite(self) -> None:
-        with self._conn() as conn:
-            conn.executescript(
+    async def _init_sqlite(self) -> None:
+        async with self._pool.acquire() as conn:
+            await conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS preferences (
                     key TEXT PRIMARY KEY,
@@ -121,13 +127,23 @@ class HybridMemory:
                     session_id TEXT,
                     timestamp TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS actions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action TEXT NOT NULL,
+                    result TEXT,
+                    success INTEGER NOT NULL DEFAULT 1,
+                    metadata TEXT,
+                    timestamp TEXT NOT NULL
+                );
                 """
             )
 
-    def store_preference(self, key: str, value: str) -> bool:
+    async def store_preference(self, key: str, value: str) -> bool:
+        await self._ensure_db_initialized()
         now = datetime.now().isoformat()
-        with self._conn() as conn:
-            conn.execute(
+        async with self._pool.acquire() as conn:
+            await conn.execute(
                 "INSERT INTO preferences (key, value, updated_at) VALUES (?, ?, ?) "
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                 (key, value, now),
@@ -135,45 +151,47 @@ class HybridMemory:
 
         if self.mode == "hybrid":
             try:
-                self.semantic.store_preference(key, value)
+                await self.semantic.store_preference(key, value)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Semantic preference store failed: %s", exc)
         return True
 
-    def store_episode(self, event: str, category: str = "general") -> bool:
+    async def store_episode(self, event: str, category: str = "general") -> bool:
+        await self._ensure_db_initialized()
         now = datetime.now().isoformat()
-        with self._conn() as conn:
-            conn.execute(
+        async with self._pool.acquire() as conn:
+            await conn.execute(
                 "INSERT INTO episodes (event, category, timestamp) VALUES (?, ?, ?)",
                 (event, category, now),
             )
 
         if self.mode == "hybrid":
             try:
-                self.semantic.store_episode(event, category)
+                await self.semantic.store_episode(event, category)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Semantic episode store failed: %s", exc)
         return True
 
-    def store_conversation(self, user_input: str, assistant_response: str, session_id: str = "default") -> bool:
+    async def store_conversation(self, user_input: str, assistant_response: str, session_id: str = "default") -> bool:
+        await self._ensure_db_initialized()
         now = datetime.now().isoformat()
-        with self._conn() as conn:
-            conn.execute(
+        async with self._pool.acquire() as conn:
+            await conn.execute(
                 "INSERT INTO conversations (user_input, assistant_response, session_id, timestamp) VALUES (?, ?, ?, ?)",
                 (user_input, assistant_response, session_id, now),
             )
 
         if self.mode == "hybrid":
             try:
-                self.semantic.store_conversation_turn(user_input, assistant_response, session_id)
+                await self.semantic.store_conversation_turn(user_input, assistant_response, session_id)
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Semantic conversation store failed: %s", exc)
         return True
 
-    def recall_preferences(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    async def recall_preferences(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         if self.mode == "hybrid":
             try:
-                raw = self.semantic.recall_preferences(query, top_k=top_k, threshold=0.0)
+                raw = await self.semantic.recall_preferences(query, top_k=top_k, threshold=0.0)
                 return [
                     {
                         "key": item.get("metadata", {}).get("key", ""),
@@ -186,17 +204,19 @@ class HybridMemory:
             except Exception as exc:  # noqa: BLE001
                 logger.debug("Semantic preference recall failed: %s", exc)
 
-        with self._conn() as conn:
-            rows = conn.execute(
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            async with conn.execute(
                 "SELECT key, value FROM preferences ORDER BY updated_at DESC LIMIT ?",
                 (max(1, top_k),),
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
         return [{"key": row["key"], "value": row["value"], "score": 1.0} for row in rows]
 
-    def recall_all(self, query: str, top_k: int = 5) -> dict[str, list[dict[str, Any]]]:
+    async def recall_all(self, query: str, top_k: int = 5) -> dict[str, list[dict[str, Any]]]:
         if self.mode == "hybrid":
             try:
-                raw = self.semantic.recall_all(query, top_k=top_k, threshold=0.0)
+                raw = await self.semantic.recall_all(query, top_k=top_k, threshold=0.0)
                 return {
                     "preferences": [
                         {
@@ -232,9 +252,9 @@ class HybridMemory:
                 logger.debug("Semantic recall_all failed: %s", exc)
 
         return {
-            "preferences": self.recall_preferences(query, top_k=top_k),
-            "episodes": self._recall_sqlite_episodes(query, top_k=top_k),
-            "conversations": self._recall_sqlite_conversations(query, top_k=top_k),
+            "preferences": await self.recall_preferences(query, top_k=top_k),
+            "episodes": await self._recall_sqlite_episodes(query, top_k=top_k),
+            "conversations": await self._recall_sqlite_conversations(query, top_k=top_k),
         }
 
     @staticmethod
@@ -252,12 +272,14 @@ class HybridMemory:
             return 0.0
         return min(1.0, hits / max(1.0, float(len(tokens))))
 
-    def _recall_sqlite_episodes(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    async def _recall_sqlite_episodes(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         tokens = self._query_tokens(query)
-        with self._conn() as conn:
-            rows = conn.execute(
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            async with conn.execute(
                 "SELECT event, category, timestamp FROM episodes ORDER BY timestamp DESC LIMIT 200"
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
 
         ranked: list[dict[str, Any]] = []
         for row in rows:
@@ -280,12 +302,14 @@ class HybridMemory:
         ranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
         return ranked[: max(1, top_k)]
 
-    def _recall_sqlite_conversations(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    async def _recall_sqlite_conversations(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
         tokens = self._query_tokens(query)
-        with self._conn() as conn:
-            rows = conn.execute(
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            async with conn.execute(
                 "SELECT user_input, assistant_response, timestamp FROM conversations ORDER BY timestamp DESC LIMIT 200"
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
 
         ranked: list[dict[str, Any]] = []
         for row in rows:
@@ -308,7 +332,7 @@ class HybridMemory:
         ranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
         return ranked[: max(1, top_k)]
 
-    def build_context_block(self, query: str, n_results: int = 5) -> str:
+    async def build_context_block(self, query: str, n_results: int = 5) -> str:
         try:
             from core.memory.context_compressor import ContextCompressor
 
@@ -317,13 +341,14 @@ class HybridMemory:
                 llm=self._llm,
                 enable_llm_title=self._enable_llm_context_titles,
             )
-            return compressor.compress(query, self.recall_all(query, top_k=n_results))
+            recalled = await self.recall_all(query, top_k=n_results)
+            return compressor.compress(query, recalled)
         except Exception:  # noqa: BLE001
             return ""
 
-    def recall(self, query: str, top_k: int = 5) -> str:
+    async def recall(self, query: str, top_k: int = 5) -> str:
         """Backward-compatible text recall helper used by legacy paths."""
-        hits = self.recall_preferences(query, top_k=top_k)
+        hits = await self.recall_preferences(query, top_k=top_k)
         if not hits:
             return "I don't know yet. I could not find related facts."
 
@@ -337,12 +362,12 @@ class HybridMemory:
             return "I don't know yet. I could not find related facts."
         return "\n".join(lines)
 
-    def store_code_file(self, file_path: str, content: str) -> int:
+    async def store_code_file(self, file_path: str, content: str) -> int:
         """Parse Python code and store class/function chunks for semantic retrieval."""
         try:
             tree = ast.parse(content)
         except SyntaxError:
-            self.store_episode(f"file:{file_path}", category="code")
+            await self.store_episode(f"file:{file_path}", category="code")
             return 1
 
         lines = content.splitlines()
@@ -368,29 +393,29 @@ class HybridMemory:
             }
 
             if self.mode == "hybrid":
-                self._semantic_store_code_chunk(chunk_id, chunk, metadata)
+                await self._semantic_store_code_chunk(chunk_id, chunk, metadata)
 
             # Keep a structured breadcrumb in sqlite even when semantic is disabled.
-            self.store_episode(f"{chunk_id}\n{chunk[:3000]}", category="code")
+            await self.store_episode(f"{chunk_id}\n{chunk[:3000]}", category="code")
             chunks_stored += 1
 
         if chunks_stored == 0:
-            self.store_episode(f"file:{file_path}", category="code")
+            await self.store_episode(f"file:{file_path}", category="code")
             return 1
 
         return chunks_stored
 
-    def _semantic_store_code_chunk(self, chunk_id: str, chunk: str, metadata: dict[str, Any]) -> None:
+    async def _semantic_store_code_chunk(self, chunk_id: str, chunk: str, metadata: dict[str, Any]) -> None:
         try:
             if hasattr(self.semantic, "store_code_chunk"):
-                self.semantic.store_code_chunk(chunk_id, chunk, metadata=metadata)
+                await self.semantic.store_code_chunk(chunk_id, chunk, metadata=metadata)
             else:
-                self.semantic.store_episode(f"{chunk_id}\n{chunk}", category="code")
+                await self.semantic.store_episode(f"{chunk_id}\n{chunk}", category="code")
         except Exception as exc:  # noqa: BLE001
             logger.debug("Semantic code chunk store failed: %s", exc)
 
-    def index_codebase(self, root_path: str) -> dict[str, int]:
-        """Index changed Python files only, based on content hash."""
+    async def index_codebase(self, root_path: str) -> dict[str, int]:
+        """Index changed Python files only, based on content hash, in batches of 32 chunks."""
         stats = {
             "indexed_files": 0,
             "indexed_chunks": 0,
@@ -406,35 +431,127 @@ class HybridMemory:
 
         exclude_dirs = {"__pycache__", ".git", ".venv", "venv", "node_modules", "jarvis_env"}
 
+        py_files = []
         for py_file in root.rglob("*.py"):
             if any(part in exclude_dirs for part in py_file.parts):
                 continue
+            py_files.append(py_file)
+            await asyncio.sleep(0)
 
+        chunks_to_index = []
+
+        for py_file in py_files:
             try:
-                content = py_file.read_text(encoding="utf-8", errors="replace")
+                # Read content asynchronously via thread pool
+                content = await asyncio.to_thread(py_file.read_text, encoding="utf-8", errors="replace")
                 content_hash = hashlib.sha256(content.encode("utf-8", errors="replace")).hexdigest()
                 hash_key = f"code_hash::{py_file.resolve()}"
 
-                with self._conn() as conn:
-                    row = conn.execute("SELECT value FROM preferences WHERE key=?", (hash_key,)).fetchone()
+                await self._ensure_db_initialized()
+                async with self._pool.acquire() as conn:
+                    async with conn.execute("SELECT value FROM preferences WHERE key=?", (hash_key,)) as cursor:
+                        row = await cursor.fetchone()
                     if row and row["value"] == content_hash:
                         stats["skipped_files"] += 1
                         continue
 
-                    conn.execute(
+                    await conn.execute(
                         "INSERT INTO preferences (key, value, updated_at) VALUES (?, ?, ?) "
                         "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
                         (hash_key, content_hash, datetime.now().isoformat()),
                     )
 
-                chunks = self.store_code_file(str(py_file), content)
+                try:
+                    tree = ast.parse(content)
+                except SyntaxError:
+                    chunks_to_index.append({
+                        "chunk_id": f"file:{py_file}",
+                        "chunk": f"file:{py_file}",
+                        "metadata": {"file": str(py_file), "type": "File"}
+                    })
+                    stats["indexed_files"] += 1
+                    continue
+
+                lines = content.splitlines()
+                file_chunks = 0
+                for node in ast.walk(tree):
+                    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                        continue
+
+                    start = max(0, getattr(node, "lineno", 1) - 1)
+                    end_lineno = getattr(node, "end_lineno", None) or getattr(node, "lineno", 1)
+                    end = min(len(lines), max(start + 1, end_lineno))
+                    chunk = "\n".join(lines[start:end]).strip()
+                    if not chunk:
+                        continue
+
+                    chunk_id = f"{py_file}::{getattr(node, 'name', 'anonymous')}"
+                    metadata = {
+                        "file": str(py_file),
+                        "name": getattr(node, "name", ""),
+                        "type": type(node).__name__,
+                        "lines": f"{start + 1}-{end}",
+                    }
+                    chunks_to_index.append({
+                        "chunk_id": chunk_id,
+                        "chunk": chunk,
+                        "metadata": metadata
+                    })
+                    file_chunks += 1
+
+                if file_chunks == 0:
+                    chunks_to_index.append({
+                        "chunk_id": f"file:{py_file}",
+                        "chunk": f"file:{py_file}",
+                        "metadata": {"file": str(py_file), "type": "File"}
+                    })
+
                 stats["indexed_files"] += 1
-                stats["indexed_chunks"] += int(chunks)
+
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to index %s: %s", py_file, exc)
                 stats["errors"] += 1
 
+            while len(chunks_to_index) >= 32:
+                batch = chunks_to_index[:32]
+                chunks_to_index = chunks_to_index[32:]
+                await self._index_chunks_batch(batch, stats)
+                await asyncio.sleep(0.01)
+
+            await asyncio.sleep(0.01)
+
+        if chunks_to_index:
+            await self._index_chunks_batch(chunks_to_index, stats)
+
         return stats
+
+    async def _index_chunks_batch(self, batch: list[dict], stats: dict) -> None:
+        """Index a batch of code chunks in a single operation."""
+        # 1. SQLite Breadcrumbs
+        try:
+            await self._ensure_db_initialized()
+            async with self._pool.acquire() as conn:
+                for item in batch:
+                    await conn.execute(
+                        "INSERT INTO episodes (event, category, timestamp) VALUES (?, ?, ?)",
+                        (f"{item['chunk_id']}\n{item['chunk'][:3000]}", "code", datetime.now().isoformat())
+                    )
+        except Exception as exc:
+            logger.warning("Failed to store batch chunks to SQLite: %s", exc)
+
+        # 2. Chroma batched write
+        if self.mode == "hybrid":
+            try:
+                events = [f"{item['chunk_id']}\n{item['chunk']}" for item in batch]
+                if hasattr(self.semantic, "store_episodes_batch"):
+                    await self.semantic.store_episodes_batch(events, category="code")
+                else:
+                    for event in events:
+                        await self.semantic.store_episode(event, category="code")
+            except Exception as exc:
+                logger.warning("Failed to store batch chunks to Chroma: %s", exc)
+
+        stats["indexed_chunks"] += len(batch)
 
     def stats(self) -> dict[str, Any]:
         return {
@@ -445,16 +562,18 @@ class HybridMemory:
 
     # ── Backward-compat fact API (used by legacy tests) ───────────────────
 
-    def store_fact(self, key: str, value: str, source: str = "user", **_kwargs) -> None:
+    async def store_fact(self, key: str, value: str, source: str = "user", **_kwargs) -> None:
         """Store a key-value fact (alias for store_preference)."""
-        self.store_preference(key, value)
+        await self.store_preference(key, value)
 
-    def get_fact(self, key: str):
+    async def get_fact(self, key: str):
         """Return a simple object with .key and .value, or None if not found."""
-        with self._conn() as conn:
-            row = conn.execute(
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            async with conn.execute(
                 "SELECT key, value FROM preferences WHERE key=?", (key,)
-            ).fetchone()
+            ) as cursor:
+                row = await cursor.fetchone()
         if row is None:
             return None
 
@@ -467,13 +586,15 @@ class HybridMemory:
 
         return _Fact(row["key"], row["value"])
 
-    def list_facts(self, limit: int = 50) -> list:
+    async def list_facts(self, limit: int = 50) -> list:
         """Return recent facts as objects with .key and .value."""
-        with self._conn() as conn:
-            rows = conn.execute(
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            async with conn.execute(
                 "SELECT key, value FROM preferences ORDER BY updated_at DESC LIMIT ?",
                 (max(1, limit),),
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
 
         class _Fact:
             def __init__(self, k, v):
@@ -482,53 +603,40 @@ class HybridMemory:
 
         return [_Fact(r["key"], r["value"]) for r in rows]
 
-    def count(self) -> int:
+    async def count(self) -> int:
         """Return number of stored facts/preferences."""
-        with self._conn() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM preferences").fetchone()
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            async with conn.execute("SELECT COUNT(*) FROM preferences") as cursor:
+                row = await cursor.fetchone()
         return row[0] if row else 0
 
     # ── Extended action-tracking API (used by Session 4/5 tests) ─────────
 
-    def _ensure_actions_table(self) -> None:
-        """Create the actions table if it does not exist yet."""
-        with self._conn() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS actions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    action TEXT NOT NULL,
-                    result TEXT,
-                    success INTEGER NOT NULL DEFAULT 1,
-                    metadata TEXT,
-                    timestamp TEXT NOT NULL
-                )
-                """
-            )
-
-    def store_action(self, action: str, result: str = "", success: bool = True, metadata: dict | None = None) -> None:
+    async def store_action(self, action: str, result: str = "", success: bool = True, metadata: dict | None = None) -> None:
         """Record a tool action in the actions table."""
         import json as _json
-        self._ensure_actions_table()
-        with self._conn() as conn:
-            conn.execute(
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            await conn.execute(
                 "INSERT INTO actions (action, result, success, metadata, timestamp) VALUES (?, ?, ?, ?, ?)",
                 (action, result, int(success), _json.dumps(metadata or {}), datetime.now().isoformat()),
             )
 
-    def store_failure(self, action: str, error: str = "", metadata: dict | None = None) -> None:
+    async def store_failure(self, action: str, error: str = "", metadata: dict | None = None) -> None:
         """Record a failed tool call."""
-        self.store_action(action, result=error, success=False, metadata=metadata)
+        await self.store_action(action, result=error, success=False, metadata=metadata)
 
-    def recent_actions(self, limit: int = 20) -> list[dict[str, Any]]:
+    async def recent_actions(self, limit: int = 20) -> list[dict[str, Any]]:
         """Return recent actions, newest first."""
         import json as _json
-        self._ensure_actions_table()
-        with self._conn() as conn:
-            rows = conn.execute(
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            async with conn.execute(
                 "SELECT action, result, success, metadata, timestamp FROM actions ORDER BY id DESC LIMIT ?",
                 (max(1, limit),),
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
         return [
             {
                 "action": r["action"],
@@ -540,29 +648,32 @@ class HybridMemory:
             for r in rows
         ]
 
-    def set_preference(self, key: str, value: str, category: str = "general", **_kwargs) -> None:
+    async def set_preference(self, key: str, value: str, category: str = "general", **_kwargs) -> None:
         """Store a categorised preference (category stored as prefix key)."""
         scoped_key = f"{category}::{key}" if category and category != "general" else key
-        self.store_preference(scoped_key, value)
+        await self.store_preference(scoped_key, value)
         # Also store the bare key for lookup without category prefix
-        self.store_preference(key, value)
+        await self.store_preference(key, value)
 
-    def get_preferences(self, category: str = "") -> dict[str, str]:
+    async def get_preferences(self, category: str = "") -> dict[str, str]:
         """Return preferences matching the given category prefix."""
         prefix = f"{category}::" if category else ""
-        with self._conn() as conn:
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
             if prefix:
-                rows = conn.execute(
+                async with conn.execute(
                     "SELECT key, value FROM preferences WHERE key LIKE ? ORDER BY updated_at DESC",
                     (f"{prefix}%",),
-                ).fetchall()
+                ) as cursor:
+                    rows = await cursor.fetchall()
                 return {r["key"].removeprefix(prefix): r["value"] for r in rows}
-            rows = conn.execute(
+            async with conn.execute(
                 "SELECT key, value FROM preferences ORDER BY updated_at DESC"
-            ).fetchall()
+            ) as cursor:
+                rows = await cursor.fetchall()
             return {r["key"]: r["value"] for r in rows}
 
-    def cleanup_stale_data(self, max_age_days: int = 30) -> dict[str, int]:
+    async def cleanup_stale_data(self, max_age_days: int = 30) -> dict[str, int]:
         """Remove episodes/actions older than max_age_days. Returns removal counts."""
         from datetime import timedelta
         cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
@@ -570,13 +681,12 @@ class HybridMemory:
         removed_episodes = 0
         removed_actions = 0
 
-        with self._conn() as conn:
-            cur = conn.execute("DELETE FROM episodes WHERE timestamp < ?", (cutoff,))
+        await self._ensure_db_initialized()
+        async with self._pool.acquire() as conn:
+            cur = await conn.execute("DELETE FROM episodes WHERE timestamp < ?", (cutoff,))
             removed_episodes = cur.rowcount
 
-        self._ensure_actions_table()
-        with self._conn() as conn:
-            cur = conn.execute("DELETE FROM actions WHERE timestamp < ?", (cutoff,))
+            cur = await conn.execute("DELETE FROM actions WHERE timestamp < ?", (cutoff,))
             removed_actions = cur.rowcount
 
         return {"episodic_removed": removed_episodes, "actions_removed": removed_actions}

@@ -82,6 +82,7 @@ def _resolve_memory_db() -> Path:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _warn_default_token()
+    await asyncio.to_thread(_get_auth_manager)
     yield
     _clicker.stop()
 
@@ -147,7 +148,7 @@ def _get_auth_manager() -> Any:
     return _auth_manager
 
 
-def _is_authorized(request: Request) -> bool:
+async def _is_authorized(request: Request) -> bool:
     """Check if the request has a valid session cookie or matching token header/API token."""
     # 1. Check for valid session cookie
     session_token = request.cookies.get("jarvis_session", "")
@@ -166,7 +167,7 @@ def _is_authorized(request: Request) -> bool:
         expected = os.environ.get("JARVIS_DASHBOARD_TOKEN", _DEFAULT_TOKEN)
         try:
             auth = _get_auth_manager()
-            if auth.verify_api_token(provided) or hmac.compare_digest(provided.encode(), expected.encode()):
+            if await asyncio.to_thread(auth.verify_api_token, provided) or hmac.compare_digest(provided.encode(), expected.encode()):
                 return True
         except Exception:
             if hmac.compare_digest(provided.encode(), expected.encode()):
@@ -174,7 +175,7 @@ def _is_authorized(request: Request) -> bool:
     return False
 
 
-def _ws_is_authorized(websocket: WebSocket, token: str) -> bool:
+async def _ws_is_authorized(websocket: WebSocket, token: str) -> bool:
     """Validate a WebSocket connection by query-parameter token or cookie."""
     # 1. Check query parameter token
     if token:
@@ -297,13 +298,7 @@ def _load_ai_os_overview() -> dict[str, Any]:
         logger.debug("Failed loading plugin catalog", exc_info=True)
         overview["errors"].append(f"Plugin catalog unavailable: {exc}")
 
-    try:
-        from core.workflow.catalog import WorkflowCatalog
-
-        overview["workflows"] = WorkflowCatalog(config=config).summary()
-    except Exception as exc:
-        logger.debug("Failed loading workflow catalog", exc_info=True)
-        overview["errors"].append(f"Workflow catalog unavailable: {exc}")
+    overview["workflows"] = {"count": 0, "templates": [], "errors": {}}
 
     return overview
 
@@ -343,7 +338,7 @@ async def health() -> dict[str, Any]:
 
 @app.get("/login")
 async def login_get(request: Request):
-    if _is_authorized(request):
+    if await _is_authorized(request):
         return RedirectResponse(url="/", status_code=303)
     return templates.TemplateResponse(request, "login.html", {"error": None})
 
@@ -351,7 +346,7 @@ async def login_get(request: Request):
 async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
     try:
         auth = _get_auth_manager()
-        user = auth.authenticate(username, password)
+        user = await asyncio.to_thread(auth.authenticate, username, password)
         if user is not None:
             token = auth.sign_session(user)
             response = RedirectResponse(url="/", status_code=303)
@@ -378,14 +373,14 @@ async def logout(request: Request):
 
 @app.get("/")
 async def index(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(request, "index.html", {"state": _state})
 
 
 @app.get("/memory")
 async def memory_page(request: Request, q: str = ""):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
 
     memories: list[dict[str, str]] = []
@@ -397,30 +392,33 @@ async def memory_page(request: Request, q: str = ""):
     else:
         try:
             search = f"%{q}%"
-            with sqlite3.connect(memory_db) as conn:
-                conn.row_factory = sqlite3.Row
-                # The real schema has preferences / episodes / conversations.
-                # We UNION them into a common (timestamp, category, content) shape
-                # so the template keeps working unchanged.
-                rows = conn.execute(
-                    """
-                    SELECT updated_at AS timestamp, 'preference' AS category, (key || ': ' || value) AS content
-                    FROM preferences
-                    WHERE (key || ': ' || value) LIKE ?
-                    UNION ALL
-                    SELECT timestamp, category, event AS content
-                    FROM episodes
-                    WHERE event LIKE ?
-                    UNION ALL
-                    SELECT timestamp, 'conversation' AS category,
-                           ('User: ' || user_input || ' | Jarvis: ' || assistant_response) AS content
-                    FROM conversations
-                    WHERE ('User: ' || user_input || ' | Jarvis: ' || assistant_response) LIKE ?
-                    ORDER BY timestamp DESC
-                    LIMIT 100
-                    """,
-                    (search, search, search),
-                ).fetchall()
+            def _query():
+                with sqlite3.connect(memory_db) as conn:
+                    conn.row_factory = sqlite3.Row
+                    # The real schema has preferences / episodes / conversations.
+                    # We UNION them into a common (timestamp, category, content) shape
+                    # so the template keeps working unchanged.
+                    return conn.execute(
+                        """
+                        SELECT updated_at AS timestamp, 'preference' AS category, (key || ': ' || value) AS content
+                        FROM preferences
+                        WHERE (key || ': ' || value) LIKE ?
+                        UNION ALL
+                        SELECT timestamp, category, event AS content
+                        FROM episodes
+                        WHERE event LIKE ?
+                        UNION ALL
+                        SELECT timestamp, 'conversation' AS category,
+                               ('User: ' || user_input || ' | Jarvis: ' || assistant_response) AS content
+                        FROM conversations
+                        WHERE ('User: ' || user_input || ' | Jarvis: ' || assistant_response) LIKE ?
+                        ORDER BY timestamp DESC
+                        LIMIT 100
+                        """,
+                        (search, search, search),
+                    ).fetchall()
+
+            rows = await asyncio.to_thread(_query)
             for row in rows:
                 memories.append(
                     {
@@ -445,7 +443,7 @@ async def memory_page(request: Request, q: str = ""):
 
 @app.get("/goals")
 async def goals_page(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
 
     goals: list[dict[str, Any]] = []
@@ -473,14 +471,14 @@ async def goals_page(request: Request):
 
 @app.get("/search")
 async def search_page(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(request, "search.html")
 
 
 @app.get("/converter")
 async def converter_page(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(request, "converter.html")
 
@@ -586,14 +584,14 @@ _clicker = AutoClickerManager()
 
 @app.get("/clicker")
 async def clicker_page(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(request, "clicker.html", {"clicker": _clicker})
 
 
 @app.get("/api/clicker/state")
 async def api_clicker_state(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
     
     uptime = 0.0
@@ -616,7 +614,7 @@ async def api_clicker_state(request: Request):
 
 @app.post("/api/clicker/start")
 async def api_clicker_start(request: Request, body: ClickerStartRequest):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
     
     _clicker.start(
@@ -630,7 +628,7 @@ async def api_clicker_start(request: Request, body: ClickerStartRequest):
 
 @app.post("/api/clicker/stop")
 async def api_clicker_stop(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
     
     _clicker.stop()
@@ -639,7 +637,7 @@ async def api_clicker_stop(request: Request):
 
 @app.post("/api/clicker/clear-logs")
 async def api_clicker_clear_logs(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
     
     _clicker.logs = []
@@ -648,7 +646,7 @@ async def api_clicker_clear_logs(request: Request):
 
 @app.get("/api/clicker/screenshots")
 async def api_clicker_screenshots(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
         
     gui_audit_dir = PROJECT_ROOT / "outputs" / "gui_audit"
@@ -676,7 +674,7 @@ async def api_clicker_screenshots(request: Request):
 
 @app.get("/ai-os")
 async def ai_os_page(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(
         request,
@@ -687,7 +685,7 @@ async def ai_os_page(request: Request):
 
 @app.get("/api/ai-os")
 async def api_ai_os(request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
     return _load_ai_os_overview()
 
@@ -698,7 +696,7 @@ async def api_ai_os(request: Request):
 
 @app.post("/command")
 async def command(request: Request, body: CommandRequest):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
 
     text = body.text
@@ -726,7 +724,7 @@ async def command(request: Request, body: CommandRequest):
 
 @app.post("/goals/add")
 async def goals_add(request: Request, body: GoalAddRequest):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
 
     manager = _goal_manager()
@@ -752,7 +750,7 @@ async def goals_add(request: Request, body: GoalAddRequest):
 
 @app.post("/goals/complete/{goal_id}")
 async def goals_complete(goal_id: str, request: Request):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
 
     manager = _goal_manager()
@@ -784,7 +782,7 @@ class SearchRequest(BaseModel):
 
 @app.post("/api/search")
 async def api_search(request: Request, body: SearchRequest):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
     
     from core.tools.fast_search_tool import run_fast_search
@@ -808,7 +806,7 @@ async def api_convert(
     file: UploadFile = File(...),
     target_format: str = Form(...)
 ):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return _unauthorized()
         
     from core.tools.universal_converter import perform_conversion
@@ -848,7 +846,7 @@ async def api_convert(
 
 @app.get("/api/view-file")
 async def api_view_file(request: Request, path: str):
-    if not _is_authorized(request):
+    if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
         
     try:
@@ -878,7 +876,7 @@ async def api_view_file(request: Request, path: str):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     token = websocket.query_params.get("token", "")
-    if not _ws_is_authorized(websocket, token):
+    if not await _ws_is_authorized(websocket, token):
         # 1008 = Policy Violation — standard close code for auth failures
         await websocket.close(code=1008)
         logger.warning("WebSocket connection rejected — missing or invalid token (client=%s)", websocket.client)

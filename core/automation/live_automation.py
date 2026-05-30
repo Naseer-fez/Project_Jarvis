@@ -434,13 +434,13 @@ class LiveAutomationEngine:
             f"live_screen_updates={self._stats.live_screen_updates}"
         )
 
-    def search_rag(self, query: str, top_k: int = 5) -> str:
+    async def search_rag(self, query: str, top_k: int = 5) -> str:
         query = _normalize_text(query)
         if not query:
             return "Provide a query after 'rag search'."
 
         try:
-            recalled = self.memory.recall_all(query, top_k=max(top_k, 10))
+            recalled = await self.memory.recall_all(query, top_k=max(top_k, 10))
         except Exception as exc:  # noqa: BLE001
             return f"RAG search failed: {exc}"
 
@@ -510,7 +510,7 @@ class LiveAutomationEngine:
             }
         )
 
-        self._store_rag_text(
+        await self._store_rag_text(
             source="command_result",
             path=path,
             text=f"Command: {command_text}\nResult: {response}",
@@ -534,7 +534,7 @@ class LiveAutomationEngine:
         if not text:
             text = f"File ingested with no extractable text: {path.name}"
 
-        chunks = self._store_rag_text(source=source, path=path, text=text)
+        chunks = await self._store_rag_text(source=source, path=path, text=text)
 
         self._append_log(
             {
@@ -663,14 +663,14 @@ class LiveAutomationEngine:
         if screenshot_path:
             text += f"\nScreenshot: {screenshot_path}"
 
-        self._store_rag_text(
+        await self._store_rag_text(
             source="live_screen",
             path=Path(screenshot_path) if screenshot_path else self.screenshots_dir,
             text=text,
         )
         self._stats.live_screen_updates += 1
 
-    def _store_rag_text(self, *, source: str, path: Path, text: str) -> int:
+    async def _store_rag_text(self, *, source: str, path: Path, text: str) -> int:
         clean = str(text or "").strip()
         if not clean:
             return 0
@@ -687,7 +687,7 @@ class LiveAutomationEngine:
                 f"content={chunk}"
             )
             try:
-                self.memory.store_episode(payload, category="rag")
+                await self.memory.store_episode(payload, category="rag")
                 stored += 1
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Failed to store RAG chunk: %s", exc)

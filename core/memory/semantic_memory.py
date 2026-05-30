@@ -20,6 +20,7 @@ Author: Jarvis Session 4
 """
 
 import uuid
+import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -73,7 +74,7 @@ class SemanticMemory:
 
     # ── Init ──────────────────────────────────────────────────────────────────
 
-    def initialize(self) -> bool:
+    async def initialize(self) -> bool:
         """
         Lazy initialization — load model and connect to ChromaDB.
         Returns True on success, False on failure.
@@ -91,7 +92,7 @@ class SemanticMemory:
                 self.embedding_manager = get_embedding_manager(self.model_name)
 
             if not self.embedding_manager.is_ready():
-                if not self.embedding_manager.initialize():
+                if not await self.embedding_manager.initialize():
                     logger.warning("Embedding manager failed to initialize; disabling semantic memory.")
                     return False
 
@@ -116,32 +117,33 @@ class SemanticMemory:
             logger.error(f"SemanticMemory initialization failed: {e}")
             return False
 
-    def _ensure_init(self):
+    async def _ensure_init(self):
         if not self._initialized:
-            if not self.initialize():
+            if not await self.initialize():
                 raise RuntimeError("SemanticMemory is not initialized.")
 
-    def _embed(self, text: str) -> List[float]:
+    async def _embed(self, text: str) -> List[float]:
         """Generate a normalized embedding vector for the given text."""
-        return self.embedding_manager.embed(text)
+        return await self.embedding_manager.embed(text)
 
     def _collection(self, name: str):
         return self._collections[name]
 
     # ── Store ─────────────────────────────────────────────────────────────────
 
-    def store_preference(self, key: str, value: str) -> str:
+    async def store_preference(self, key: str, value: str) -> str:
         """
         Upsert a user preference into the vector store.
         The document text is: "key: value" for rich semantic matching.
         Returns the document ID.
         """
-        self._ensure_init()
+        await self._ensure_init()
         doc_id   = f"pref_{key}"
         doc_text = f"{key}: {value}"
-        embedding = self._embed(doc_text)
+        embedding = await self._embed(doc_text)
 
-        self._collection(COLLECTION_PREFS).upsert(
+        await asyncio.to_thread(
+            self._collection(COLLECTION_PREFS).upsert,
             ids=[doc_id],
             embeddings=[embedding],
             documents=[doc_text],
@@ -154,16 +156,17 @@ class SemanticMemory:
         logger.debug(f"Stored preference: {doc_id} → {doc_text}")
         return doc_id
 
-    def store_episode(self, event: str, category: str = "general") -> str:
+    async def store_episode(self, event: str, category: str = "general") -> str:
         """
         Store an episodic memory event.
         Returns the document ID.
         """
-        self._ensure_init()
+        await self._ensure_init()
         doc_id    = f"ep_{uuid.uuid4().hex[:12]}"
-        embedding = self._embed(event)
+        embedding = await self._embed(event)
 
-        self._collection(COLLECTION_EPISODES).add(
+        await asyncio.to_thread(
+            self._collection(COLLECTION_EPISODES).add,
             ids=[doc_id],
             embeddings=[embedding],
             documents=[event],
@@ -175,7 +178,36 @@ class SemanticMemory:
         logger.debug(f"Stored episode: {doc_id}")
         return doc_id
 
-    def store_conversation_turn(
+    async def store_episodes_batch(
+        self,
+        events: list[str],
+        category: str = "general",
+    ) -> list[str]:
+        """
+        Store a batch of episodic memory events efficiently.
+        Returns the list of document IDs.
+        """
+        if not events:
+            return []
+        await self._ensure_init()
+        embeddings = await self.embedding_manager.embed_batch(events)
+        doc_ids = [f"ep_{uuid.uuid4().hex[:12]}" for _ in range(len(events))]
+
+        await asyncio.to_thread(
+            self._collection(COLLECTION_EPISODES).add,
+            ids=doc_ids,
+            embeddings=embeddings,
+            documents=events,
+            metadatas=[{
+                "category":  category,
+                "timestamp": datetime.now().isoformat(),
+            } for _ in range(len(events))],
+        )
+        logger.debug(f"Stored {len(events)} episodes in batch")
+        return doc_ids
+
+
+    async def store_conversation_turn(
         self,
         user_input: str,
         assistant_response: str,
@@ -186,12 +218,13 @@ class SemanticMemory:
         The document combines user + assistant text for richer context matching.
         Returns the document ID.
         """
-        self._ensure_init()
+        await self._ensure_init()
         doc_id    = f"conv_{uuid.uuid4().hex[:12]}"
         doc_text  = f"User: {user_input}\nAssistant: {assistant_response}"
-        embedding = self._embed(doc_text)
+        embedding = await self._embed(doc_text)
 
-        self._collection(COLLECTION_CONVOS).add(
+        await asyncio.to_thread(
+            self._collection(COLLECTION_CONVOS).add,
             ids=[doc_id],
             embeddings=[embedding],
             documents=[doc_text],
@@ -207,7 +240,7 @@ class SemanticMemory:
 
     # ── Recall ────────────────────────────────────────────────────────────────
 
-    def recall_preferences(
+    async def recall_preferences(
         self,
         query: str,
         top_k: int = DEFAULT_TOP_K,
@@ -217,27 +250,27 @@ class SemanticMemory:
         Retrieve the most semantically similar preferences to the query.
         Returns a list of result dicts sorted by relevance score (descending).
         """
-        return self._query_collection(COLLECTION_PREFS, query, top_k, threshold)
+        return await self._query_collection(COLLECTION_PREFS, query, top_k, threshold)
 
-    def recall_episodes(
+    async def recall_episodes(
         self,
         query: str,
         top_k: int = DEFAULT_TOP_K,
         threshold: float = DEFAULT_THRESHOLD,
     ) -> List[Dict]:
         """Retrieve the most relevant episodic memories for the query."""
-        return self._query_collection(COLLECTION_EPISODES, query, top_k, threshold)
+        return await self._query_collection(COLLECTION_EPISODES, query, top_k, threshold)
 
-    def recall_conversations(
+    async def recall_conversations(
         self,
         query: str,
         top_k: int = DEFAULT_TOP_K,
         threshold: float = DEFAULT_THRESHOLD,
     ) -> List[Dict]:
         """Retrieve the most relevant past conversation turns for the query."""
-        return self._query_collection(COLLECTION_CONVOS, query, top_k, threshold)
+        return await self._query_collection(COLLECTION_CONVOS, query, top_k, threshold)
 
-    def recall_all(
+    async def recall_all(
         self,
         query: str,
         top_k: int = DEFAULT_TOP_K,
@@ -248,15 +281,20 @@ class SemanticMemory:
         Returns a dict with keys: 'preferences', 'episodes', 'conversations'.
         Each value is a sorted list of result dicts.
         """
+        results = await asyncio.gather(
+            self.recall_preferences(query, top_k, threshold),
+            self.recall_episodes(query, top_k, threshold),
+            self.recall_conversations(query, top_k, threshold)
+        )
         return {
-            "preferences":    self.recall_preferences(query, top_k, threshold),
-            "episodes":       self.recall_episodes(query, top_k, threshold),
-            "conversations":  self.recall_conversations(query, top_k, threshold),
+            "preferences":    results[0],
+            "episodes":       results[1],
+            "conversations":  results[2],
         }
 
     # ── Core Query ────────────────────────────────────────────────────────────
 
-    def _query_collection(
+    async def _query_collection(
         self,
         collection_name: str,
         query: str,
@@ -268,19 +306,20 @@ class SemanticMemory:
         ChromaDB returns cosine *distance* (0=identical, 2=opposite).
         We convert: similarity = 1 - (distance / 2) → range [0, 1]
         """
-        self._ensure_init()
+        await self._ensure_init()
         collection = self._collection(collection_name)
 
         try:
             # Don't query empty collections — ChromaDB raises on n_results > count
-            count = collection.count()
+            count = await asyncio.to_thread(collection.count)
             if count == 0:
                 return []
 
             actual_k = min(top_k, count)
-            embedding = self._embed(query)
+            embedding = await self._embed(query)
 
-            results = collection.query(
+            results = await asyncio.to_thread(
+                collection.query,
                 query_embeddings=[embedding],
                 n_results=actual_k,
                 include=["documents", "metadatas", "distances"],
@@ -320,24 +359,25 @@ class SemanticMemory:
 
     # ── Delete ────────────────────────────────────────────────────────────────
 
-    def delete_preference(self, key: str) -> bool:
+    async def delete_preference(self, key: str) -> bool:
         """Delete a preference by key. Returns True if deleted."""
-        self._ensure_init()
+        await self._ensure_init()
         doc_id = f"pref_{key}"
         try:
-            self._collection(COLLECTION_PREFS).delete(ids=[doc_id])
+            await asyncio.to_thread(self._collection(COLLECTION_PREFS).delete, ids=[doc_id])
             logger.debug(f"Deleted preference: {doc_id}")
             return True
         except Exception as e:
             logger.warning(f"Could not delete preference {key}: {e}")
             return False
 
-    def clear_collection(self, collection_name: str) -> bool:
+    async def clear_collection(self, collection_name: str) -> bool:
         """Delete and recreate a collection (full wipe). Use with caution."""
-        self._ensure_init()
+        await self._ensure_init()
         try:
-            self._client.delete_collection(collection_name)
-            self._collections[collection_name] = self._client.get_or_create_collection(
+            await asyncio.to_thread(self._client.delete_collection, collection_name)
+            self._collections[collection_name] = await asyncio.to_thread(
+                self._client.get_or_create_collection,
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"},
             )
@@ -349,16 +389,19 @@ class SemanticMemory:
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 
-    def stats(self) -> Dict[str, Any]:
+    async def stats(self) -> Dict[str, Any]:
         """Return counts for all collections."""
         if not self._initialized:
             return {"initialized": False}
+        prefs_count = await asyncio.to_thread(self._collection(COLLECTION_PREFS).count)
+        episodes_count = await asyncio.to_thread(self._collection(COLLECTION_EPISODES).count)
+        convos_count = await asyncio.to_thread(self._collection(COLLECTION_CONVOS).count)
         return {
             "initialized":    True,
             "model":          self.model_name,
-            "preferences":    self._collection(COLLECTION_PREFS).count(),
-            "episodes":       self._collection(COLLECTION_EPISODES).count(),
-            "conversations":  self._collection(COLLECTION_CONVOS).count(),
+            "preferences":    prefs_count,
+            "episodes":       episodes_count,
+            "conversations":  convos_count,
         }
 
     def is_ready(self) -> bool:

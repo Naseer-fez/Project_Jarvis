@@ -1,5 +1,3 @@
-"""Workflow engine exports."""
+"""Workflow engine package (legacy/deleted)."""
 
-from .engine import WorkflowEngine, WorkflowResult, WorkflowStep, build_steps_from_plan
-
-__all__ = ["WorkflowEngine", "WorkflowResult", "WorkflowStep", "build_steps_from_plan"]
+__all__: list[str] = []

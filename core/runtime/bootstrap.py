@@ -227,6 +227,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         help="Graceful shutdown timeout in seconds",
     )
+    parser.add_argument(
+        "--replay",
+        help="Path to an execution trace snapshot file (.json) to replay",
+    )
     return parser.parse_args(argv)
 
 
