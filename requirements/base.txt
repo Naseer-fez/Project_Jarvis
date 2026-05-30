@@ -1,20 +1,20 @@
 # Core runtime
-pydantic
-fastapi
-uvicorn
-requests
-aiohttp
-python-dotenv
-jinja2
-python-multipart
+pydantic>=2.12,<3.0
+fastapi>=0.131.0,<1.0.0
+uvicorn>=0.41.0,<1.0.0
+requests>=2.32,<3.0
+aiohttp>=3.13,<4.0
+python-dotenv>=1.2,<2.0
+jinja2>=3.1,<4.0
+python-multipart>=0.0.29,<1.0.0
 
 # LLM + memory
-ollama
-google-genai
-chromadb
-sentence-transformers
-numpy
+ollama>=0.6,<1.0
+google-genai>=1.65,<2.0
+chromadb>=1.5,<2.0
+sentence-transformers>=5.2,<6.0
+numpy>=2.4,<3.0
 
 # Web research
-ddgs
-beautifulsoup4
+ddgs>=9.11,<10.0
+beautifulsoup4>=4.14,<5.0
