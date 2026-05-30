@@ -240,3 +240,19 @@ async def test_click_screen_target_falls_back_to_vision_when_text_lookup_fails()
     assert result.data["target"] == "Continue button"
     assert result.data["method"] == "vision"
     click_mock.assert_awaited_once_with(120, 75, button="left")
+
+
+def test_plan_desktop_command_bypasses_simple_launcher_for_multilingual_interactive_verbs():
+    # English
+    assert plan_desktop_command("click the login button") is None
+    assert plan_desktop_command("double-click the file icon") is None
+    assert plan_desktop_command("type hello into the editor") is None
+    # Spanish
+    assert plan_desktop_command("haga clic en el botón") is None
+    assert plan_desktop_command("escribir texto") is None
+    # French
+    assert plan_desktop_command("cliquer sur le bouton") is None
+    assert plan_desktop_command("remplir le formulaire") is None
+    # German
+    assert plan_desktop_command("drücken sie die taste") is None
+    assert plan_desktop_command("tippen sie den text") is None

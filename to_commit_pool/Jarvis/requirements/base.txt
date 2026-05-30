@@ -1,0 +1,20 @@
+# Core runtime
+pydantic
+fastapi
+uvicorn
+requests
+aiohttp
+python-dotenv
+jinja2
+python-multipart
+
+# LLM + memory
+ollama
+google-genai
+chromadb
+sentence-transformers
+numpy
+
+# Web research
+ddgs
+beautifulsoup4

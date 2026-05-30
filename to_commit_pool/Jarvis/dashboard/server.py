@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import asyncio
 import hmac
 import logging
@@ -12,8 +16,8 @@ import threading
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, WebSocket, Form, UploadFile, File
+from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.websockets import WebSocketDisconnect
@@ -100,22 +104,83 @@ def _warn_default_token() -> None:
         )
 
 
+_auth_manager = None
+
+def _get_auth_manager() -> Any:
+    global _auth_manager
+    if _auth_manager is not None:
+        return _auth_manager
+    from core.security.auth import AuthManager, auth_db_from_config
+    config = getattr(_controller, "config", None)
+    db_path = auth_db_from_config(config) if config else PROJECT_ROOT / "data" / "auth.db"
+    secret_key = os.environ.get("JARVIS_SECRET_KEY")
+    if not secret_key and config:
+        try:
+            secret_key = config.get("security", "secret_key", fallback=None)
+        except Exception:
+            pass
+    _auth_manager = AuthManager(db_path=db_path, secret_key=secret_key)
+    # Also bootstrap admin user if environment variables are set and database is empty
+    _auth_manager.bootstrap_admin_from_env()
+    return _auth_manager
+
+
 def _is_authorized(request: Request) -> bool:
-    """Constant-time token comparison against the configured secret."""
-    expected = os.environ.get("JARVIS_DASHBOARD_TOKEN", _DEFAULT_TOKEN)
+    """Check if the request has a valid session cookie or matching token header/API token."""
+    # 1. Check for valid session cookie
+    session_token = request.cookies.get("jarvis_session", "")
+    if session_token:
+        try:
+            auth = _get_auth_manager()
+            user = auth.verify_session(session_token)
+            if user is not None:
+                return True
+        except Exception:
+            logger.debug("Failed verifying session cookie", exc_info=True)
+
+    # 2. Fallback to API token or static token in headers
     provided = request.headers.get("X-Dashboard-Token", "")
-    if not provided:
-        return False
-    # hmac.compare_digest prevents timing-oracle attacks
-    return hmac.compare_digest(provided.encode(), expected.encode())
+    if provided:
+        expected = os.environ.get("JARVIS_DASHBOARD_TOKEN", _DEFAULT_TOKEN)
+        try:
+            auth = _get_auth_manager()
+            if auth.verify_api_token(provided) or hmac.compare_digest(provided.encode(), expected.encode()):
+                return True
+        except Exception:
+            if hmac.compare_digest(provided.encode(), expected.encode()):
+                return True
+    return False
 
 
-def _ws_is_authorized(token: str) -> bool:
-    """Validate a WebSocket query-parameter token."""
-    if not token:
-        return False
-    expected = os.environ.get("JARVIS_DASHBOARD_TOKEN", _DEFAULT_TOKEN)
-    return hmac.compare_digest(token.encode(), expected.encode())
+def _ws_is_authorized(websocket: WebSocket, token: str) -> bool:
+    """Validate a WebSocket connection by query-parameter token or cookie."""
+    # 1. Check query parameter token
+    if token:
+        try:
+            auth = _get_auth_manager()
+            user = auth.verify_session(token)
+            if user is not None:
+                return True
+            expected = os.environ.get("JARVIS_DASHBOARD_TOKEN", _DEFAULT_TOKEN)
+            if hmac.compare_digest(token.encode(), expected.encode()):
+                return True
+        except Exception:
+            expected = os.environ.get("JARVIS_DASHBOARD_TOKEN", _DEFAULT_TOKEN)
+            if hmac.compare_digest(token.encode(), expected.encode()):
+                return True
+
+    # 2. Check jarvis_session cookie
+    session_token = websocket.cookies.get("jarvis_session", "")
+    if session_token:
+        try:
+            auth = _get_auth_manager()
+            user = auth.verify_session(session_token)
+            if user is not None:
+                return True
+        except Exception:
+            pass
+
+    return False
 
 
 def _unauthorized() -> JSONResponse:
@@ -218,17 +283,52 @@ async def health() -> dict[str, Any]:
 # Protected HTML pages — require X-Dashboard-Token header.
 # ---------------------------------------------------------------------------
 
+@app.get("/login")
+async def login_get(request: Request):
+    if _is_authorized(request):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+
+@app.post("/login")
+async def login_post(request: Request, username: str = Form(...), password: str = Form(...)):
+    try:
+        auth = _get_auth_manager()
+        user = auth.authenticate(username, password)
+        if user is not None:
+            token = auth.sign_session(user)
+            response = RedirectResponse(url="/", status_code=303)
+            response.set_cookie(
+                key="jarvis_session",
+                value=token,
+                httponly=True,
+                samesite="lax",
+                secure=False,
+            )
+            return response
+    except Exception as exc:
+        logger.exception("Login authentication crashed")
+        return templates.TemplateResponse("login.html", {"request": request, "error": f"Internal system error: {exc}"})
+    
+    return templates.TemplateResponse("login.html", {"request": request, "error": "Invalid username or password"})
+
+@app.get("/logout")
+async def logout(request: Request):
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie("jarvis_session")
+    return response
+
+
 @app.get("/")
 async def index(request: Request):
     if not _is_authorized(request):
-        return _unauthorized()
+        return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse("index.html", {"request": request, "state": _state})
 
 
 @app.get("/memory")
 async def memory_page(request: Request, q: str = ""):
     if not _is_authorized(request):
-        return _unauthorized()
+        return RedirectResponse(url="/login", status_code=303)
 
     memories: list[dict[str, str]] = []
     message = ""
@@ -287,7 +387,7 @@ async def memory_page(request: Request, q: str = ""):
 @app.get("/goals")
 async def goals_page(request: Request):
     if not _is_authorized(request):
-        return _unauthorized()
+        return RedirectResponse(url="/login", status_code=303)
 
     goals: list[dict[str, Any]] = []
     message = ""
@@ -309,6 +409,20 @@ async def goals_page(request: Request):
         "goals.html",
         {"request": request, "goals": goals, "message": message},
     )
+
+
+@app.get("/search")
+async def search_page(request: Request):
+    if not _is_authorized(request):
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse("search.html", {"request": request})
+
+
+@app.get("/converter")
+async def converter_page(request: Request):
+    if not _is_authorized(request):
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse("converter.html", {"request": request})
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +504,95 @@ async def goals_complete(goal_id: str, request: Request):
     except Exception:
         logger.exception("goals_complete: failed to complete goal_id=%r", goal_id)
         return {"error": "Failed to complete goal — see server logs for details."}
+
+
+class SearchRequest(BaseModel):
+    path: str = "all"
+    query: str = ""
+    content: str = ""
+    threads: int = 8
+    case_sensitive: bool = False
+    no_skip: bool = False
+
+
+@app.post("/api/search")
+async def api_search(request: Request, body: SearchRequest):
+    if not _is_authorized(request):
+        return _unauthorized()
+    
+    from core.tools.fast_search_tool import run_fast_search
+    try:
+        results = await run_fast_search(
+            path=body.path,
+            query=body.query,
+            content=body.content,
+            threads=body.threads,
+            case_sensitive=body.case_sensitive,
+            no_skip=body.no_skip
+        )
+        return results
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/convert")
+async def api_convert(
+    request: Request,
+    file: UploadFile = File(...),
+    target_format: str = Form(...)
+):
+    if not _is_authorized(request):
+        return _unauthorized()
+        
+    from core.tools.universal_converter import perform_conversion
+    import tempfile
+    import shutil
+    
+    suffix = Path(file.filename).suffix
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_src:
+        shutil.copyfileobj(file.file, tmp_src)
+        tmp_src_path = tmp_src.name
+        
+    target_format_clean = target_format.strip().lower()
+    try:
+        output_path = perform_conversion(tmp_src_path, target_format_clean)
+        base_name = Path(file.filename).stem
+        out_filename = f"{base_name}.{target_format_clean.lstrip('.')}"
+        
+        from starlette.background import BackgroundTasks
+        background_tasks = BackgroundTasks()
+        background_tasks.add_task(os.unlink, tmp_src_path)
+        background_tasks.add_task(os.unlink, output_path)
+        
+        return FileResponse(
+            path=output_path,
+            filename=out_filename,
+            media_type="application/octet-stream",
+            background=background_tasks
+        )
+    except Exception as e:
+        if os.path.exists(tmp_src_path):
+            try:
+                os.unlink(tmp_src_path)
+            except:
+                pass
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/view-file")
+async def api_view_file(request: Request, path: str):
+    if not _is_authorized(request):
+        return RedirectResponse(url="/login", status_code=303)
+        
+    file_path = Path(path).resolve()
+    if not file_path.exists() or not file_path.is_file():
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+        
+    return FileResponse(
+        path=str(file_path),
+        filename=file_path.name,
+        media_type="application/octet-stream"
+    )
 
 
 # ---------------------------------------------------------------------------

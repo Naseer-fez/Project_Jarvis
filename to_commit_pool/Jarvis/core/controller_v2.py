@@ -84,6 +84,20 @@ _AGENTIC_KEYWORDS = (
     "tell me about",
     "look it up",
     "google",
+    # System / File tools keywords
+    "sort",
+    "organize",
+    "list",
+    "write",
+    "delete",
+    "create",
+    "copy",
+    "move",
+    "run",
+    "execute",
+    "launch",
+    "open",
+    "command",
 )
 
 # Phrases that unambiguously indicate the user wants a live web search.
@@ -121,6 +135,7 @@ class JarvisControllerV2:
         chroma_path: str = "data/chroma",
         model_name: str = DEFAULT_MODEL,
         embedding_model: str = "all-MiniLM-L6-v2",
+        container: Any = None,
     ) -> None:
         self.config = (
             config
@@ -142,6 +157,7 @@ class JarvisControllerV2:
 
         settings, services = build_controller_services(
             self.config,
+            container=container,
             db_path=db_path,
             chroma_path=chroma_path,
             model_name=model_name,
@@ -182,6 +198,7 @@ class JarvisControllerV2:
         self.desktop_executor = services.desktop_executor
         self.desktop_observer = services.desktop_observer
         self.desktop_bridge = services.desktop_bridge
+        self.container = services.container
 
         self._conversation_buffer: list[str] = []
         self._runtime_loop: asyncio.AbstractEventLoop | None = None

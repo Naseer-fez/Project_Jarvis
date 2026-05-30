@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote_plus
@@ -15,6 +16,21 @@ from core.desktop import (
     DesktopObserver,
 )
 from core.tools.system_automation import async_launch_application
+
+INTERACTIVE_VERBS_PATTERN = re.compile(
+    r"\b("
+    # English
+    r"write|type|fill|enter|input|select|click|double-?click|right-?click|middle-?click|press|hotkey|key|drag|drop|scroll|typewrite|keystroke|tap|check|tick|focus|copy|paste|cut|clipboard"
+    # Spanish
+    r"|escribir|teclear|rellenar|introducir|pulsar|presionar|clic|pinchar|seleccionar|arrastrar|pegar|copiar"
+    # French
+    r"|écrire|ecrire|taper|saisir|remplir|cliquer|appuyer|presser|sélectionner|selectionner|glisser|coller|copier"
+    # German
+    r"|schreiben|tippen|eingeben|ausfüllen|ausfullen|klicken|drücken|drucken|auswählen|auswahlen|ziehen|einfügen|einfugen|kopieren"
+    r")\b",
+    re.IGNORECASE
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -51,6 +67,11 @@ def plan_desktop_command(user_input: str) -> DesktopCommandPlan | None:
     lowered = text.lower()
 
     if not text:
+        return None
+
+    # If the user request involves keyboard/mouse interactions, bypass the simple launcher
+    # and let the full agentic loop plan the execution.
+    if INTERACTIVE_VERBS_PATTERN.search(lowered):
         return None
 
     if "project folder" in lowered and "jarvis" in lowered:

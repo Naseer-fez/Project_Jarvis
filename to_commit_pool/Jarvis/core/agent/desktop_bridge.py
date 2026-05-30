@@ -33,6 +33,8 @@ DESKTOP_TOOL_NAMES: frozenset[str] = frozenset({
     "right_click",
     "click_text_on_screen",
     "click_screen_target",
+    "double_click_screen_target",
+    "right_click_screen_target",
     "type_text",
     "press_key",
     "hotkey",
@@ -52,6 +54,8 @@ _ACTION_TYPE_MAP: dict[str, DesktopActionType] = {
     "right_click": DesktopActionType.RIGHT_CLICK,
     "click_text_on_screen": DesktopActionType.CLICK_TEXT_ON_SCREEN,
     "click_screen_target": DesktopActionType.CLICK_SCREEN_TARGET,
+    "double_click_screen_target": DesktopActionType.DOUBLE_CLICK_SCREEN_TARGET,
+    "right_click_screen_target": DesktopActionType.RIGHT_CLICK_SCREEN_TARGET,
     "type_text": DesktopActionType.TYPE_TEXT,
     "press_key": DesktopActionType.PRESS_KEY,
     "hotkey": DesktopActionType.HOTKEY,
@@ -108,9 +112,10 @@ class DesktopBridge:
         approval_callback=None,
         max_retries: int = 1,
         min_confidence: float = 0.35,
+        container: Any = None,
     ) -> None:
-        self.action_executor = action_executor or DesktopActionExecutor()
-        self.observer = observer or DesktopObserver()
+        self.action_executor = action_executor or (container.resolve("desktop_executor") if container else None) or DesktopActionExecutor()
+        self.observer = observer or (container.resolve("desktop_observer") if container else None) or DesktopObserver()
         self.mission_executor = mission_executor or DesktopMissionExecutor(
             action_executor=self.action_executor,
             observer=self.observer,

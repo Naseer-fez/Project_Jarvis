@@ -125,6 +125,10 @@ class Dispatcher:
         self.voice = voice_layer
         self.desktop_executor = desktop_executor or DesktopActionExecutor()
 
+        # Dynamic risk registries
+        self.core_risk_registry = dict(CORE_TOOL_RISK_REGISTRY)
+        self.integration_risk_registry = dict(INTEGRATION_RISK_REGISTRY)
+
         # Rate limiting — 30 tool calls per 60-second window per instance
         self._call_count: int = 0
         self._call_window_start: float = time.time()
@@ -143,6 +147,16 @@ class Dispatcher:
             "get_active_window": self._run_get_active_window,
         }
         self._dispatch_pipeline = self._build_dispatch_pipeline()
+
+    def register_core_tool_risk(self, tool_name: str, risk_score: float) -> None:
+        """Register or override a core/desktop tool risk score dynamically."""
+        self.core_risk_registry[tool_name] = float(risk_score)
+        logger.debug("Registered core tool '%s' risk score: %.2f", tool_name, risk_score)
+
+    def register_integration_tool_risk(self, tool_name: str, risk_score: float) -> None:
+        """Register or override an integration tool risk score dynamically."""
+        self.integration_risk_registry[tool_name] = float(risk_score)
+        logger.debug("Registered integration tool '%s' risk score: %.2f", tool_name, risk_score)
 
     def _sanitize_args(self, args: dict) -> dict:
         """Strip null bytes and truncate oversized string values."""
@@ -201,7 +215,7 @@ class Dispatcher:
 
         risk_score = core_or_desktop_risk_score(
             request.tool_name,
-            CORE_TOOL_RISK_REGISTRY,
+            self.core_risk_registry,
         )
         logger.info(
             "Dispatch desktop action='%s' risk=%.2f rationale='%s'",
@@ -221,7 +235,7 @@ class Dispatcher:
 
         risk_score = core_or_desktop_risk_score(
             request.tool_name,
-            CORE_TOOL_RISK_REGISTRY,
+            self.core_risk_registry,
         )
         logger.info(
             "Dispatch core tool='%s' risk=%.2f rationale='%s'",
@@ -241,7 +255,7 @@ class Dispatcher:
 
         risk_score = integration_risk_score(
             request.tool_name,
-            INTEGRATION_RISK_REGISTRY,
+            self.integration_risk_registry,
         )
         logger.info(
             "Dispatch integration tool='%s' risk=%.2f rationale='%s'",
@@ -259,6 +273,7 @@ class Dispatcher:
         result = ToolResult(False, error=f"Unknown tool: '{request.tool_name}'")
         await self._feed_reflection(request.tool_name, request.args, result)
         return result
+
 
     def _integration_tool_names(self) -> set[str]:
         if integration_registry is None:
@@ -635,10 +650,7 @@ class ToolDispatcher:
             return self._action_file_read(params)
         if action in ("file_write", "write_file"):
             return self._action_file_write(params)
-        if action in ("screen_understand",):
-            return self._action_screen_understand(params)
-        if action in ("vision_click",):
-            return self._action_vision_click(params)
+
         if action == "physical_actuate":
             return self._action_physical_actuate(params)
         if action == "sensor_read":
@@ -727,62 +739,7 @@ class ToolDispatcher:
         except Exception as exc:  # noqa: BLE001
             return _StepResult(False, error=str(exc))
 
-    def _action_screen_understand(self, params: dict[str, Any]) -> _StepResult:
-        capture_mode = params.get("capture_mode", "active_monitor")
-        output_path = Path("screen_capture.png")
-        try:
-            img_path, offset = self._capture_screen_image(output_path, capture_mode)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Screen capture failed: {exc}")
-
-        if self.vision is None:
-            return _StepResult(False, error="No vision backend available")
-
-        try:
-            description = self.vision.analyze(str(img_path))
-            return _StepResult(True, output=description)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Vision analysis failed: {exc}")
-
-    def _action_vision_click(self, params: dict[str, Any]) -> _StepResult:
-        if not self._allow_gui:
-            return _StepResult(False, error="GUI automation disabled by config")
-
-        target = str(params.get("target", ""))
-        dry_run = bool(params.get("dry_run", False))
-        capture_mode = params.get("capture_mode", "active_monitor")
-        output_path = Path("vision_click_capture.png")
-
-        try:
-            img_path, offset = self._capture_screen_image(output_path, capture_mode)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Screen capture failed: {exc}")
-
-        if self.vision is None:
-            return _StepResult(False, error="No vision backend available")
-
-        prompt = f"Find '{target}'. Return JSON: {{x, y, confidence, reason, not_found}}"
-        try:
-            raw = self.vision.analyze(str(img_path), prompt)
-            import json as _json
-            data = _json.loads(raw)
-        except Exception as exc:  # noqa: BLE001
-            return _StepResult(False, error=f"Vision response parse failed: {exc}")
-
-        if data.get("not_found"):
-            return _StepResult(False, error=f"Target '{target}' not found on screen")
-
-        rel_x, rel_y = int(data.get("x", 0)), int(data.get("y", 0))
-        ox, oy = offset if offset else (0, 0)
-        screen_x, screen_y = rel_x + ox, rel_y + oy
-        out = f"Found '{target}' at rel=({rel_x},{rel_y}) screen=({screen_x},{screen_y})"
-
-        if not dry_run:
-            self._gui_click({"x": screen_x, "y": screen_y})
-
-        return _StepResult(True, output=out)
-
-    # ── Hookable helpers (monkeypatched in tests) ─────────────────────────
+# ── Hookable helpers (monkeypatched in tests) ─────────────────────────
 
     def _capture_screen_image(self, output_path: Path, capture_mode: str) -> tuple[Path, tuple[int, int]]:
         """Capture screen. Returns (image_path, (offset_x, offset_y)). Override in tests."""

@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 SCREENSHOT_DIR = Path("outputs/screenshots")
 _OCR_MAX_TEXT_CHARS = 4000
+_TESSERACT_WARN_LOGGED = False
+
 
 
 def _ts() -> str:
@@ -223,8 +225,30 @@ def read_screen_text(
     from integrations.base import ToolResult
 
     try:
+        import os
+        import sys
         import pytesseract
         from PIL import Image  # noqa: F401
+
+        # Configure Tesseract path dynamically
+        if getattr(sys, "frozen", False):
+            # Packaged desktop app mode: use bundled Tesseract binary from temporary directory
+            base_dir = sys._MEIPASS
+            tesseract_dir = os.path.join(base_dir, "bin", "tesseract")
+            os.environ["TESSDATA_PREFIX"] = os.path.join(tesseract_dir, "tessdata")
+            pytesseract.pytesseract.tesseract_cmd = os.path.join(tesseract_dir, "tesseract.exe")
+        else:
+            # Development mode: check if custom TESSERACT_CMD env variable is set
+            tesseract_cmd = os.environ.get("TESSERACT_CMD")
+            if tesseract_cmd:
+                pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+            else:
+                # Check for the local bundled folder inside the workspace
+                project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                local_bundled = os.path.join(project_root, "bin", "tesseract", "tesseract.exe")
+                if os.path.exists(local_bundled):
+                    pytesseract.pytesseract.tesseract_cmd = local_bundled
+                    os.environ["TESSDATA_PREFIX"] = os.path.join(project_root, "bin", "tesseract", "tessdata")
     except ImportError as exc:
         return ToolResult(success=False, error=f"Missing dependency: {exc}")
 
@@ -256,8 +280,20 @@ def read_screen_text(
         logger.info("read_screen_text(query=%r): %d match(es)", query, len(matches))
         return ToolResult(success=True, data=payload)
     except Exception as exc:  # noqa: BLE001
-        logger.error("read_screen_text failed: %s", exc)
-        return ToolResult(success=False, error=str(exc))
+        global _TESSERACT_WARN_LOGGED
+        err_msg = str(exc)
+        if "tesseract is not installed" in err_msg or "TesseractNotFoundError" in type(exc).__name__:
+            if not _TESSERACT_WARN_LOGGED:
+                logger.warning(
+                    "read_screen_text: Tesseract OCR is not installed or not in your PATH. "
+                    "Screen-aware features will be limited. See README.MD to set it up."
+                )
+                _TESSERACT_WARN_LOGGED = True
+            else:
+                logger.debug("read_screen_text failed (Tesseract not installed): %s", exc)
+        else:
+            logger.error("read_screen_text failed: %s", exc)
+        return ToolResult(success=False, error=err_msg)
 
 
 def find_text_on_screen(text: str, match_mode: str = "contains"):

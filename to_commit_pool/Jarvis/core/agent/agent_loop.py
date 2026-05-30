@@ -88,27 +88,29 @@ class ExecutionTrace:
 class AgentLoopEngine:
     def __init__(
         self,
-        state_machine: StateMachine,
-        task_planner: TaskPlanner,
-        tool_router: ToolRouter,
-        risk_evaluator: RiskEvaluator,
-        autonomy_governor: AutonomyGovernor,
+        state_machine: StateMachine | None = None,
+        task_planner: TaskPlanner | None = None,
+        tool_router: ToolRouter | None = None,
+        risk_evaluator: RiskEvaluator | None = None,
+        autonomy_governor: AutonomyGovernor | None = None,
         model: str = "mistral",
         ollama_url: str = "http://localhost:11434",
         max_iterations: int = _DEFAULT_MAX_ITERATIONS,
         llm: Any = None,  # Optional[LLMClientV2] — avoids import cycle
         desktop_bridge: DesktopBridge | None = None,
+        container: Any = None,
     ):
-        self.sm = state_machine
-        self.planner = task_planner
-        self.router = tool_router
-        self.risk = risk_evaluator
-        self.gov = autonomy_governor
+        self.container = container
+        self.sm = state_machine or (container.resolve("state_machine") if container else None)
+        self.planner = task_planner or (container.resolve("task_planner") if container else None)
+        self.router = tool_router or (container.resolve("tool_router") if container else None)
+        self.risk = risk_evaluator or (container.resolve("risk_evaluator") if container else None)
+        self.gov = autonomy_governor or (container.resolve("autonomy_governor") if container else None)
         self.model = model or "deepseek-r1:8b"
         self.ollama_url = ollama_url
         self.max_iterations = max(1, int(max_iterations or _DEFAULT_MAX_ITERATIONS))
-        self.llm = llm  # LLMClientV2 instance, if provided
-        self.desktop_bridge = desktop_bridge
+        self.llm = llm or (container.resolve("llm") if container else None)
+        self.desktop_bridge = desktop_bridge or (container.resolve("desktop_bridge") if container else None)
         self.confidence = ConfidenceModel()
         self._interrupt = asyncio.Event()
 

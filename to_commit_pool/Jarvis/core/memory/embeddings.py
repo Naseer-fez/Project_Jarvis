@@ -20,13 +20,18 @@ Available Models (local, no API):
 
 Author: Jarvis Session 4
 """
+from __future__ import annotations
 
 import logging
 import hashlib
-from typing import Optional
+
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sentence_transformers import SentenceTransformer
+
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +111,7 @@ class EmbeddingManager:
 
     def __init__(self, model_name: str = DEFAULT_MODEL):
         self.model_name  = model_name
-        self._model: Optional[SentenceTransformer] = None
+        self._model: Optional["SentenceTransformer"] = None
         self._initialized = False
         self._embed_count = 0
         self._cache: dict[str, list[float]] = {}
@@ -130,6 +135,7 @@ class EmbeddingManager:
 
         try:
             logger.info(f"Loading sentence-transformer model: {self.model_name}")
+            from sentence_transformers import SentenceTransformer
             self._model = SentenceTransformer(self.model_name)
 
             if warm_up:

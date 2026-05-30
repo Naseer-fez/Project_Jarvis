@@ -272,6 +272,76 @@ async def click_text_on_screen(
     )
 
 
+async def _resolve_target_coordinates(
+    target: str,
+    *,
+    occurrence: int = 1,
+    match_mode: str = "contains",
+    min_confidence: float = 0.2,
+):
+    """Resolve coordinates for a described screen target, trying OCR first, then Vision.
+    Returns:
+        (x, y, resolved_metadata, error_result)
+        If resolved successfully: (x, y, metadata, None)
+        If failed: (None, None, None, ToolResult)
+    """
+    from integrations.base import ToolResult
+    from core.tools.screen import find_text_on_screen
+
+    # 1. Try OCR text locator first
+    text_res = find_text_on_screen(target, match_mode=match_mode)
+    text_error = ""
+    if text_res.success:
+        matches = list(text_res.data.get("matches", []))
+        index = max(0, int(occurrence) - 1)
+        if matches and index < len(matches):
+            match = matches[index]
+            center_x, center_y = _match_center(match)
+            return center_x, center_y, {
+                "matched_text": str(match.get("text", "") or ""),
+                "match": match,
+                "target": target,
+                "occurrence": occurrence,
+                "match_mode": match_mode,
+                "method": "ocr_text",
+            }, None
+        else:
+            text_error = f"No visible text matched '{target}'." if not matches else f"Requested match {occurrence}, but only {len(matches)} match(es) were found."
+    else:
+        text_error = text_res.error or "OCR text lookup failed."
+
+    # 2. Try Vision locator fallback
+    vision_result = _vision_locate_target(target)
+    if not vision_result.success:
+        error = text_error or vision_result.error
+        if text_error and vision_result.error:
+            error = f"{text_error} Vision fallback: {vision_result.error}"
+        return None, None, None, ToolResult(
+            success=False,
+            data={"target": target, "text_locator_error": text_error, "vision_locator_error": vision_result.error},
+            error=error,
+        )
+
+    confidence = float(vision_result.data.get("confidence", 0.0) or 0.0)
+    if confidence < float(min_confidence):
+        return None, None, None, ToolResult(
+            success=False,
+            data=dict(vision_result.data),
+            error=(
+                f"Vision confidence for '{target}' was {confidence:.2f}, below the minimum "
+                f"threshold of {float(min_confidence):.2f}."
+            ),
+        )
+
+    x = int(vision_result.data.get("x", 0) or 0)
+    y = int(vision_result.data.get("y", 0) or 0)
+    return x, y, {
+        **dict(vision_result.data),
+        "target": target,
+        "method": "vision",
+    }, None
+
+
 async def click_screen_target(
     target: str,
     *,
@@ -283,42 +353,15 @@ async def click_screen_target(
     """Click a described screen target without hard-coded coordinates."""
     from integrations.base import ToolResult
 
-    text_result = await click_text_on_screen(
+    x, y, resolved, err = await _resolve_target_coordinates(
         target,
         occurrence=occurrence,
-        button=button,
         match_mode=match_mode,
+        min_confidence=min_confidence,
     )
-    if text_result.success:
-        payload = dict(text_result.data)
-        payload["target"] = target
-        payload["method"] = "ocr_text"
-        return ToolResult(success=True, data=payload)
+    if err is not None:
+        return err
 
-    vision_result = _vision_locate_target(target)
-    if not vision_result.success:
-        error = text_result.error or vision_result.error
-        if text_result.error and vision_result.error:
-            error = f"{text_result.error} Vision fallback: {vision_result.error}"
-        return ToolResult(
-            success=False,
-            data={"target": target, "text_locator_error": text_result.error},
-            error=error,
-        )
-
-    confidence = float(vision_result.data.get("confidence", 0.0) or 0.0)
-    if confidence < float(min_confidence):
-        return ToolResult(
-            success=False,
-            data=dict(vision_result.data),
-            error=(
-                f"Vision confidence for '{target}' was {confidence:.2f}, below the minimum "
-                f"threshold of {float(min_confidence):.2f}."
-            ),
-        )
-
-    x = int(vision_result.data.get("x", 0) or 0)
-    y = int(vision_result.data.get("y", 0) or 0)
     click_result = await click(x, y, button=button)
     if not click_result.success:
         return click_result
@@ -327,9 +370,71 @@ async def click_screen_target(
         success=True,
         data={
             **_tool_result_payload(click_result),
-            **dict(vision_result.data),
-            "target": target,
-            "method": "vision",
+            **resolved,
+        },
+    )
+
+
+async def double_click_screen_target(
+    target: str,
+    *,
+    occurrence: int = 1,
+    match_mode: str = "contains",
+    min_confidence: float = 0.2,
+):
+    """Double-click a described screen target without hard-coded coordinates."""
+    from integrations.base import ToolResult
+
+    x, y, resolved, err = await _resolve_target_coordinates(
+        target,
+        occurrence=occurrence,
+        match_mode=match_mode,
+        min_confidence=min_confidence,
+    )
+    if err is not None:
+        return err
+
+    click_result = await double_click(x, y)
+    if not click_result.success:
+        return click_result
+
+    return ToolResult(
+        success=True,
+        data={
+            **_tool_result_payload(click_result),
+            **resolved,
+        },
+    )
+
+
+async def right_click_screen_target(
+    target: str,
+    *,
+    occurrence: int = 1,
+    match_mode: str = "contains",
+    min_confidence: float = 0.2,
+):
+    """Right-click a described screen target without hard-coded coordinates."""
+    from integrations.base import ToolResult
+
+    x, y, resolved, err = await _resolve_target_coordinates(
+        target,
+        occurrence=occurrence,
+        match_mode=match_mode,
+        min_confidence=min_confidence,
+    )
+    if err is not None:
+        return err
+
+    click_result = await right_click(x, y)
+    if not click_result.success:
+        return click_result
+
+    return ToolResult(
+        success=True,
+        data={
+            **_tool_result_payload(click_result),
+            **resolved,
         },
     )
 
@@ -617,6 +722,7 @@ __all__ = [
     "clipboard_paste",
     "clipboard_set",
     "double_click",
+    "double_click_screen_target",
     "drag",
     "focus_window",
     "get_active_window",
@@ -630,6 +736,7 @@ __all__ = [
     "move_mouse",
     "press_key",
     "right_click",
+    "right_click_screen_target",
     "scroll",
     "type_text",
 ]

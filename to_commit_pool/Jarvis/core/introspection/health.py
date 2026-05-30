@@ -209,14 +209,44 @@ def _collect_config_checks(config) -> list[HealthCheck]:
             True,
         )
         if uses_ocr:
-            has_tesseract = _module_available("pytesseract")
+            def _check_tesseract() -> tuple[HealthStatus, str]:
+                if not _module_available("pytesseract"):
+                    return HealthStatus.WARN, "pytesseract not installed; screenshot OCR will be limited"
+
+                import sys
+                import subprocess
+
+                # Configure Tesseract path dynamically
+                if getattr(sys, "frozen", False):
+                    base_dir = getattr(sys, "_MEIPASS", "")
+                    tesseract_dir = os.path.join(base_dir, "bin", "tesseract")
+                    cmd = os.path.join(tesseract_dir, "tesseract.exe")
+                else:
+                    cmd = os.environ.get("TESSERACT_CMD")
+                    if not cmd:
+                        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                        local_bundled = os.path.join(project_root, "bin", "tesseract", "tesseract.exe")
+                        if os.path.exists(local_bundled):
+                            cmd = local_bundled
+                        else:
+                            cmd = "tesseract"
+
+                try:
+                    res = subprocess.run([cmd, "--version"], capture_output=True, text=True, timeout=5)
+                    if res.returncode == 0:
+                        version_line = res.stdout.splitlines()[0] if res.stdout else "unknown version"
+                        return HealthStatus.OK, f"pytesseract available, tesseract executable responsive: {version_line}"
+                    else:
+                        return HealthStatus.FAIL, f"tesseract --version failed with return code {res.returncode}"
+                except Exception as exc:
+                    return HealthStatus.FAIL, f"tesseract executable not found or not executable at '{cmd}': {exc}"
+
+            tess_status, tess_msg = _check_tesseract()
             checks.append(
                 HealthCheck(
                     name="automation_ocr_dependency",
-                    status=HealthStatus.OK if has_tesseract else HealthStatus.WARN,
-                    message="pytesseract available"
-                    if has_tesseract
-                    else "pytesseract not installed; screenshot OCR will be limited",
+                    status=tess_status,
+                    message=tess_msg,
                 )
             )
 

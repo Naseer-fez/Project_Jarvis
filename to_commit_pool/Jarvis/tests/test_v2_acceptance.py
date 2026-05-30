@@ -306,7 +306,7 @@ class TestTTS:
 class TestVoiceLoop:
     def _make_controller(self, tmp_config, tmp_path):
         """Create a controller with all components mocked for isolation."""
-        import core.logger as logger_mod
+        import core.logging.logger as logger_mod
         if logger_mod._audit is None:
             logger_mod.setup(tmp_config)
 
@@ -391,7 +391,7 @@ class TestVoiceLoop:
 
 class TestVoiceAuditLog:
     def test_voice_events_written_to_audit(self, tmp_config, tmp_path):
-        import core.logger as logger_mod
+        import core.logging.logger as logger_mod
         logger_mod.setup(tmp_config)
         logger_mod.audit("VOICE_WAKE", {"state": "LISTENING"})
         logger_mod.audit("VOICE_TRANSCRIPT", {"text": "hello", "audio_hash": "abc", "duration_s": 1.0, "confidence": 0.9})
@@ -408,7 +408,7 @@ class TestVoiceAuditLog:
         audio_hash = hashlib.sha256(fake_pcm).hexdigest()
         assert len(audio_hash) == 64
 
-        import core.logger as logger_mod
+        import core.logging.logger as logger_mod
         logger_mod.setup(tmp_config)
         h = logger_mod.audit("VOICE_TRANSCRIPT", {
             "text": "test", "audio_hash": audio_hash,
@@ -436,7 +436,7 @@ class TestOffline:
         assert fsm.state == State.IDLE
 
     def test_audit_log_needs_no_network(self, tmp_config, tmp_path):
-        from core.logger import AuditLog
+        from core.logging.logger import AuditLog
         log = AuditLog(str(tmp_path / "audit.jsonl"))
         log.write("OFFLINE_TEST", {"status": "ok"})
         ok, count, _ = log.verify()

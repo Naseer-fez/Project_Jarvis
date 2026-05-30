@@ -63,6 +63,8 @@ WRITE_TOOLS = {
     "right_click",
     "click_text_on_screen",
     "click_screen_target",
+    "double_click_screen_target",
+    "right_click_screen_target",
     "type_text",
     "press_key",
     "hotkey",
@@ -108,7 +110,21 @@ class AutonomyLevel(IntEnum):
 class AutonomyGovernor:
     def __init__(self, level: int = 1):
         self.level = AutonomyLevel(level)
+        self.read_only_tools = set(READ_ONLY_TOOLS)
+        self.write_tools = set(WRITE_TOOLS)
         logger.info(f"Autonomy level set to: LEVEL_{self.level} ({self.level.name})")
+
+    def register_read_only_tool(self, tool_name: str) -> None:
+        """Dynamically register a tool as read-only."""
+        self.read_only_tools.add(tool_name)
+        self.write_tools.discard(tool_name)
+        logger.debug("Dynamically registered read-only tool: %s", tool_name)
+
+    def register_write_tool(self, tool_name: str) -> None:
+        """Dynamically register a tool as a write tool."""
+        self.write_tools.add(tool_name)
+        self.read_only_tools.discard(tool_name)
+        logger.debug("Dynamically registered write tool: %s", tool_name)
 
     def can_execute(self, tool_name: str) -> tuple[bool, str]:
         """
@@ -120,10 +136,10 @@ class AutonomyGovernor:
         if self.level == AutonomyLevel.SUGGEST_ONLY:
             return False, f"Autonomy LEVEL_1: would call '{tool_name}' but only suggesting actions."
 
-        if tool_name in READ_ONLY_TOOLS:
+        if tool_name in self.read_only_tools:
             return True, f"Read-only tool '{tool_name}' approved at LEVEL_{self.level}."
 
-        if tool_name in WRITE_TOOLS:
+        if tool_name in self.write_tools:
             if self.level >= AutonomyLevel.WRITE_WITH_CONFIRM:
                 return True, f"Write tool '{tool_name}' approved at LEVEL_3 (confirmation required separately)."
             else:
@@ -134,7 +150,8 @@ class AutonomyGovernor:
 
     def requires_confirmation(self, tool_name: str) -> bool:
         """Write tools at LEVEL_3 always need explicit user confirmation."""
-        return self.level == AutonomyLevel.WRITE_WITH_CONFIRM and tool_name in WRITE_TOOLS
+        return self.level == AutonomyLevel.WRITE_WITH_CONFIRM and tool_name in self.write_tools
+
 
     def escalate(self, new_level: int) -> bool:
         """Temporarily escalate autonomy (user must consent upstream)."""

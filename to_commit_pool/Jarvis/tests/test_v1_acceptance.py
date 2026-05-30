@@ -226,7 +226,7 @@ class TestRiskEvaluator:
 
 class TestTaskPlanner:
     def test_planner_returns_dict_when_ollama_down(self, tmp_config):
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
         planner = TaskPlanner(tmp_config)
         plan = planner.plan("turn on the lights")
         assert isinstance(plan, dict)
@@ -236,7 +236,7 @@ class TestTaskPlanner:
         assert isinstance(plan["steps"], list)
 
     def test_planner_echoes_intent(self, tmp_config):
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
         planner = TaskPlanner(tmp_config)
         intent = "remind me to call John at 3pm"
         plan = planner.plan(intent)
@@ -244,7 +244,7 @@ class TestTaskPlanner:
 
     def test_planner_unknown_request_clarifies(self, tmp_config):
         """When LLM is down, planner returns clarification_needed=True."""
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
         planner = TaskPlanner(tmp_config)
         plan = planner.plan("xyzzy nonsense magic words")
         assert isinstance(plan, dict)
@@ -252,7 +252,7 @@ class TestTaskPlanner:
         assert plan["clarification_needed"] in (True, False)
 
     def test_plan_with_mocked_ollama(self, tmp_config):
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
 
         mock_response = json.dumps({
             "intent": "store a fact",
@@ -273,7 +273,7 @@ class TestTaskPlanner:
         assert plan["steps"][0]["action"] == "memory_write"
 
     def test_plan_with_invalid_json_response(self, tmp_config):
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
         planner = TaskPlanner(tmp_config)
         with patch.object(planner, "_call_ollama", return_value="not json at all !!!"):
             plan = planner.plan("do something")
@@ -281,7 +281,7 @@ class TestTaskPlanner:
         assert plan["clarification_needed"] is True
 
     def test_plan_with_deepseek_thinking_tags(self, tmp_config):
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
         planner = TaskPlanner(tmp_config)
         raw = '<think>Let me think...</think>\n{"intent":"x","summary":"s","confidence":0.8,"steps":[],"clarification_needed":false,"clarification_prompt":""}'
         with patch.object(planner, "_call_ollama", return_value=raw):
@@ -378,7 +378,7 @@ class TestHybridMemory:
 
 class TestAuditLog:
     def test_write_and_verify(self, tmp_path):
-        from core.logger import AuditLog
+        from core.logging.logger import AuditLog
         log = AuditLog(str(tmp_path / "audit.jsonl"))
         log.write("TEST_EVENT", {"key": "value"})
         log.write("TEST_EVENT_2", {"key2": "value2"})
@@ -387,7 +387,7 @@ class TestAuditLog:
         assert count == 2
 
     def test_tamper_detected(self, tmp_path):
-        from core.logger import AuditLog
+        from core.logging.logger import AuditLog
         path = tmp_path / "audit.jsonl"
         log = AuditLog(str(path))
         log.write("SENSITIVE", {"secret": "data"})
@@ -399,7 +399,7 @@ class TestAuditLog:
         assert not ok
 
     def test_entries_are_chained(self, tmp_path):
-        from core.logger import AuditLog
+        from core.logging.logger import AuditLog
         log = AuditLog(str(tmp_path / "audit.jsonl"))
         log.write("E1", {})
         log.write("E2", {})
@@ -411,7 +411,7 @@ class TestAuditLog:
         assert e2["prev_hash"] == e1["hash"]
 
     def test_empty_log_verifies_ok(self, tmp_path):
-        from core.logger import AuditLog
+        from core.logging.logger import AuditLog
         log = AuditLog(str(tmp_path / "audit.jsonl"))
         ok, count, err = log.verify()
         assert ok
@@ -434,7 +434,7 @@ class TestUnknownRequests:
         assert "xyzzy" not in result.lower() or "don't know" in result.lower()
 
     def test_planner_ollama_down_returns_clarification(self, tmp_config):
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
         planner = TaskPlanner(tmp_config)
         # With Ollama down, must return a valid plan with clarification
         plan = planner.plan("reboot the mainframe using the quantum override")
@@ -443,7 +443,7 @@ class TestUnknownRequests:
         assert isinstance(plan["steps"], list)
 
     def test_planner_empty_input(self, tmp_config):
-        from core.planning.task_planner import TaskPlanner
+        from core.llm.task_planner import TaskPlanner
         planner = TaskPlanner(tmp_config)
         plan = planner.plan("")
         assert plan["clarification_needed"] is True

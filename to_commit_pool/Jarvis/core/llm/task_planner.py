@@ -15,6 +15,11 @@ SYSTEM_TOOL_SCHEMA = {
         {"name": "read_file", "description": "Read a text file."},
         {"name": "write_file", "description": "Write a text file."},
         {"name": "delete_file", "description": "Delete a text file."},
+        {"name": "sort_files", "description": "Sort and organize files in a directory into folders based on their content/use case using a local LLM."},
+        {"name": "find_files", "description": "Find files matching a wildcard pattern in a sandboxed directory (recursive)."},
+        {"name": "copy_file", "description": "Copy a file from source to destination in the sandbox."},
+        {"name": "move_file", "description": "Move/rename a file or directory from source to destination in the sandbox."},
+        {"name": "create_directory", "description": "Create a directory path in the sandbox."},
         {"name": "launch_application", "description": "Launch a desktop app."},
         {"name": "execute_shell", "description": "Run a shell command."},
         {"name": "capture_screen", "description": "Capture the current screen."},
@@ -29,6 +34,8 @@ SYSTEM_TOOL_SCHEMA = {
         {"name": "right_click", "description": "Right-click on screen coordinates."},
         {"name": "click_text_on_screen", "description": "Find visible text on screen and click it without fixed coordinates."},
         {"name": "click_screen_target", "description": "Locate a described screen target and click it without fixed coordinates."},
+        {"name": "double_click_screen_target", "description": "Locate a described screen target and double-click it without fixed coordinates."},
+        {"name": "right_click_screen_target", "description": "Locate a described screen target and right-click it without fixed coordinates."},
         {"name": "move_mouse", "description": "Move the mouse to screen coordinates."},
         {"name": "scroll", "description": "Scroll the mouse wheel, optionally over coordinates."},
         {"name": "drag", "description": "Drag the mouse from one location to another."},
@@ -54,6 +61,8 @@ _GUI_TOOL_NAMES = {
     "right_click",
     "click_text_on_screen",
     "click_screen_target",
+    "double_click_screen_target",
+    "right_click_screen_target",
     "move_mouse",
     "scroll",
     "drag",
@@ -122,11 +131,29 @@ class TaskPlanner:
         return self._enrich_plan(text, self._fallback_plan(text))
 
     def _build_prompt(self, user_input: str, context: str) -> str:
+        schema_format = {
+            "intent": "user request",
+            "summary": "overall plan summary",
+            "confidence": 0.9,
+            "steps": [
+                {
+                    "id": 1,
+                    "action": "tool_name",
+                    "description": "why we call this tool",
+                    "params": {"param_key": "param_value"}
+                }
+            ],
+            "clarification_needed": False,
+            "clarification_prompt": ""
+        }
         return (
-            "Return strict JSON for a safe action plan.\n"
+            "You are a task planner. Create a step-by-step action plan using the available tools to satisfy the user request.\n"
             f"User request: {user_input}\n"
             f"Context: {context}\n"
-            f"Available tools: {json.dumps(self._tool_schema())}"
+            f"Available tools: {json.dumps(self._tool_schema())}\n\n"
+            "You MUST return a valid JSON object matching the following structure:\n"
+            f"{json.dumps(schema_format, indent=2)}\n\n"
+            "Return ONLY the strict JSON object. No explanations, no markdown block, no extra text."
         )
 
     def _parse_llm_plan(self, raw: str) -> dict[str, Any] | None:
@@ -140,6 +167,46 @@ class TaskPlanner:
 
     def _fallback_plan(self, text: str) -> dict[str, Any]:
         lowered = text.lower()
+
+        if "sort" in lowered or "organize" in lowered:
+            return {
+                "intent": text,
+                "summary": "Sort and organize files in the workspace.",
+                "confidence": 0.85,
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "sort_files",
+                        "description": "Sort files in the workspace directory into categorized folders.",
+                        "params": {"directory": "./workspace", "output_dir": "./workspace"},
+                    }
+                ],
+                "clarification_needed": False,
+                "clarification_prompt": "",
+            }
+
+        if "find" in lowered or "search file" in lowered:
+            pattern = "*"
+            words = text.split()
+            for w in words:
+                if "*" in w or "." in w:
+                    pattern = w.strip("'\"")
+                    break
+            return {
+                "intent": text,
+                "summary": f"Search for files matching '{pattern}' in workspace.",
+                "confidence": 0.85,
+                "steps": [
+                    {
+                        "id": 1,
+                        "action": "find_files",
+                        "description": f"Find files matching pattern {pattern}.",
+                        "params": {"pattern": pattern, "directory": "./workspace"},
+                    }
+                ],
+                "clarification_needed": False,
+                "clarification_prompt": "",
+            }
 
         if lowered.startswith("remember ") and " is " in lowered:
             key, value = text[9:].split(" is ", 1)

@@ -307,13 +307,12 @@ def push_pool_to_github(pool_root: Path, repo_root: Path, copied: int):
     ok(f"Committed: {msg}")
 
     # Push
-    warn("Git push skipped as per user instruction (dont push to github till i say).")
-    # _, push_err, push_code = run_git(["push", "origin", "HEAD"], repo_root)
-    # if push_code != 0:
-    #     err(f"Git push failed: {push_err}")
-    #     warn("Try running manually: git push origin main")
-    # else:
-    #     ok("✅ Pushed to GitHub successfully!")
+    _, push_err, push_code = run_git(["push", "origin", "HEAD"], repo_root)
+    if push_code != 0:
+        err(f"Git push failed: {push_err}")
+        warn("Try running manually: git push origin main")
+    else:
+        ok("✅ Pushed to GitHub successfully!")
 
 # ──────────────────────────────────────────────
 # MAIN

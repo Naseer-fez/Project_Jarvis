@@ -12,7 +12,7 @@ from core.execution.async_task_manager import AsyncTaskManager
 from core.execution.dispatcher import ToolDispatcher
 from core.memory.hybrid_memory import HybridMemory
 from core.permission_matrix import PermissionMatrix
-from core.planning.task_planner import TaskPlanner
+from core.llm.task_planner import TaskPlanner
 from core.autonomy.risk_evaluator import RiskEvaluator, RiskLevel
 
 
@@ -46,10 +46,10 @@ def v4_config(tmp_path):
         "forbidden_actions": "shell_exec,file_delete",
         "critical_actions": "shell_exec,file_delete",
         "blocked_actions": "shell_exec,file_delete",
-        "high_risk_actions": "file_write,vision_click",
+        "high_risk_actions": "file_write",
         "medium_risk_actions": "file_read,web_search",
         "low_risk_actions": "memory_read,memory_write,speak,display",
-        "user_confirmed_actions": "file_write,vision_click",
+        "user_confirmed_actions": "file_write",
         "voice_confirm_threshold": "MEDIUM",
     }
     cfg["ollama"] = {
