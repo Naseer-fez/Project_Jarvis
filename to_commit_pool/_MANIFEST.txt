@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-05-31T10:56:20Z
-# Remaining files: 79
+# to_commit_pool manifest — updated 2026-06-01T15:19:50Z
+# Remaining files: 78
 
-to_commit_pool/Jarvis/core/controller/request_rules.py
 to_commit_pool/Jarvis/core/controller/response_format.py
 to_commit_pool/Jarvis/core/controller/services.py
 to_commit_pool/Jarvis/core/controller_v2.py
