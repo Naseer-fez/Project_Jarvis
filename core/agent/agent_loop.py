@@ -362,7 +362,7 @@ class AgentLoopEngine:
                     user_prompt,
                     system=REFLECT_SYSTEM_PROMPT,
                     temperature=0.2,
-                    task_type="final_response",
+                    task_type="reflection",
                 )
                 cleaned = re.sub(r"<think>.*?</think>", "", result or "", flags=re.DOTALL).strip()
                 if cleaned:
@@ -376,7 +376,7 @@ class AgentLoopEngine:
             return self._fallback_reflection(plan, observations)
 
         payload = {
-            "model": self.model,
+            "model": self.model, # self.model now just acts as fallback if llm is missing
             "messages": [
                 {"role": "system", "content": REFLECT_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
