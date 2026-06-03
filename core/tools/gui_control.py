@@ -1,6 +1,7 @@
 """Desktop GUI automation tools for Jarvis."""
 
 from __future__ import annotations
+from core.types.common import ToolResult
 
 import asyncio
 import configparser
@@ -105,7 +106,6 @@ def _runtime_config() -> configparser.ConfigParser:
 
 
 def _vision_locate_target(target: str):
-    from integrations.base import ToolResult
     from core.tools.screen import capture_screen
     from core.tools.vision import VisionTool
 
@@ -161,7 +161,6 @@ def _vision_locate_target(target: str):
 
 async def click(x: int, y: int, button: str = "left"):
     """Click at screen coordinates with bounds checks and audit capture."""
-    from integrations.base import ToolResult
 
     global _LAST_CLICK_TIME
     try:
@@ -183,7 +182,6 @@ async def click(x: int, y: int, button: str = "left"):
 
 async def double_click(x: int, y: int):
     """Double-click at screen coordinates."""
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -203,7 +201,6 @@ async def double_click(x: int, y: int):
 
 async def right_click(x: int, y: int):
     """Right-click at screen coordinates."""
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -229,7 +226,6 @@ async def click_text_on_screen(
     match_mode: str = "contains",
 ):
     """Locate visible text on screen and click its center."""
-    from integrations.base import ToolResult
     from core.tools.screen import find_text_on_screen
 
     result = find_text_on_screen(text, match_mode=match_mode)
@@ -285,7 +281,6 @@ async def _resolve_target_coordinates(
         If resolved successfully: (x, y, metadata, None)
         If failed: (None, None, None, ToolResult)
     """
-    from integrations.base import ToolResult
     from core.tools.screen import find_text_on_screen
 
     # 1. Try OCR text locator first
@@ -351,7 +346,6 @@ async def click_screen_target(
     min_confidence: float = 0.2,
 ):
     """Click a described screen target without hard-coded coordinates."""
-    from integrations.base import ToolResult
 
     x, y, resolved, err = await _resolve_target_coordinates(
         target,
@@ -383,7 +377,6 @@ async def double_click_screen_target(
     min_confidence: float = 0.2,
 ):
     """Double-click a described screen target without hard-coded coordinates."""
-    from integrations.base import ToolResult
 
     x, y, resolved, err = await _resolve_target_coordinates(
         target,
@@ -415,7 +408,6 @@ async def right_click_screen_target(
     min_confidence: float = 0.2,
 ):
     """Right-click a described screen target without hard-coded coordinates."""
-    from integrations.base import ToolResult
 
     x, y, resolved, err = await _resolve_target_coordinates(
         target,
@@ -440,7 +432,6 @@ async def right_click_screen_target(
 
 
 async def move_mouse(x: int, y: int, duration: float = 0.0):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -455,7 +446,6 @@ async def move_mouse(x: int, y: int, duration: float = 0.0):
 
 
 async def scroll(clicks: int, x: int | None = None, y: int | None = None):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -479,7 +469,6 @@ async def drag(
     duration: float = 0.2,
     button: str = "left",
 ):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -506,7 +495,6 @@ async def drag(
 
 
 async def type_text(text: str, interval: float = 0.05):
-    from integrations.base import ToolResult
 
     forbidden = _contains_sensitive_text(text)
     if forbidden is not None:
@@ -525,7 +513,6 @@ async def type_text(text: str, interval: float = 0.05):
 
 
 async def press_key(key: str, presses: int = 1, interval: float = 0.05):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -541,7 +528,6 @@ async def press_key(key: str, presses: int = 1, interval: float = 0.05):
 
 
 async def hotkey(*keys: str):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -555,7 +541,6 @@ async def hotkey(*keys: str):
 
 
 def focus_window(title: str):
-    from integrations.base import ToolResult
 
     try:
         import pygetwindow as gw
@@ -571,7 +556,6 @@ def focus_window(title: str):
 
 
 def get_active_window():
-    from integrations.base import ToolResult
 
     try:
         import pygetwindow as gw
@@ -594,7 +578,6 @@ def get_active_window():
 
 
 def clipboard_get():
-    from integrations.base import ToolResult
 
     try:
         import pyperclip
@@ -606,7 +589,6 @@ def clipboard_get():
 
 
 def clipboard_set(text: str):
-    from integrations.base import ToolResult
 
     forbidden = _contains_sensitive_text(text)
     if forbidden is not None:
@@ -622,7 +604,6 @@ def clipboard_set(text: str):
 
 
 async def clipboard_paste():
-    from integrations.base import ToolResult
 
     result = await hotkey("ctrl", "v")
     if not result.success:
@@ -631,7 +612,6 @@ async def clipboard_paste():
 
 
 async def get_mouse_position():
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -643,7 +623,6 @@ async def get_mouse_position():
 
 
 async def mouse_down(button: str = "left"):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -656,7 +635,6 @@ async def mouse_down(button: str = "left"):
 
 
 async def mouse_up(button: str = "left"):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -669,7 +647,6 @@ async def mouse_up(button: str = "left"):
 
 
 async def key_down(key: str):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -682,7 +659,6 @@ async def key_down(key: str):
 
 
 async def key_up(key: str):
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()
@@ -696,7 +672,6 @@ async def key_up(key: str):
 
 async def middle_click(x: int, y: int):
     """Middle-click at screen coordinates."""
-    from integrations.base import ToolResult
 
     try:
         pag = _require_pyautogui()

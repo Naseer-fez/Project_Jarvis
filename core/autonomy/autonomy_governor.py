@@ -4,6 +4,7 @@ Conforms to Rule 3.1 by avoiding hardcoded lists of tool names.
 """
 
 import logging
+import threading
 from enum import IntEnum
 from typing import Any
 
@@ -23,54 +24,106 @@ class AutonomyGovernor:
         self.registry = registry
         self.read_only_tools: set[str] = set()
         self.write_tools: set[str] = set()
+        self._cache_is_write: dict[str, bool] = {}
+        self._cache_is_known: dict[str, bool] = {}
+        self._lock = threading.Lock()
         logger.info(f"Autonomy level set to: LEVEL_{self.level} ({self.level.name})")
 
     def register_read_only_tool(self, tool_name: str) -> None:
         """Dynamically register a tool as read-only."""
-        self.read_only_tools.add(tool_name)
-        self.write_tools.discard(tool_name)
+        name_clean = tool_name.strip().lower()
+        with self._lock:
+            self.read_only_tools.add(name_clean)
+            self.write_tools.discard(name_clean)
+            self._cache_is_write.pop(name_clean, None)
+            self._cache_is_known.pop(name_clean, None)
         logger.debug("Dynamically registered read-only tool: %s", tool_name)
 
     def register_write_tool(self, tool_name: str) -> None:
         """Dynamically register a tool as a write tool."""
-        self.write_tools.add(tool_name)
-        self.read_only_tools.discard(tool_name)
+        name_clean = tool_name.strip().lower()
+        with self._lock:
+            self.write_tools.add(name_clean)
+            self.read_only_tools.discard(name_clean)
+            self._cache_is_write.pop(name_clean, None)
+            self._cache_is_known.pop(name_clean, None)
         logger.debug("Dynamically registered write tool: %s", tool_name)
 
     def _is_known_tool(self, tool_name: str) -> bool:
         name_clean = tool_name.strip().lower()
-        if name_clean in self.read_only_tools or name_clean in self.write_tools:
-            return True
-        if self.registry and self.registry.get(name_clean) is not None:
-            return True
-        return False
+        is_known = self._cache_is_known.get(name_clean)
+        if is_known is not None:
+            return is_known
+            
+        with self._lock:
+            is_known = self._cache_is_known.get(name_clean)
+            if is_known is not None:
+                return is_known
+                
+            is_known = False
+            if name_clean in self.read_only_tools or name_clean in self.write_tools:
+                is_known = True
+            elif self.registry and self.registry.get(name_clean) is not None:
+                is_known = True
+                
+            if len(self._cache_is_known) > 1000:
+                self._cache_is_known.clear()
+            self._cache_is_known[name_clean] = is_known
+            return is_known
 
     def _is_write_tool(self, tool_name: str) -> bool:
         name_clean = tool_name.strip().lower()
-        if name_clean in self.write_tools:
-            return True
-        if name_clean in self.read_only_tools:
-            return False
+        is_write = self._cache_is_write.get(name_clean)
+        if is_write is not None:
+            return is_write
+            
+        with self._lock:
+            is_write = self._cache_is_write.get(name_clean)
+            if is_write is not None:
+                return is_write
+                
+            if name_clean in self.write_tools:
+                if len(self._cache_is_write) > 1000:
+                    self._cache_is_write.clear()
+                self._cache_is_write[name_clean] = True
+                return True
+            if name_clean in self.read_only_tools:
+                if len(self._cache_is_write) > 1000:
+                    self._cache_is_write.clear()
+                self._cache_is_write[name_clean] = False
+                return False
 
-        if self.registry:
-            cap = self.registry.get(name_clean)
-            if cap:
-                if hasattr(cap, "is_write_operation"):
-                    val = cap.is_write_operation
-                    return val() if callable(val) else bool(val)
-                if hasattr(cap, "is_write"):
-                    return bool(cap.is_write)
+            if self.registry:
+                cap = self.registry.get(name_clean)
+                if cap:
+                    if hasattr(cap, "is_write_operation"):
+                        val = cap.is_write_operation
+                        res = val() if callable(val) else bool(val)
+                        if len(self._cache_is_write) > 1000:
+                            self._cache_is_write.clear()
+                        self._cache_is_write[name_clean] = res
+                        return res
+                    if hasattr(cap, "is_write"):
+                        res = bool(cap.is_write)
+                        if len(self._cache_is_write) > 1000:
+                            self._cache_is_write.clear()
+                        self._cache_is_write[name_clean] = res
+                        return res
 
-        # Fallback safe keyword-based check to avoid hardcoding tool name strings
-        write_keywords = {
-            "write", "delete", "remove", "unlink", "launch", "execute", 
-            "run", "click", "type", "press", "move", "drag", "scroll", 
-            "send", "add", "create", "mark", "clear", "play", "toggle", 
-            "turn_on", "turn_off", "set_thermostat", "call_service", 
-            "double_click", "right_click", "focus_window", "clipboard_set",
-            "clipboard_paste", "hotkey"
-        }
-        return any(kw in name_clean for kw in write_keywords)
+            # Fallback safe keyword-based check to avoid hardcoding tool name strings
+            write_keywords = {
+                "write", "delete", "remove", "unlink", "launch", "execute", 
+                "run", "click", "type", "press", "move", "drag", "scroll", 
+                "send", "add", "create", "mark", "clear", "play", "toggle", 
+                "turn_on", "turn_off", "set_thermostat", "call_service", 
+                "double_click", "right_click", "focus_window", "clipboard_set",
+                "clipboard_paste", "hotkey"
+            }
+            res = any(kw in name_clean for kw in write_keywords)
+            if len(self._cache_is_write) > 1000:
+                self._cache_is_write.clear()
+            self._cache_is_write[name_clean] = res
+            return res
 
     def can_execute(self, tool_name: str) -> tuple[bool, str]:
         """

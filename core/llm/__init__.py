@@ -11,8 +11,8 @@ Components:
 """
 
 from core.llm.client import LLMClientV2
-from core.llm.ollama_client import OllamaClient
+from core.llm.ollama_client import OllamaClient, OllamaTransientError
 from core.llm.cloud_client import CloudLLMClient
 from core.llm.model_router import ModelRouter
 
-__all__ = ["LLMClientV2", "OllamaClient", "CloudLLMClient", "ModelRouter"]
+__all__ = ["LLMClientV2", "OllamaClient", "OllamaTransientError", "CloudLLMClient", "ModelRouter"]

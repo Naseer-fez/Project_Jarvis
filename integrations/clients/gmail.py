@@ -42,7 +42,7 @@ class GmailIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import aiohttp  # noqa: F401
-        except Exception:
+        except ImportError:
             self.unavailable_reason = "aiohttp not installed"
             return False
         if not all(bool(os.environ.get(k)) for k in self.required_config):
@@ -109,14 +109,14 @@ class GmailIntegration(BaseIntegration):
             if tool_name == "send_gmail":
                 return await self._send_gmail(
                     token,
-                    to=str(args.get("to", "")),
-                    subject=str(args.get("subject", "")),
-                    body=str(args.get("body", "")),
+                    to=str(args.get("to") or ""),
+                    subject=str(args.get("subject") or ""),
+                    body=str(args.get("body") or ""),
                 )
             if tool_name == "summarize_unread":
                 return await self._summarize_unread(token, int(args.get("max_results", 5) or 5))
             if tool_name == "mark_as_read":
-                return await self._mark_as_read(token, str(args.get("message_id", "")))
+                return await self._mark_as_read(token, str(args.get("message_id") or ""))
             return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
         except Exception as exc:  # noqa: BLE001
             return {"success": False, "data": None, "error": str(exc)}

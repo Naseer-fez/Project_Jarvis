@@ -29,7 +29,7 @@ class GitHubIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import github  # noqa: F401
-        except Exception:
+        except ImportError:
             self.unavailable_reason = "PyGithub not installed"
             return False
 
@@ -182,7 +182,7 @@ class GitHubIntegration(BaseIntegration):
     def _coerce_limit(self, raw_value: Any, *, default: int, max_value: int = _MAX_LIMIT) -> int:
         try:
             value = int(raw_value)
-        except Exception:
+        except (ValueError, TypeError):
             value = default
         return max(1, min(max_value, value))
 
@@ -258,7 +258,11 @@ class GitHubIntegration(BaseIntegration):
 
         client = self._get_client()
         repo = self._get_repo(client, args)
-        labels = [str(item).strip() for item in args.get("labels", []) if str(item).strip()]
+        
+        raw_labels = args.get("labels")
+        if raw_labels is None:
+            raw_labels = []
+        labels = [str(item).strip() for item in raw_labels if str(item).strip()]
 
         create_kwargs: dict[str, Any] = {
             "title": title,

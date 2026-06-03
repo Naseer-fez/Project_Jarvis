@@ -19,7 +19,7 @@ async def run_auto_clicker(target: str, interval: float, continuous: bool, min_c
     attempts = 0
     while True:
         attempts += 1
-        logger.info("Attempt %d: Searching for target...", attempts)
+        logger.debug("Attempt %d: Searching for target...", attempts)
         try:
             # We use click_screen_target which combines OCR and Vision
             result = await click_screen_target(
@@ -36,12 +36,12 @@ async def run_auto_clicker(target: str, interval: float, continuous: bool, min_c
                     logger.info("Continuous mode is disabled. Exiting after successful click.")
                     break
             else:
-                logger.warning("Target not found or click failed: %s", result.error)
+                logger.debug("Target not found or click failed: %s", result.error)
                 
         except Exception as e:
-            logger.error("Error during auto-clicker loop: %s", e)
+            logger.error("Error during auto-clicker loop: %s", e, exc_info=True)
             
-        logger.info("Waiting %.1f seconds before next check...", interval)
+        logger.debug("Waiting %.1f seconds before next check...", interval)
         await asyncio.sleep(interval)
 
 

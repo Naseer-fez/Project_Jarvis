@@ -33,7 +33,7 @@ class HomeAssistantIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import aiohttp  # noqa: F401
-        except Exception:
+        except ImportError:
             self.unavailable_reason = "aiohttp not installed"
             return False
 

@@ -23,7 +23,7 @@ class TelegramIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import telegram  # noqa: F401
-        except Exception:
+        except ImportError:
             self.unavailable_reason = "python-telegram-bot not installed"
             return False
         if not all(bool(os.environ.get(k)) for k in self.required_config):
@@ -71,7 +71,7 @@ class TelegramIntegration(BaseIntegration):
         try:
             if tool_name == "send_telegram":
                 return await self._send_telegram(
-                    message=str(args.get("message", "")),
+                    message=str(args.get("message") or ""),
                     parse_mode=str(args.get("parse_mode", "HTML") or "HTML"),
                 )
             if tool_name == "get_updates":

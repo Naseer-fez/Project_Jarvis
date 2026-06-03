@@ -241,7 +241,7 @@ class WebToolService:
         try:
             results = await self._search(effective_query, result_limit)
         except Exception as exc:  # noqa: BLE001
-            logger.error("Web search failed for %r: %s", effective_query, exc)
+            logger.error("Web search failed for %r: %s", effective_query, exc, exc_info=True)
             return f"Search failed: {exc}"
 
         if not results:
@@ -269,7 +269,7 @@ class WebToolService:
         try:
             text = await asyncio.to_thread(self._scrape_page, target_url)
         except Exception as exc:  # noqa: BLE001
-            logger.error("Web scrape failed for %s: %s", target_url, exc)
+            logger.error("Web scrape failed for %s: %s", target_url, exc, exc_info=True)
             return f"Scraping failed: {exc}"
 
         if not text:
@@ -358,14 +358,14 @@ class WebToolService:
             "include_answer": False,
             "include_raw_content": False,
         }
-        response = requests.post(
+        with requests.post(
             "https://api.tavily.com/search",
             json=payload,
             timeout=self.settings.provider_timeout_s,
             headers=DEFAULT_HEADERS,
-        )
-        response.raise_for_status()
-        data = response.json()
+        ) as response:
+            response.raise_for_status()
+            data = response.json()
         raw_results = data.get("results", [])
 
         return [
@@ -383,14 +383,15 @@ class WebToolService:
         if requests is None or BeautifulSoup is None:
             raise RuntimeError("requests and beautifulsoup4 must be installed.")
 
-        response = requests.get(
+        with requests.get(
             url,
             headers=DEFAULT_HEADERS,
             timeout=self.settings.scrape_timeout_s,
-        )
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.content, "html.parser")
+        ) as response:
+            response.raise_for_status()
+            content = response.content
+            
+        soup = BeautifulSoup(content, "html.parser")
         for element in soup(["script", "style", "nav", "footer", "header", "noscript"]):
             element.decompose()
 

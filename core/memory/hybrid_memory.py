@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import ast
+import contextlib
 import hashlib
 import logging
 import re
@@ -62,6 +62,7 @@ class HybridMemory:
 
         self._init_lock = asyncio.Lock()
         self._sqlite_initialized = False
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     async def initialize(self, index_path: str = "") -> dict[str, Any]:
         await self._ensure_db_initialized()
@@ -80,10 +81,27 @@ class HybridMemory:
         }
 
         if index_path:
-            asyncio.create_task(self.index_codebase(index_path))
+            self._track_background_task(
+                asyncio.create_task(
+                    self.index_codebase(index_path),
+                    name="hybrid_memory_code_index",
+                )
+            )
             result["codebase_index"] = {"status": "background_indexing_started"}
 
         return result
+
+    def _track_background_task(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.add(task)
+
+        def _finalize_background_task(done_task: asyncio.Task[Any]) -> None:
+            self._background_tasks.discard(done_task)
+            with contextlib.suppress(asyncio.CancelledError):
+                exc = done_task.exception()
+                if exc is not None:
+                    logger.warning("HybridMemory background task failed: %s", exc)
+
+        task.add_done_callback(_finalize_background_task)
 
     def set_llm(
         self,
@@ -136,6 +154,11 @@ class HybridMemory:
                     metadata TEXT,
                     timestamp TEXT NOT NULL
                 );
+
+                CREATE INDEX IF NOT EXISTS idx_preferences_updated_at ON preferences(updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_episodes_timestamp ON episodes(timestamp DESC);
+                CREATE INDEX IF NOT EXISTS idx_conversations_timestamp ON conversations(timestamp DESC);
+                CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON actions(timestamp DESC);
                 """
             )
 
@@ -172,6 +195,29 @@ class HybridMemory:
                 logger.debug("Semantic episode store failed: %s", exc)
         return True
 
+    async def store_episodes_batch(self, events: list[str], category: str = "general") -> bool:
+        await self._ensure_db_initialized()
+        now = datetime.now().isoformat()
+        
+        async with self._pool.acquire() as conn:
+            await conn.executemany(
+                "INSERT INTO episodes (event, category, timestamp) VALUES (?, ?, ?)",
+                [(event, category, now) for event in events],
+            )
+
+        if self.mode == "hybrid":
+            try:
+                if hasattr(self.semantic, "store_episodes_batch"):
+                    await self.semantic.store_episodes_batch(events, category=category)
+                else:
+                    for event in events:
+                        await self.semantic.store_episode(event, category=category)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Semantic batch store failed: %s", exc)
+                
+        return True
+
+
     async def store_conversation(self, user_input: str, assistant_response: str, session_id: str = "default") -> bool:
         await self._ensure_db_initialized()
         now = datetime.now().isoformat()
@@ -205,13 +251,31 @@ class HybridMemory:
                 logger.debug("Semantic preference recall failed: %s", exc)
 
         await self._ensure_db_initialized()
+        tokens = self._query_tokens(query)
         async with self._pool.acquire() as conn:
             async with conn.execute(
-                "SELECT key, value FROM preferences ORDER BY updated_at DESC LIMIT ?",
-                (max(1, top_k),),
+                "SELECT key, value FROM preferences ORDER BY updated_at DESC LIMIT 200"
             ) as cursor:
                 rows = await cursor.fetchall()
-        return [{"key": row["key"], "value": row["value"], "score": 1.0} for row in rows]
+
+        ranked: list[dict[str, Any]] = []
+        for row in rows:
+            key = str(row["key"] or "")
+            val = str(row["value"] or "")
+            score = self._score_text(key, tokens)
+            if tokens and score < 0.70:
+                continue
+            ranked.append(
+                {
+                    "key": key,
+                    "value": val,
+                    "score": score if tokens else 1.0,
+                }
+            )
+
+        if tokens:
+            ranked.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+        return ranked[: max(1, top_k)]
 
     async def recall_all(self, query: str, top_k: int = 5) -> dict[str, list[dict[str, Any]]]:
         if self.mode == "hybrid":
@@ -342,7 +406,7 @@ class HybridMemory:
                 enable_llm_title=self._enable_llm_context_titles,
             )
             recalled = await self.recall_all(query, top_k=n_results)
-            return compressor.compress(query, recalled)
+            return await compressor.compress(query, recalled)
         except Exception:  # noqa: BLE001
             return ""
 
@@ -364,33 +428,15 @@ class HybridMemory:
 
     async def store_code_file(self, file_path: str, content: str) -> int:
         """Parse Python code and store class/function chunks for semantic retrieval."""
-        try:
-            tree = ast.parse(content)
-        except SyntaxError:
-            await self.store_episode(f"file:{file_path}", category="code")
-            return 1
-
-        lines = content.splitlines()
+        from core.memory.code_indexer import extract_code_chunks
+        
+        chunks = extract_code_chunks(file_path, content)
         chunks_stored = 0
-
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue
-
-            start = max(0, getattr(node, "lineno", 1) - 1)
-            end_lineno = getattr(node, "end_lineno", None) or getattr(node, "lineno", 1)
-            end = min(len(lines), max(start + 1, end_lineno))
-            chunk = "\n".join(lines[start:end]).strip()
-            if not chunk:
-                continue
-
-            chunk_id = f"{file_path}::{getattr(node, 'name', 'anonymous')}"
-            metadata = {
-                "file": file_path,
-                "name": getattr(node, "name", ""),
-                "type": type(node).__name__,
-                "lines": f"{start + 1}-{end}",
-            }
+        
+        for item in chunks:
+            chunk_id = item["chunk_id"]
+            chunk = item["chunk"]
+            metadata = item["metadata"]
 
             if self.mode == "hybrid":
                 await self._semantic_store_code_chunk(chunk_id, chunk, metadata)
@@ -398,12 +444,8 @@ class HybridMemory:
             # Keep a structured breadcrumb in sqlite even when semantic is disabled.
             await self.store_episode(f"{chunk_id}\n{chunk[:3000]}", category="code")
             chunks_stored += 1
-
-        if chunks_stored == 0:
-            await self.store_episode(f"file:{file_path}", category="code")
-            return 1
-
-        return chunks_stored
+            
+        return max(1, chunks_stored)
 
     async def _semantic_store_code_chunk(self, chunk_id: str, chunk: str, metadata: dict[str, Any]) -> None:
         try:
@@ -461,51 +503,9 @@ class HybridMemory:
                         (hash_key, content_hash, datetime.now().isoformat()),
                     )
 
-                try:
-                    tree = ast.parse(content)
-                except SyntaxError:
-                    chunks_to_index.append({
-                        "chunk_id": f"file:{py_file}",
-                        "chunk": f"file:{py_file}",
-                        "metadata": {"file": str(py_file), "type": "File"}
-                    })
-                    stats["indexed_files"] += 1
-                    continue
-
-                lines = content.splitlines()
-                file_chunks = 0
-                for node in ast.walk(tree):
-                    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                        continue
-
-                    start = max(0, getattr(node, "lineno", 1) - 1)
-                    end_lineno = getattr(node, "end_lineno", None) or getattr(node, "lineno", 1)
-                    end = min(len(lines), max(start + 1, end_lineno))
-                    chunk = "\n".join(lines[start:end]).strip()
-                    if not chunk:
-                        continue
-
-                    chunk_id = f"{py_file}::{getattr(node, 'name', 'anonymous')}"
-                    metadata = {
-                        "file": str(py_file),
-                        "name": getattr(node, "name", ""),
-                        "type": type(node).__name__,
-                        "lines": f"{start + 1}-{end}",
-                    }
-                    chunks_to_index.append({
-                        "chunk_id": chunk_id,
-                        "chunk": chunk,
-                        "metadata": metadata
-                    })
-                    file_chunks += 1
-
-                if file_chunks == 0:
-                    chunks_to_index.append({
-                        "chunk_id": f"file:{py_file}",
-                        "chunk": f"file:{py_file}",
-                        "metadata": {"file": str(py_file), "type": "File"}
-                    })
-
+                from core.memory.code_indexer import extract_code_chunks
+                extracted = extract_code_chunks(str(py_file), content)
+                chunks_to_index.extend(extracted)
                 stats["indexed_files"] += 1
 
             except Exception as exc:  # noqa: BLE001
@@ -689,7 +689,24 @@ class HybridMemory:
             cur = await conn.execute("DELETE FROM actions WHERE timestamp < ?", (cutoff,))
             removed_actions = cur.rowcount
 
-        return {"episodic_removed": removed_episodes, "actions_removed": removed_actions}
+        return {
+            "episodes": removed_episodes,
+            "actions": removed_actions,
+        }
+    async def close(self) -> None:
+        """Close database pool and release resources."""
+        background_tasks = list(self._background_tasks)
+        for task in background_tasks:
+            task.cancel()
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+
+        if hasattr(self, "_pool") and self._pool is not None:
+            await self._pool.close()
+
+        if hasattr(self, "semantic") and self.semantic is not None:
+            await self.semantic.close()
 
 
 __all__ = ["HybridMemory"]

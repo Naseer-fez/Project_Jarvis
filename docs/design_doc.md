@@ -64,7 +64,7 @@ The `AgentLoopEngine` manages multi-step tasks autonomously. For any user goal:
 4. Executes tools synchronously or asynchronously. If a desktop action (e.g. OCR scan or click target) is triggered, it redirects to the `DesktopBridge` to handle OCR target validation and screen feedback.
 5. Injects tool execution observations into the context, checking for failures, and dynamically triggers the reflection engine to generate a response or correction.
 
-#### 3.2.1 Task Planner (`core/llm/task_planner.py`)
+#### 3.2.1 Task Planner (`core/planner/planner.py`)
 The `TaskPlanner` ingests user prompt goals and dynamic system environment parameters (such as the workspace layout or active screen window) to formulate an execution plan. It fetches tool specifications from `SYSTEM_TOOL_SCHEMA`, filtering out GUI tools if the `allow_gui_automation` key is set to `False` in the execution configuration of `config/jarvis.ini`. 
 
 The planner generates plans that adhere to a stable JSON schema, ensuring consistent downstream parsing:
@@ -169,7 +169,7 @@ To evolve Project Jarvis into a next-generation desktop companion, we can implem
 ```markdown
 You are an expert software engineer specializing in Python agentic frameworks. You are working on "Project Jarvis", a privacy-first, modular local AI assistant. Here is a high-level overview of the codebase to ground your implementations:
 
-1. CORE LIFE CYCLE (main.py -> main_connector.py -> controller_v2.py)
+1. CORE LIFE CYCLE (main.py -> core/runtime/entrypoint.py -> controller_v2.py)
 - Runs an event loop managing Voice inputs, Web GUI updates, and the Agent Loop.
 - Maintains a persistent StateMachine: IDLE -> THINKING -> PLANNING -> RISK_EVALUATION -> AWAITING_CONFIRMATION -> ACTING -> OBSERVING -> REFLECTING -> SPEAKING -> IDLE.
 - If any component fails or is hard-blocked, the state machine transitions to the ERROR state before resetting to IDLE or SHUTDOWN.
@@ -179,7 +179,7 @@ You are an expert software engineer specializing in Python agentic frameworks. Y
 - ModelRouter (model_router.py) maps task_types ('intent', 'planning', 'summarize', 'chat') to distinct Ollama models (e.g., qwen2.5:0.5b for intent, mistral:7b for chat, deepseek-r1:8b for planning) and falls back to a chain of cloud clients (Gemini -> Groq -> OpenAI -> Anthropic) if local Ollama fails.
 
 3. AGENT ENGINE (core/agent/agent_loop.py)
-- Executes TaskPlanner (core/llm/task_planner.py) steps in an iterative loop.
+- Executes TaskPlanner (`core/planner/planner.py`) steps in an iterative loop.
 - The TaskPlanner outputs a structured JSON plan (containing summary, confidence, steps list, confirmation details, and risk ratings) while dynamically filtering out GUI tools if allow_gui_automation is disabled in configuration.
 - Performs risk checks on every action before execution.
 - Redirects desktop actions to the DesktopBridge.
@@ -199,7 +199,7 @@ When writing or refactoring code for this project:
 - Respect the existing models configuration under config/jarvis.ini.
 - Do not import models or controllers directly inside llm or memory packages to prevent import cycles.
 - Always use the SQLitePool (sqlite_pool.py) connection context when interacting with the database.
-- Keep components modular, and ensure that all new tool additions are registered via core/tools/registry.py.
+- Keep components modular, and ensure that all new tool additions are registered via `core/registry/registry.py`.
 ```
 
 ---
@@ -261,7 +261,6 @@ Jarvis/
 │   ├── templates/           # Layout HTML views, AI OS inspector, and active dashboard panels
 │   └── static/              # Harmanious dark-themed CSS, dynamic charts, and socket listeners
 ├── plugins/                 # Local directory for discovering standalone plugins
-│   └── starter_pack/        # Default system widgets, tools, and manifests
 ├── workflows/               # Workspace workflow templates directory
 │   └── templates/           # Declarative JSON workflow definitions
 └── tests/                   # Extensive test suites for robust feature coverage
@@ -369,5 +368,3 @@ flowchart TD
 This high-fidelity dashboard user interface layout outlines how developers and administrators inspect running model latency, activate/deactivate plugins, check JSON templates executions, monitor hardware health, and review the live event bus pub/sub streaming in real-time:
 
 ![Jarvis AI OS Glassmorphic Dashboard Mockup](file:///C:/Users/FEZ%20NASEER/.gemini/antigravity/brain/b174c800-fc53-4e9e-9930-11744ec2b80d/dashboard_ui_1780132211100.png)
-
-

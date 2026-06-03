@@ -17,7 +17,7 @@ from typing import Any, Awaitable, Callable
 
 from core.automation.scan_pipeline import ScanBatch, ScanPipeline
 from core.automation.scan_rules import ScanRoute, build_scan_routes
-from core.runtime.bootstrap import _resolve_path
+from core.runtime.paths import _resolve_path
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,7 @@ class LiveAutomationEngine:
         command_handler: CommandHandler | None = None,
         desktop_observer: Any | None = None,
         notifier: Any | None = None,
+        dag_executor: Any | None = None,
     ) -> None:
         self.config = config
         self.memory = memory
@@ -117,6 +118,7 @@ class LiveAutomationEngine:
         self.command_handler = command_handler
         self.desktop_observer = desktop_observer
         self.notifier = notifier
+        self.dag_executor = dag_executor
 
         self.enabled = _cfg_bool(config, "automation", "enabled", True)
         self.auto_execute_commands = _cfg_bool(
@@ -314,13 +316,14 @@ class LiveAutomationEngine:
         return await self.scan_once()
 
     async def scan_once(self) -> dict[str, Any]:
-        pipeline = ScanPipeline(self._build_scan_batches())
+        batches = await self._build_scan_batches()
+        pipeline = ScanPipeline(batches)
         summary = await pipeline.run(self._scan_readiness)
         self._apply_scan_summary(summary)
         self._save_state()
         return summary
 
-    def _build_scan_batches(self) -> list[ScanBatch]:
+    async def _build_scan_batches(self) -> list[ScanBatch]:
         routes = build_scan_routes(
             commands_dir=self.commands_dir,
             rag_dir=self.rag_dir,
@@ -335,7 +338,7 @@ class LiveAutomationEngine:
 
         batches: list[ScanBatch] = []
         for route in routes:
-            candidates = tuple(self._iter_files(route.folder, route.allowed_extensions))
+            candidates = tuple(await self._iter_files(route.folder, route.allowed_extensions))
             if route.kind == "command":
                 batches.append(
                     self._build_command_scan_batch(route, candidates)
@@ -475,16 +478,23 @@ class LiveAutomationEngine:
         return "RAG matches:\n" + "\n".join(lines)
 
     async def _run_loop(self) -> None:
-        while self._running:
-            try:
-                await self.scan_once()
-                await self._poll_live_screen()
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Live automation loop error: %s", exc, exc_info=True)
-                self._stats.last_error = str(exc)
-            await asyncio.sleep(self.poll_interval_seconds)
+        try:
+            while self._running:
+                try:
+                    await self.scan_once()
+                    await self._poll_live_screen()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Live automation loop error: %s", exc, exc_info=True)
+                    self._stats.last_error = str(exc)
+                await asyncio.sleep(self.poll_interval_seconds)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.critical("Fatal error in live automation loop: %s", exc, exc_info=True)
+            self._stats.last_error = str(exc)
+            await asyncio.sleep(self.poll_interval_seconds * 2)
 
     async def _process_command_file(self, path: Path) -> None:
         command_text = self._read_text_file(path)
@@ -495,10 +505,27 @@ class LiveAutomationEngine:
         if not self.auto_execute_commands:
             raise RuntimeError("Auto command execution is disabled by config.")
 
-        if self.command_handler is None:
-            raise RuntimeError("No command handler is attached.")
+        if self.command_handler is None and self.dag_executor is None:
+            raise RuntimeError("No command handler or DAG executor is attached.")
 
-        response = await self.command_handler(command_text)
+        if self.dag_executor is not None and command_text.strip().startswith("{"):
+            try:
+                plan = json.loads(command_text)
+                if "steps" in plan:
+                    from core.context.context import TaskExecutionContext
+                    ctx = TaskExecutionContext(
+                        task_id=path.stem,
+                        trace_id=hashlib.md5(path.name.encode()).hexdigest()[:8],
+                    )
+                    result = await self.dag_executor.execute(plan, context=ctx)
+                    response = json.dumps(result)
+                else:
+                    response = await self.command_handler(command_text) if self.command_handler else "No handler"
+            except Exception as e:
+                logger.warning("Failed to execute plan via DAGExecutor: %s", e)
+                response = await self.command_handler(command_text) if self.command_handler else f"Failed: {e}"
+        else:
+            response = await self.command_handler(command_text) if self.command_handler else "No handler"
         self._stats.commands_executed += 1
         self._append_log(
             {
@@ -553,82 +580,15 @@ class LiveAutomationEngine:
         return chunks
 
     def _extract_text_payload(self, path: Path) -> str:
-        suffix = path.suffix.lower()
-        if suffix in _TEXT_EXTENSIONS:
-            raw = self._read_text_file(path)
-            return _truncate(raw, self.max_text_chars_per_item)
-        if suffix in _IMAGE_EXTENSIONS:
-            text = self._extract_text_from_image(path)
-            return _truncate(text, self.max_text_chars_per_item)
-        if suffix in _VIDEO_EXTENSIONS:
-            text = self._extract_text_from_video(path)
-            return _truncate(text, self.max_text_chars_per_item)
-        return f"Unsupported file type for direct parsing: {path.name}"
+        from core.automation.payload_extractor import PayloadExtractor
+        extractor = PayloadExtractor(
+            self.max_text_chars_per_item,
+            self.video_frame_interval_seconds,
+            self.max_video_samples
+        )
+        return extractor.extract_text_payload(path)
 
-    def _extract_text_from_image(self, path: Path) -> str:
-        try:
-            from PIL import Image
-            import pytesseract
-        except Exception as exc:  # noqa: BLE001
-            return f"OCR dependency missing for image '{path.name}': {exc}"
-
-        try:
-            with Image.open(path) as image:
-                raw = pytesseract.image_to_string(image)
-        except Exception as exc:  # noqa: BLE001
-            return f"Image OCR failed for '{path.name}': {exc}"
-
-        text = _normalize_text(raw)
-        if not text:
-            return f"No OCR text found in image '{path.name}'."
-        return text
-
-    def _extract_text_from_video(self, path: Path) -> str:
-        try:
-            import cv2  # type: ignore[import]
-            from PIL import Image
-            import pytesseract
-        except Exception as exc:  # noqa: BLE001
-            return f"Video OCR dependency missing for '{path.name}': {exc}"
-
-        cap = cv2.VideoCapture(str(path))
-        if not cap.isOpened():
-            return f"Could not open video '{path.name}'."
-
-        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-        if fps <= 0:
-            fps = 1.0
-        sample_every_frames = max(1, int(round(fps * self.video_frame_interval_seconds)))
-
-        frame_index = 0
-        captured = 0
-        snippets: list[str] = []
-        try:
-            while captured < self.max_video_samples:
-                ok, frame = cap.read()
-                if not ok:
-                    break
-                if frame_index % sample_every_frames != 0:
-                    frame_index += 1
-                    continue
-                try:
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    image = Image.fromarray(rgb)
-                    raw = pytesseract.image_to_string(image)
-                    text = _normalize_text(raw)
-                    if text:
-                        second = frame_index / max(fps, 1.0)
-                        snippets.append(f"[t={second:.1f}s] {text}")
-                        captured += 1
-                except Exception:
-                    pass
-                frame_index += 1
-        finally:
-            cap.release()
-
-        if not snippets:
-            return f"No OCR text found in video '{path.name}'."
-        return "\n".join(snippets)
+    # OCR methods have been extracted to core.automation.payload_extractor
 
     async def _poll_live_screen(self) -> None:
         if not self.live_screen_enabled:
@@ -671,47 +631,14 @@ class LiveAutomationEngine:
         self._stats.live_screen_updates += 1
 
     async def _store_rag_text(self, *, source: str, path: Path, text: str) -> int:
-        clean = str(text or "").strip()
-        if not clean:
-            return 0
-
-        chunks = self._chunk_text(clean)
-        total = len(chunks)
-        stored = 0
-        for index, chunk in enumerate(chunks, start=1):
-            payload = (
-                "[RAG Source]\n"
-                f"source={source}\n"
-                f"path={path}\n"
-                f"chunk={index}/{total}\n"
-                f"content={chunk}"
-            )
-            try:
-                await self.memory.store_episode(payload, category="rag")
-                stored += 1
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to store RAG chunk: %s", exc)
-                self._stats.last_error = str(exc)
-                break
-        return stored
-
-    def _chunk_text(self, text: str) -> list[str]:
-        size = self.chunk_size_chars
-        overlap = min(self.chunk_overlap_chars, max(0, size - 20))
-        if len(text) <= size:
-            return [text]
-
-        chunks: list[str] = []
-        start = 0
-        while start < len(text):
-            end = min(len(text), start + size)
-            chunk = text[start:end].strip()
-            if chunk:
-                chunks.append(chunk)
-            if end >= len(text):
-                break
-            start = max(start + 1, end - overlap)
-        return chunks
+        from core.automation.rag_ingester import RagIngester
+        ingester = RagIngester(
+            self.chunk_size_chars,
+            self.chunk_overlap_chars,
+            self.memory,
+            self._stats
+        )
+        return await ingester.store_rag_text(source=source, path=path, text=text)
 
     def _file_ready(self, path: Path, *, mark_seen: bool) -> tuple[bool, str]:
         if not path.exists() or not path.is_file():
@@ -734,18 +661,30 @@ class LiveAutomationEngine:
             self._remember_fingerprint(fingerprint)
         return True, "ready"
 
-    def _iter_files(self, folder: Path, allowed_extensions: set[str] | None) -> list[Path]:
+    async def _iter_files(self, folder: Path, allowed_extensions: set[str] | None) -> list[Path]:
         if not folder.exists() or not folder.is_dir():
             return []
         files: list[Path] = []
-        for item in folder.iterdir():
-            if not item.is_file():
-                continue
-            if allowed_extensions is not None and item.suffix.lower() not in allowed_extensions:
-                continue
-            files.append(item)
+        count = 0
+        try:
+            for item in folder.iterdir():
+                count += 1
+                if count % 100 == 0:
+                    await asyncio.sleep(0.001)
+                
+                if count > 2000:  # batch limit
+                    break
+
+                if not item.is_file():
+                    continue
+                if allowed_extensions is not None and item.suffix.lower() not in allowed_extensions:
+                    continue
+                files.append(item)
+        except OSError:
+            pass
+            
         files.sort(key=lambda p: p.stat().st_mtime)
-        return files
+        return files[:500]
 
     @staticmethod
     def _extract_command(raw_text: str) -> str:

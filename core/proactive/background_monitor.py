@@ -25,6 +25,8 @@ class BackgroundMonitor:
         self._running = False
         for task in self._tasks:
             task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
 
     async def _monitor_resources(self) -> None:
@@ -33,11 +35,14 @@ class BackgroundMonitor:
             try:
                 import psutil
 
-                cpu = psutil.cpu_percent(interval=1)
-                ram = psutil.virtual_memory().percent
+                cpu = await asyncio.to_thread(psutil.cpu_percent, interval=1)
+                ram_mem = await asyncio.to_thread(psutil.virtual_memory)
+                ram = ram_mem.percent
                 if cpu > self.cpu_threshold:
                     self.notifier.notify(f"\u26a0\ufe0f CPU at {cpu:.0f}%", level="warn")
                 if ram > self.ram_threshold:
                     self.notifier.notify(f"\u26a0\ufe0f RAM at {ram:.0f}%", level="warn")
             except ImportError:
                 pass
+            except Exception as exc:
+                logger.warning("Resource monitor error: %s", exc, exc_info=True)

@@ -58,7 +58,7 @@ class PythonSearchEngine:
             with open(filepath, 'rb') as f:
                 chunk = f.read(1024)
                 return b'\x00' in chunk
-        except Exception:
+        except OSError:
             return True
 
     def search_file_content(self, filepath):
@@ -87,7 +87,7 @@ class PythonSearchEngine:
                             else:
                                 self.done_event.set()
                                 return
-        except Exception:
+        except OSError:
             pass
 
     def worker(self):
@@ -140,9 +140,9 @@ class PythonSearchEngine:
                                             else:
                                                 self.done_event.set()
                                                 break
-                        except Exception:
+                        except OSError:
                             pass
-            except Exception:
+            except OSError:
                 pass
             finally:
                 with self.active_workers_lock:
@@ -281,7 +281,7 @@ async def run_fast_search(path="all", query="", content="", threads=8, case_sens
                     "results": results,
                     "summary": summary
                 }
-        except Exception:
+        except OSError:
             # Fall back silently to Python if process launch fails
             pass
 

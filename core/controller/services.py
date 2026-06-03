@@ -8,7 +8,7 @@ from typing import Any
 
 from core.agent.agent_loop import AgentLoopEngine
 from core.state_machine import StateMachine
-from core.agentic.scheduler import Scheduler
+from core.autonomy.scheduler import Scheduler
 from core.autonomy.autonomy_governor import AutonomyGovernor
 from core.autonomy.goal_manager import GoalManager
 from core.autonomy.risk_evaluator import RiskEvaluator
@@ -23,10 +23,9 @@ from core.profile import UserProfileEngine
 from core.proactive.background_monitor import BackgroundMonitor
 from core.proactive.notifier import NotificationManager
 from core.synthesis import ProfileSynthesizer
-from core.runtime.bootstrap import _resolve_path
+from core.runtime.paths import _resolve_path
 from core.tools.builtin_tools import register_all_tools
 from core.registry.registry import CapabilityRegistry
-from core.tools.tool_router import ToolRouter
 from core.runtime.event_bus import EventBus
 
 
@@ -51,7 +50,7 @@ class ControllerServices:
     synthesizer: ProfileSynthesizer
     state_machine: StateMachine
     task_planner: TaskPlanner
-    tool_router: ToolRouter
+    tool_router: CapabilityRegistry
     risk_evaluator: RiskEvaluator
     autonomy_governor: AutonomyGovernor
     agent_loop: AgentLoopEngine
@@ -217,7 +216,7 @@ def build_controller_services(
     if not container.has("task_planner"):
         def make_planner():
             try:
-                return task_planner_cls(config, llm=container.resolve("llm"))
+                return task_planner_cls(config, llm=container.resolve("llm"), registry=container.resolve("tool_router"))
             except TypeError:
                 return task_planner_cls(config)
         container.register("task_planner", make_planner)
@@ -248,6 +247,16 @@ def build_controller_services(
             "desktop_bridge",
             lambda: None
         )
+
+    # 13a. Register TaskExecutionContext
+    if not container.has("task_execution_context"):
+        from core.context.context import TaskExecutionContext
+        container.register("task_execution_context", TaskExecutionContext, is_singleton=False)
+
+    # 13b. Register DAGExecutor
+    if not container.has("dag_executor"):
+        from core.executor.engine import DAGExecutor
+        container.register("dag_executor", lambda: DAGExecutor(tool_router=container.resolve("tool_router")), is_singleton=False)
 
     # 14. Register Agent Loop Engine
     if not container.has("agent_loop"):
@@ -286,8 +295,9 @@ def build_controller_services(
     model_router = container.resolve("model_router", config=config)
     try:
         model_router.refresh_available_models(base_url=settings.base_url)
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("Jarvis.Services").warning("Failed to refresh models: %s", e, exc_info=True)
 
     profile = container.resolve("profile")
     llm = container.resolve(
@@ -306,8 +316,9 @@ def build_controller_services(
         )
     try:
         setattr(llm, "profile", profile)
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("Jarvis.Services").warning("Failed to set profile on LLM: %s", e, exc_info=True)
 
     synthesizer = container.resolve("synthesizer", llm=llm)
     state_machine = container.resolve("state_machine")
@@ -331,9 +342,10 @@ def build_controller_services(
                 tools_logger.info("Loaded dynamic plugins: %s", loaded_plugins)
     except Exception as e:
         from core.tools.builtin_tools import logger as tools_logger
-        tools_logger.warning("Failed to load dynamic plugins: %s", e)
+        tools_logger.warning("Failed to load dynamic plugins: %s", e, exc_info=True)
 
     risk_evaluator = container.resolve("risk_evaluator", config=config)
+    risk_evaluator.registry = tool_router
     autonomy_governor = container.resolve("autonomy_governor", level=3)
     autonomy_governor.registry = tool_router
     desktop_executor = container.resolve("desktop_executor", risk_evaluator=risk_evaluator)

@@ -78,12 +78,14 @@ def validate_production_config(config: Any, *, dashboard_enabled: bool = False) 
             if enabled and os.environ.get(flag, "").lower() != "true":
                 result.errors.append(f"{key} is enabled but {flag}=true was not set.")
 
-    provider_order = os.environ.get("JARVIS_MODEL_PROVIDER_ORDER") or _get(
-        config,
-        "models",
-        "provider_order",
-        "gemini,openai,groq,anthropic,ollama",
-    )
+    provider_order = os.environ.get("JARVIS_MODEL_PROVIDER_ORDER")
+    if provider_order is None:
+        provider_order = _get(
+            config,
+            "models",
+            "provider_order",
+            "gemini,openai,groq,anthropic,ollama",
+        )
     providers = [item.strip() for item in provider_order.split(",") if item.strip()]
     if prod and not providers:
         result.errors.append("At least one model provider must be configured.")

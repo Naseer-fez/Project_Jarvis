@@ -35,7 +35,7 @@ class GoogleCalendarIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import aiohttp  # noqa: F401
-        except Exception:
+        except ImportError:
             self.unavailable_reason = "aiohttp not installed"
             return False
         if not all(bool(os.environ.get(k)) for k in self.required_config):
@@ -165,13 +165,13 @@ class GoogleCalendarIntegration(BaseIntegration):
     async def _create_event(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
         import aiohttp
 
-        summary = str(args.get("summary", "")).strip()
+        summary = str(args.get("summary") or "").strip()
         if not summary:
             return {"success": False, "data": None, "error": "summary is required"}
 
         tz = str(args.get("timezone", "UTC") or "UTC")
-        start_str = str(args.get("start", ""))
-        end_str = str(args.get("end", ""))
+        start_str = str(args.get("start") or "")
+        end_str = str(args.get("end") or "")
         cal_id = str(args.get("calendar_id", "primary") or "primary")
 
         event_body = {
@@ -243,7 +243,7 @@ class GoogleCalendarIntegration(BaseIntegration):
     async def _delete_event(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
         import aiohttp
 
-        event_id = str(args.get("event_id", "")).strip()
+        event_id = str(args.get("event_id") or "").strip()
         if not event_id:
             return {"success": False, "data": None, "error": "event_id is required"}
         cal_id = str(args.get("calendar_id", "primary") or "primary")

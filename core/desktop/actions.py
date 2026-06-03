@@ -267,10 +267,14 @@ class DesktopActionExecutor:
         }
 
 
-async def _launch_application(target: str, args: list[str] | None = None) -> Any:
+async def _launch_application(
+    target: str | None = None,
+    args: list[str] | None = None,
+    application: str | None = None,
+) -> Any:
     from core.tools.system_automation import async_launch_application
 
-    return await async_launch_application(target, args)
+    return await async_launch_application(target=target, args=args, application=application)
 
 
 async def _click(x: int, y: int, button: str = "left") -> Any:
@@ -379,98 +383,53 @@ async def _hotkey(keys: list[str] | tuple[str, ...] | str) -> Any:
     return await hotkey(*key_list)
 
 
-def _pyautogui_result(success: bool, data: dict[str, Any] | None = None, error: str = "") -> dict[str, Any]:
-    return {"success": success, "data": data or {}, "error": error}
+async def _move_mouse(x: int, y: int, duration: float = 0.0) -> Any:
+    from core.tools.gui_control import move_mouse
+    return await move_mouse(x=x, y=y, duration=duration)
 
 
-def _require_pyautogui() -> Any:
-    try:
-        import pyautogui
-
-        return pyautogui
-    except ImportError as exc:
-        raise ImportError("pyautogui not installed - run: pip install pyautogui") from exc
+async def _scroll(clicks: int, x: int | None = None, y: int | None = None) -> Any:
+    from core.tools.gui_control import scroll
+    return await scroll(clicks=clicks, x=x, y=y)
 
 
-def _move_mouse(x: int, y: int, duration: float = 0.0) -> dict[str, Any]:
-    pag = _require_pyautogui()
-    pag.moveTo(x, y, duration=duration)
-    return _pyautogui_result(True, {"action": "move_mouse", "x": x, "y": y})
-
-
-def _scroll(clicks: int, x: int | None = None, y: int | None = None) -> dict[str, Any]:
-    pag = _require_pyautogui()
-    if x is not None and y is not None:
-        pag.moveTo(x, y)
-    pag.scroll(clicks)
-    return _pyautogui_result(True, {"action": "scroll", "clicks": clicks, "x": x, "y": y})
-
-
-def _drag(
+async def _drag(
     start_x: int,
     start_y: int,
     end_x: int,
     end_y: int,
     duration: float = 0.2,
     button: str = "left",
-) -> dict[str, Any]:
-    pag = _require_pyautogui()
-    pag.moveTo(start_x, start_y)
-    pag.dragTo(end_x, end_y, duration=duration, button=button)
-    return _pyautogui_result(
-        True,
-        {
-            "action": "drag",
-            "start_x": start_x,
-            "start_y": start_y,
-            "end_x": end_x,
-            "end_y": end_y,
-            "button": button,
-        },
+) -> Any:
+    from core.tools.gui_control import drag
+    return await drag(
+        start_x=start_x,
+        start_y=start_y,
+        end_x=end_x,
+        end_y=end_y,
+        duration=duration,
+        button=button,
     )
 
 
-def _focus_window(title: str) -> dict[str, Any]:
-    try:
-        import pygetwindow as gw
-    except ImportError:
-        return _pyautogui_result(False, error="pygetwindow not installed - run: pip install pygetwindow")
-
-    windows = gw.getWindowsWithTitle(title)
-    if not windows:
-        return _pyautogui_result(False, error=f"No window found matching '{title}'.")
-    window = windows[0]
-    window.activate()
-    return _pyautogui_result(True, {"title": getattr(window, "title", title)})
+async def _focus_window(title: str) -> Any:
+    from core.tools.gui_control import focus_window
+    return focus_window(title=title)
 
 
-def _clipboard_get() -> dict[str, Any]:
-    try:
-        import pyperclip
-    except ImportError:
-        return _pyautogui_result(False, error="pyperclip not installed - run: pip install pyperclip")
-
-    text = pyperclip.paste()
-    return _pyautogui_result(True, {"length": len(text), "text": text})
+async def _clipboard_get() -> Any:
+    from core.tools.gui_control import clipboard_get
+    return clipboard_get()
 
 
-def _clipboard_set(text: str) -> dict[str, Any]:
-    lower = str(text).lower()
-    if any(marker in lower for marker in _SENSITIVE_TEXT_MARKERS):
-        return _pyautogui_result(False, error="Sensitive clipboard text is blocked by desktop policy.")
-    try:
-        import pyperclip
-    except ImportError:
-        return _pyautogui_result(False, error="pyperclip not installed - run: pip install pyperclip")
-
-    pyperclip.copy(text)
-    return _pyautogui_result(True, {"length": len(text)})
+async def _clipboard_set(text: str) -> Any:
+    from core.tools.gui_control import clipboard_set
+    return clipboard_set(text=text)
 
 
-def _clipboard_paste() -> dict[str, Any]:
-    pag = _require_pyautogui()
-    pag.hotkey("ctrl", "v")
-    return _pyautogui_result(True, {"action": "clipboard_paste"})
+async def _clipboard_paste() -> Any:
+    from core.tools.gui_control import clipboard_paste
+    return await clipboard_paste()
 
 
 __all__ = ["DesktopActionExecutor"]

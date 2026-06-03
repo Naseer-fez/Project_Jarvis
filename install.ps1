@@ -11,33 +11,43 @@ Write-Host "=============================================" -ForegroundColor Cyan
 # 1. Check Python Version
 Write-Host "[1/6] Verifying Python installation..." -ForegroundColor Yellow
 $PythonPath = $null
-try {
-    $PythonVersionString = & python --version 2>&1
-    if ($PythonVersionString -match "Python\s+(\d+)\.(\d+)") {
-        $major = [int]$Matches[1]
-        $minor = [int]$Matches[2]
-        if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 11)) {
-            Write-Error "Python 3.11+ is required. Found Python $major.$minor"
-        }
-        $PythonPath = "python"
-    }
-} catch {
-    # Try finding python via launcher/aliases
+$PythonVersionString = $null
+
+function Test-PythonVersion {
+    param([string]$cmd)
     try {
-        $PythonVersionString = & py --version 2>&1
-        if ($PythonVersionString -match "Python\s+(\d+)\.(\d+)") {
+        $version = & $cmd --version 2>&1
+        if ($version -match "Python\s+(\d+)\.(\d+)") {
             $major = [int]$Matches[1]
             $minor = [int]$Matches[2]
-            if ($major -lt 3 -or ($major -eq 3 -and $minor -lt 11)) {
-                Write-Error "Python 3.11+ is required. Found Python $major.$minor"
+            if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
+                return @{ Path = $cmd; Version = $version }
+            } else {
+                return @{ Path = $null; Version = $version; Error = "Python 3.11+ is required. Found Python $major.$minor" }
             }
-            $PythonPath = "py"
         }
-    } catch {
-        Write-Error "Python not found. Please install Python 3.11+ and add it to your PATH."
+    } catch {}
+    return $null
+}
+
+$res = Test-PythonVersion "python"
+if ($null -eq $res -or $null -eq $res.Path) {
+    $resPy = Test-PythonVersion "py"
+    if ($null -ne $resPy -and $null -ne $resPy.Path) {
+        $res = $resPy
     }
 }
+
+if ($null -eq $res) {
+    throw "Python not found. Please install Python 3.11+ and add it to your PATH."
+} elseif ($null -eq $res.Path) {
+    throw $res.Error
+}
+
+$PythonPath = $res.Path
+$PythonVersionString = $res.Version
 Write-Host "Found Python: $PythonVersionString" -ForegroundColor Green
+
 
 # 2. Virtual Environment Setup
 Write-Host "[2/6] Setting up Virtual Environment..." -ForegroundColor Yellow
@@ -58,14 +68,8 @@ if (-not (Test-Path -Path $VenvPython)) {
 Write-Host "[3/6] Installing dependencies..." -ForegroundColor Yellow
 & $VenvPython -m pip install --upgrade pip
 
-$InstallChoice = Read-Host "Select dependency group [1] Core Runtime, [2] Full (includes Desktop automation, Voice, integrations) [Default: 2]"
-if ($InstallChoice -eq "1") {
-    Write-Host "Installing Core Runtime dependencies..." -ForegroundColor Green
-    & $VenvPython -m pip install -r requirements/base.txt
-} else {
-    Write-Host "Installing Full Feature dependencies (this may take a few minutes)..." -ForegroundColor Green
-    & $VenvPython -m pip install -r requirements/full.txt
-}
+Write-Host "Installing dependencies from requirements.lock (this may take a few minutes)..." -ForegroundColor Green
+& $VenvPython -m pip install -r requirements.lock
 
 # 4. Handle Configuration Environment File
 Write-Host "[4/6] Initializing configuration (.env)..." -ForegroundColor Yellow
@@ -84,6 +88,7 @@ if (-not (Test-Path -Path $EnvFile)) {
 
 # Generate secure random secret key and admin credentials if not set
 $EnvContent = Get-Content -Path $EnvFile -Raw
+if ($null -eq $EnvContent) { $EnvContent = "" }
 
 # 1. JARVIS_SECRET_KEY
 if ($EnvContent -notmatch "JARVIS_SECRET_KEY=") {
@@ -130,16 +135,15 @@ if ($null -eq $OllamaProcess) {
 
 # 6. Run Diagnostic Check
 Write-Host "[6/6] Running system diagnostics..." -ForegroundColor Yellow
-try {
-    & $VenvPython main.py --health-check
-} catch {
-    Write-Host "Diagnostics returned non-zero. Check your configuration." -ForegroundColor Red
+& $VenvPython main.py --health-check
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Diagnostics returned non-zero ($LASTEXITCODE). Check your configuration." -ForegroundColor Red
 }
 
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "Setup Completed Successfully!" -ForegroundColor Green
 Write-Host "Start the dashboard using: " -ForegroundColor Yellow
-Write-Host "  powershell -ExecutionPolicy Bypass .\run-jarvis.ps1 --gui" -ForegroundColor Green
+Write-Host "  powershell -ExecutionPolicy Bypass .\Start.ps1 --gui" -ForegroundColor Green
 if ($null -ne $AdminPassword) {
     Write-Host "Initial Dashboard Login Credentials:" -ForegroundColor Yellow
     Write-Host "  Username: $AdminUser" -ForegroundColor Cyan

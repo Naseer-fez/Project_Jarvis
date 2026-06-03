@@ -55,9 +55,8 @@ class IntegrationRegistry:
         self,
         autonomy_governor: Any,
         risk_evaluator: Any,
-        dispatcher: Any = None,
     ) -> None:
-        """Scan all registered tools and configure active AutonomyGovernor, RiskEvaluator, and Dispatcher."""
+        """Scan all registered tools and configure active AutonomyGovernor, RiskEvaluator."""
         tools = self.get_tools() or []
         for tool in tools:
             tool_name = str(tool.get("name", "")).strip()
@@ -87,15 +86,6 @@ class IntegrationRegistry:
                     risk_evaluator.register_medium_action(tool_name)
                 else:  # default/confirm/high
                     risk_evaluator.register_confirm_action(tool_name)
-
-            # Register with Dispatcher risk registry if provided
-            if dispatcher is not None:
-                score = 0.8
-                if risk_str == "low":
-                    score = 0.1
-                elif risk_str == "medium":
-                    score = 0.6
-                dispatcher.register_integration_tool_risk(tool_name, score)
 
     def get_tools(self) -> list[dict[str, Any]]:
         merged: list[dict[str, Any]] = []

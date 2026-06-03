@@ -7,9 +7,33 @@ logger = logging.getLogger(__name__)
 
 
 class CloudLLMClient:
-    """Best-effort cloud fallback across a small provider chain."""
+    """Best-effort cloud fallback across a small provider chain, with Tier-aware routing."""
 
     PROVIDERS = ["gemini", "groq", "openai", "anthropic"]
+
+    # Tiered models for each provider
+    MODELS = {
+        "gemini": {
+            1: "gemini-1.5-flash",
+            2: "gemini-1.5-pro",
+            3: "gemini-2.0-pro-exp-02-05",
+        },
+        "groq": {
+            1: "llama-3.1-8b-instant",
+            2: "llama-3.3-70b-versatile",
+            3: "deepseek-r1-distill-llama-70b",
+        },
+        "openai": {
+            1: "gpt-4o-mini",
+            2: "gpt-4o",
+            3: "o3-mini",
+        },
+        "anthropic": {
+            1: "claude-3-haiku-20240307",
+            2: "claude-3-5-sonnet-20241022",
+            3: "claude-3-5-sonnet-20241022", # Anthropic doesn't have a distinct tier 3 right now, sonnet is very capable
+        }
+    }
 
     def __init__(self) -> None:
         provider_keys = {
@@ -26,32 +50,33 @@ class CloudLLMClient:
         if not self._available:
             logger.warning("No cloud LLM providers configured. Cloud fallback disabled.")
 
-    async def complete(self, prompt: str, system: str = "", temperature: float = 0.1) -> str:
+    async def complete(self, prompt: str, system: str = "", temperature: float = 0.1, tier: int = 2) -> str:
         for provider in self._available:
             try:
-                response = await self._call(provider, prompt, system, temperature)
+                model = self.MODELS[provider].get(tier, self.MODELS[provider][2])
+                response = await self._call(provider, prompt, system, temperature, model)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Cloud provider '%s' failed: %s", provider, exc)
                 continue
 
             if response:
-                logger.info("Cloud LLM response from '%s'", provider)
+                logger.info("Cloud LLM response from '%s' using model '%s'", provider, model)
                 return response
 
-        raise RuntimeError("All cloud LLM providers failed or are unconfigured.")
+        raise RuntimeError(f"All cloud LLM providers failed for tier {tier}.")
 
-    async def _call(self, provider: str, prompt: str, system: str, temperature: float) -> str:
+    async def _call(self, provider: str, prompt: str, system: str, temperature: float, model: str) -> str:
         if provider == "gemini":
-            return await self._call_gemini(prompt, system, temperature)
+            return await self._call_gemini(prompt, system, temperature, model)
         if provider == "groq":
-            return await self._call_groq(prompt, system, temperature)
+            return await self._call_groq(prompt, system, temperature, model)
         if provider == "openai":
-            return await self._call_openai(prompt, system, temperature)
+            return await self._call_openai(prompt, system, temperature, model)
         if provider == "anthropic":
-            return await self._call_anthropic(prompt, system, temperature)
+            return await self._call_anthropic(prompt, system, temperature, model)
         return ""
 
-    async def _call_groq(self, prompt: str, system: str, temperature: float) -> str:
+    async def _call_groq(self, prompt: str, system: str, temperature: float, model: str) -> str:
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
@@ -62,7 +87,7 @@ class CloudLLMClient:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "llama-3.3-70b-versatile",
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
@@ -78,7 +103,7 @@ class CloudLLMClient:
             return ""
         return str(data["choices"][0]["message"]["content"])
 
-    async def _call_openai(self, prompt: str, system: str, temperature: float) -> str:
+    async def _call_openai(self, prompt: str, system: str, temperature: float, model: str) -> str:
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
@@ -89,7 +114,7 @@ class CloudLLMClient:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "gpt-4o-mini",
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": prompt},
@@ -104,7 +129,7 @@ class CloudLLMClient:
             return ""
         return str(data["choices"][0]["message"]["content"])
 
-    async def _call_anthropic(self, prompt: str, system: str, temperature: float) -> str:
+    async def _call_anthropic(self, prompt: str, system: str, temperature: float, model: str) -> str:
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
@@ -116,7 +141,7 @@ class CloudLLMClient:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": "claude-3-haiku-20240307",
+                    "model": model,
                     "max_tokens": 2048,
                     "system": system,
                     "messages": [{"role": "user", "content": prompt}],
@@ -130,13 +155,13 @@ class CloudLLMClient:
             return ""
         return str(data["content"][0]["text"])
 
-    async def _call_gemini(self, prompt: str, system: str, temperature: float) -> str:
+    async def _call_gemini(self, prompt: str, system: str, temperature: float, model: str) -> str:
         import aiohttp
 
         api_key = os.environ["GEMINI_API_KEY"]
         url = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"gemini-1.5-flash:generateContent?key={api_key}"
+            f"{model}:generateContent?key={api_key}"
         )
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],

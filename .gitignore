@@ -39,8 +39,13 @@ mnt/
 memory/*.db
 memory/*.ics
 data/chroma/
+chroma_db/
+chromadb/
+.chroma/
 workspace/
 data/
+runner_output.txt
+help_output.txt
 # Windows binaries that snuck in
 scripts/*.exe
 scripts/*.dll
@@ -56,7 +61,8 @@ Thumbs.db
 # Test artifacts
 .pytest_cache/
 .mypy_cache/
-.coverage
+.ruff_cache/
+.coverage*
 htmlcov/
 .tox/
 pytest-of-*/
@@ -68,6 +74,8 @@ __pycache__/
 # Data
 tmp/
 temp/
+scratch/
+scratch_resource_cleanup_probe/
 *.sqlite3
 *.db
 *.log
@@ -88,3 +96,19 @@ scripts/
 /runtime/
 bench/
 workspace/
+
+# Temporary and run outputs
+test_out.txt
+runner_output.txt
+help_output.txt
+requirements.lock.utf8
+test_logger.py
+
+# Recovery/Audit artifacts
+FILE_LOCKS.md
+RECOVERY_LOG.md
+ARCHITECTURE_STATE.json
+ISSUE_REGISTRY.md
+ISSUE_REGISTRY.corrupted.md
+audit/
+

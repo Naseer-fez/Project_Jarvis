@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 import sys
 from typing import Any
 
 from core.introspection.health import HealthStatus, run_lightweight_health_check
+from core.runtime.paths import _resolve_path
 from core.runtime.bootstrap import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_SHUTDOWN_TIMEOUT_S,
@@ -23,7 +25,6 @@ from core.runtime.bootstrap import (
     _print_model_inventory,
     _resolve_dashboard_binding,
     _resolve_runtime_mode,
-    _resolve_path,
     _resolve_voice_enabled,
     _run_startup_health_check,
     _safe_audit,
@@ -215,10 +216,12 @@ async def async_run(
         _log_health_report(log, light_report, prefix="Lightweight")
         _uprint(light_report.summary())
         has_failures = bool(getattr(light_report, "has_failures", False))
-        if bool(getattr(args, "strict_health", False)) and has_failures:
-            log.error("Health check failed in strict mode")
-            return ExitCode.STARTUP_ERROR
-        return ExitCode.STARTUP_ERROR if has_failures else ExitCode.OK
+        if has_failures:
+            if bool(getattr(args, "strict_health", False)):
+                log.error("Health check failed in strict mode")
+                return ExitCode.STARTUP_ERROR
+            log.warning("Health check reported failures")
+        return ExitCode.OK
 
     preflight_report = run_lightweight_health_check(config)
     _log_health_report(log, preflight_report, prefix="Preflight")
@@ -249,6 +252,9 @@ async def async_run(
 
         await controller.start()
 
+        if shutdown._event.is_set():
+            return ExitCode.OK
+
         verbose_health = not headless
         health_report = _run_startup_health_check(controller, verbose=verbose_health)
         if getattr(args, "strict_health", False) and bool(
@@ -269,6 +275,9 @@ async def async_run(
             await dashboard.start(controller, health_report=health_report)
             _uprint(f"Dashboard: http://{host}:{port}")
 
+        if shutdown._event.is_set():
+            return ExitCode.OK
+
         phase = "runtime"
         exit_code = await _run_runtime_loop(
             controller,
@@ -278,6 +287,10 @@ async def async_run(
         )
 
     except asyncio.CancelledError:
+        request_shutdown = getattr(shutdown, "request_shutdown", None)
+        if callable(request_shutdown):
+            with contextlib.suppress(Exception):
+                request_shutdown("cancelled")
         log.info("Main task cancelled during %s", phase)
         exit_code = ExitCode.OK
     except Exception:
@@ -304,13 +317,20 @@ async def async_run(
                     shutdown_timeout,
                 )
                 exit_code = ExitCode.GENERIC_ERROR
+            except asyncio.CancelledError:
+                log.info("Controller shutdown cancelled")
             except Exception:
                 log.exception("Error during controller shutdown")
                 exit_code = ExitCode.GENERIC_ERROR
 
         if controller is not None:
             summary_fn = getattr(controller, "session_summary", None)
-            session_summary = summary_fn() if callable(summary_fn) else {}
+            session_summary = {}
+            if callable(summary_fn):
+                try:
+                    session_summary = summary_fn() or {}
+                except Exception:
+                    log.debug("Failed to collect session summary", exc_info=True)
             payload = {
                 "exit_code": exit_code,
                 "phase": phase,

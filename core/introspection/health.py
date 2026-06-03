@@ -10,7 +10,7 @@ from pathlib import Path
 from urllib.request import urlopen
 
 from core.ops.production import is_production, validate_production_config
-from core.runtime.bootstrap import _resolve_path
+from core.runtime.paths import _resolve_path
 
 
 class HealthStatus(str, Enum):
@@ -377,8 +377,8 @@ def _collect_config_checks(config) -> list[HealthCheck]:
 def _ollama_check(base_url: str) -> HealthCheck:
     reachable = False
     try:
-        urlopen(f"{base_url}/api/tags")
-        reachable = True
+        with urlopen(f"{base_url}/api/tags", timeout=5):
+            reachable = True
     except Exception:
         reachable = False
     return HealthCheck(
@@ -407,6 +407,38 @@ def run_startup_health_check(controller, verbose: bool = False) -> HealthReport:
         )
     )
 
+    # Preflight Import dependency validation
+    try:
+        from core.runtime.import_validator import StartupValidator
+        proj_root = Path(__file__).resolve().parents[2]
+        validator = StartupValidator(proj_root)
+        preflight = validator.run_preflight_checks()
+        if preflight["status"] == "GREEN":
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.OK,
+                    message="all critical submodules loaded successfully",
+                )
+            )
+        else:
+            failed_names = [f["module"] for f in preflight["failed"]]
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.FAIL,
+                    message=f"failed modules: {', '.join(failed_names)}",
+                )
+            )
+    except Exception as exc:
+        checks.append(
+            HealthCheck(
+                name="import_dependency_health",
+                status=HealthStatus.WARN,
+                message=f"failed to run import preflight validation: {exc}",
+            )
+        )
+
     base_url = getattr(getattr(controller, "llm", None), "base_url", "http://localhost:11434")
     checks.append(_ollama_check(str(base_url)))
     return HealthReport(checks=checks)
@@ -414,6 +446,39 @@ def run_startup_health_check(controller, verbose: bool = False) -> HealthReport:
 
 def run_lightweight_health_check(config) -> HealthReport:
     checks = _collect_config_checks(config)
+
+    # Lightweight import dependency validation
+    try:
+        from core.runtime.import_validator import StartupValidator
+        proj_root = Path(__file__).resolve().parents[2]
+        validator = StartupValidator(proj_root)
+        preflight = validator.run_preflight_checks()
+        if preflight["status"] == "GREEN":
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.OK,
+                    message="all critical submodules loaded successfully",
+                )
+            )
+        else:
+            failed_names = [f["module"] for f in preflight["failed"]]
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.FAIL,
+                    message=f"failed modules: {', '.join(failed_names)}",
+                )
+            )
+    except Exception as exc:
+        checks.append(
+            HealthCheck(
+                name="import_dependency_health",
+                status=HealthStatus.WARN,
+                message=f"failed to run import preflight validation: {exc}",
+            )
+        )
+
     base_url = _config_get(config, "ollama", "base_url", "http://localhost:11434")
     checks.append(_ollama_check(base_url))
     return HealthReport(checks=checks)

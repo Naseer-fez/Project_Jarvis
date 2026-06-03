@@ -3,6 +3,7 @@ Built-in tools for Jarvis.
 All tools are async coroutines and sandboxed to allowed directories.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -38,7 +39,7 @@ def _assert_safe_path(path_str: str, write_op: bool = False) -> Path:
         sandbox_str = sandbox_str.lower()
 
     # Must be inside project sandbox
-    if not resolved_str.startswith(sandbox_str):
+    if not (resolved_str == sandbox_str or resolved_str.startswith(sandbox_str + os.sep) or resolved_str.startswith(sandbox_str + "/")):
         raise PermissionError(f"Path outside sandbox: {resolved}")
 
     # Symlink must not escape sandbox
@@ -47,7 +48,7 @@ def _assert_safe_path(path_str: str, write_op: bool = False) -> Path:
         link_target_str = str(link_target)
         if os.name == "nt":
             link_target_str = link_target_str.lower()
-        if not link_target_str.startswith(sandbox_str):
+        if not (link_target_str == sandbox_str or link_target_str.startswith(sandbox_str + os.sep) or link_target_str.startswith(sandbox_str + "/")):
             raise PermissionError(f"Symlink escapes sandbox: {link_target}")
 
     # Also check legacy ALLOWED_DIRECTORIES for backward compatibility
@@ -70,7 +71,7 @@ def _assert_safe_path(path_str: str, write_op: bool = False) -> Path:
         allowed_str = str(allowed)
         if os.name == "nt":
             allowed_str = allowed_str.lower()
-        if target_str.startswith(allowed_str):
+        if target_str == allowed_str or target_str.startswith(allowed_str + os.sep) or target_str.startswith(allowed_str + "/"):
             return target
         try:
             target.relative_to(allowed)
@@ -110,38 +111,50 @@ async def get_system_stats() -> str:
 async def list_directory(path: str = "./workspace") -> str:
     """Lists files in a sandboxed directory."""
     safe = _assert_safe_path(path, write_op=False)
-    if not safe.exists():
-        return f"Directory '{path}' does not exist."
-    entries = sorted(safe.iterdir(), key=lambda p: (p.is_file(), p.name))
-    lines = []
-    for e in entries:
-        tag = "[DIR] " if e.is_dir() else "[FILE]"
-        size = f" ({e.stat().st_size} bytes)" if e.is_file() else ""
-        lines.append(f"{tag} {e.name}{size}")
-    return "\n".join(lines) if lines else "(empty directory)"
+    
+    def _list_dir():
+        if not safe.exists():
+            return f"Directory '{path}' does not exist."
+        entries = sorted(safe.iterdir(), key=lambda p: (p.is_file(), p.name))
+        lines = []
+        for e in entries:
+            tag = "[DIR] " if e.is_dir() else "[FILE]"
+            size = f" ({e.stat().st_size} bytes)" if e.is_file() else ""
+            lines.append(f"{tag} {e.name}{size}")
+        return "\n".join(lines) if lines else "(empty directory)"
+        
+    return await asyncio.to_thread(_list_dir)
 
 
 async def read_file(path: str) -> str:
     """Reads a text file from the sandbox."""
     safe = _assert_safe_path(path, write_op=False)
-    if not safe.exists():
-        return f"File '{path}' not found."
-    if not safe.is_file():
-        return f"'{path}' is not a file."
-    size = os.path.getsize(safe)
-    if size > 10 * 1024 * 1024:   # 10 MB hard limit
-        raise ValueError(f"File too large: {size} bytes (max 10MB)")
-    if size > 100_000:
-        return f"File too large ({size} bytes). Max 100KB."
-    return safe.read_text(encoding="utf-8", errors="replace")
+    
+    def _read_file():
+        if not safe.exists():
+            return f"File '{path}' not found."
+        if not safe.is_file():
+            return f"'{path}' is not a file."
+        size = os.path.getsize(safe)
+        if size > 10 * 1024 * 1024:   # 10 MB hard limit
+            raise ValueError(f"File too large: {size} bytes (max 10MB)")
+        if size > 100_000:
+            return f"File too large ({size} bytes). Max 100KB."
+        return safe.read_text(encoding="utf-8", errors="replace")
+        
+    return await asyncio.to_thread(_read_file)
 
 
 async def write_file_safe(path: str, content: str) -> str:
     """Writes content to a file in the sandbox (creates if needed)."""
     safe = _assert_safe_path(path, write_op=True)
-    safe.parent.mkdir(parents=True, exist_ok=True)
-    safe.write_text(content, encoding="utf-8")
-    return f"Successfully wrote {len(content)} characters to '{path}'."
+    
+    def _write_file():
+        safe.parent.mkdir(parents=True, exist_ok=True)
+        safe.write_text(content, encoding="utf-8")
+        return f"Successfully wrote {len(content)} characters to '{path}'."
+        
+    return await asyncio.to_thread(_write_file)
 
 
 # ── Memory tools ─────────────────────────────────────────────────────────────
@@ -177,10 +190,13 @@ async def log_event(content: str, category: str = "general") -> str:
     if len(_memory_store) > 1000:
         _memory_store.pop(0)
 
-    log_path = Path("./outputs/memory_log.jsonl")
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(log_path, "a", encoding="utf-8") as f:
-        f.write(json.dumps(entry) + "\n")
+    def _write_log():
+        log_path = Path("./outputs/memory_log.jsonl")
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+            
+    await asyncio.to_thread(_write_log)
 
     return f"Event logged: [{category}] {content}"
 
@@ -216,123 +232,87 @@ async def sort_files(directory: str = "./workspace", output_dir: str = "./worksp
     safe_dir = _assert_safe_path(directory, write_op=False)
     safe_output = _assert_safe_path(output_dir, write_op=True)
 
-    if not safe_dir.exists():
-        return f"Source directory '{directory}' does not exist."
-    if not safe_dir.is_dir():
-        return f"Source path '{directory}' is not a directory."
-
-    # List all files (excluding directories) sorted alphabetically
-    files = sorted([e for e in safe_dir.iterdir() if e.is_file()], key=lambda x: x.name)
-    if not files:
-        return f"No files found to sort in '{directory}'."
-
-    sorted_count = 0
-    results = []
-
-    for file_path in files:
-        # Avoid sorting configuration or special system files in project root
-        if file_path.name in {".env", "jarvis_env", "jarvis_voice_section.ini", "desktop_automation_report.md"}:
-            continue
-        
-        # Read a snippet of the file content
-        snippet = ""
-        try:
-            size = file_path.stat().st_size
-            if size > 0:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-                    snippet = f.read(2000)
-        except Exception as exc:
-            logger.warning(f"Could not read content snippet from {file_path.name}: {exc}")
-
-        # Classification prompt
-        prompt = (
-            "Analyze the following file name and content snippet. Determine the best, most descriptive single-word or short phrase folder name to categorize this file. "
-            "Examples of folder names: 'code', 'documentation', 'finance', 'logs', 'images', 'data', 'others'.\n\n"
-            f"File Name: {file_path.name}\n"
-            f"Snippet:\n{snippet}\n\n"
-            "Respond with ONLY the folder name. Do NOT write any thinking process, explanation, quotes, or markdown. Output only the category name."
-        )
-
-        category = "others"
-        if _LLM_CLIENT is not None:
-            try:
-                raw_response = await _LLM_CLIENT.complete(
-                    prompt,
-                    system="You are a file organization assistant. You only output a single clean directory name.",
-                    temperature=0.1,
-                    task_type="chat"
-                )
-                # Clean LLM response (remove thinking block, markdown formatting, quotes, etc.)
-                import re
-                cleaned = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
-                cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", cleaned)
-                cleaned = re.sub(r"\n?```$", "", cleaned)
-                # Keep only word characters (alphanumeric and underscore/hyphen)
-                cleaned = re.sub(r"[^\w\s-]", "", cleaned).strip()
-                # Replace multiple spaces/newlines with a single underscore or hyphen
-                cleaned = re.sub(r"\s+", "_", cleaned)
-                if cleaned:
-                    category = cleaned.lower()
-            except Exception as exc:
-                logger.warning(f"LLM classification failed for {file_path.name}, using fallback: {exc}")
-                category = _fallback_classify_file(file_path)
-        else:
-            category = _fallback_classify_file(file_path)
-
-        # Ensure category folder exists
-        target_folder = safe_output / category
-        try:
-            target_folder.mkdir(parents=True, exist_ok=True)
-            target_file_path = target_folder / file_path.name
+    def _sort():
+        if not safe_dir.exists():
+            return f"Source directory '{directory}' does not exist."
+        if not safe_dir.is_dir():
+            return f"Source path '{directory}' is not a directory."
+    
+        # List all files (excluding directories) sorted alphabetically
+        files = sorted([e for e in safe_dir.iterdir() if e.is_file()], key=lambda x: x.name)
+        if not files:
+            return f"No files found to sort in '{directory}'."
+    
+        sorted_count = 0
+        results = []
+    
+        for file_path in files:
+            # Avoid sorting configuration or special system files in project root
+            if file_path.name in {".env", "jarvis_env", "jarvis_voice_section.ini", "desktop_automation_report.md"}:
+                continue
             
-            # Move the file
-            import shutil
-            shutil.move(str(file_path), str(target_file_path))
-            sorted_count += 1
-            results.append(f"{file_path.name} -> {category}/")
-        except Exception as exc:
-            results.append(f"FAILED to move {file_path.name}: {exc}")
-
-    return f"Successfully sorted {sorted_count}/{len(files)} files.\nDetails:\n" + "\n".join(results)
+            category = _fallback_classify_file(file_path)
+    
+            # Ensure category folder exists
+            target_folder = safe_output / category
+            try:
+                target_folder.mkdir(parents=True, exist_ok=True)
+                target_file_path = target_folder / file_path.name
+                
+                # Move the file
+                import shutil
+                shutil.move(str(file_path), str(target_file_path))
+                sorted_count += 1
+                results.append(f"{file_path.name} -> {category}/")
+            except Exception as exc:
+                results.append(f"FAILED to move {file_path.name}: {exc}")
+    
+        return f"Successfully sorted {sorted_count}/{len(files)} files.\nDetails:\n" + "\n".join(results)
+        
+    return await asyncio.to_thread(_sort)
 
 
 async def find_files(pattern: str, directory: str = "./workspace") -> str:
     """Finds files matching a wildcard pattern in a sandboxed directory (recursive)."""
     safe_dir = _assert_safe_path(directory, write_op=False)
-    if not safe_dir.exists():
-        return f"Directory '{directory}' does not exist."
     
-    matches = []
-    ignored_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv", "jarvis_env"}
-    
-    for root, dirs, files in os.walk(safe_dir):
-        dirs[:] = [d for d in dirs if d not in ignored_dirs]
+    def _find():
+        if not safe_dir.exists():
+            return f"Directory '{directory}' does not exist."
         
-        try:
-            _assert_safe_path(root, write_op=False)
-        except PermissionError:
-            continue
+        matches = []
+        ignored_dirs = {"__pycache__", ".git", "node_modules", ".venv", "venv", "jarvis_env"}
+        
+        for root, dirs, files in os.walk(safe_dir):
+            dirs[:] = [d for d in dirs if d not in ignored_dirs]
             
-        import fnmatch
-        for filename in fnmatch.filter(files, pattern):
-            file_path = Path(root) / filename
             try:
-                rel_path = file_path.relative_to(safe_dir)
-                matches.append(f"[FILE] {rel_path} ({file_path.stat().st_size} bytes)")
-            except Exception:
-                pass
+                _assert_safe_path(root, write_op=False)
+            except PermissionError:
+                continue
                 
-        for dirname in fnmatch.filter(dirs, pattern):
-            dir_path = Path(root) / dirname
-            try:
-                rel_path = dir_path.relative_to(safe_dir)
-                matches.append(f"[DIR]  {rel_path}")
-            except Exception:
-                pass
-                
-    if not matches:
-        return f"No matches found for '{pattern}' in '{directory}'."
-    return "\n".join(matches)
+            import fnmatch
+            for filename in fnmatch.filter(files, pattern):
+                file_path = Path(root) / filename
+                try:
+                    rel_path = file_path.relative_to(safe_dir)
+                    matches.append(f"[FILE] {rel_path} ({file_path.stat().st_size} bytes)")
+                except Exception:
+                    pass
+                    
+            for dirname in fnmatch.filter(dirs, pattern):
+                dir_path = Path(root) / dirname
+                try:
+                    rel_path = dir_path.relative_to(safe_dir)
+                    matches.append(f"[DIR]  {rel_path}")
+                except Exception:
+                    pass
+                    
+        if not matches:
+            return f"No matches found for '{pattern}' in '{directory}'."
+        return "\n".join(matches)
+        
+    return await asyncio.to_thread(_find)
 
 
 async def copy_file(source: str, destination: str) -> str:
@@ -340,15 +320,18 @@ async def copy_file(source: str, destination: str) -> str:
     safe_src = _assert_safe_path(source, write_op=False)
     safe_dst = _assert_safe_path(destination, write_op=True)
     
-    if not safe_src.exists():
-        return f"Source file '{source}' does not exist."
-    if not safe_src.is_file():
-        return f"Source path '{source}' is not a file."
+    def _copy():
+        if not safe_src.exists():
+            return f"Source file '{source}' does not exist."
+        if not safe_src.is_file():
+            return f"Source path '{source}' is not a file."
+            
+        safe_dst.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.copy2(str(safe_src), str(safe_dst))
+        return f"Successfully copied '{source}' to '{destination}'."
         
-    safe_dst.parent.mkdir(parents=True, exist_ok=True)
-    import shutil
-    shutil.copy2(str(safe_src), str(safe_dst))
-    return f"Successfully copied '{source}' to '{destination}'."
+    return await asyncio.to_thread(_copy)
 
 
 async def move_file(source: str, destination: str) -> str:
@@ -356,20 +339,27 @@ async def move_file(source: str, destination: str) -> str:
     safe_src = _assert_safe_path(source, write_op=True)
     safe_dst = _assert_safe_path(destination, write_op=True)
     
-    if not safe_src.exists():
-        return f"Source '{source}' does not exist."
+    def _move():
+        if not safe_src.exists():
+            return f"Source '{source}' does not exist."
+            
+        safe_dst.parent.mkdir(parents=True, exist_ok=True)
+        import shutil
+        shutil.move(str(safe_src), str(safe_dst))
+        return f"Successfully moved '{source}' to '{destination}'."
         
-    safe_dst.parent.mkdir(parents=True, exist_ok=True)
-    import shutil
-    shutil.move(str(safe_src), str(safe_dst))
-    return f"Successfully moved '{source}' to '{destination}'."
+    return await asyncio.to_thread(_move)
 
 
 async def create_directory(path: str) -> str:
     """Creates a new directory (and any parent directories) in the sandbox."""
     safe = _assert_safe_path(path, write_op=True)
-    safe.mkdir(parents=True, exist_ok=True)
-    return f"Successfully created directory '{path}'."
+    
+    def _create():
+        safe.mkdir(parents=True, exist_ok=True)
+        return f"Successfully created directory '{path}'."
+        
+    return await asyncio.to_thread(_create)
 
 
 async def fast_search(path: str = "all", query: str = "", content: str = "", threads: int = 8, case_sensitive: bool = False, no_skip: bool = False, max_results: int = 1000) -> str:
@@ -378,8 +368,18 @@ async def fast_search(path: str = "all", query: str = "", content: str = "", thr
     Highly optimized multi-threaded execution.
     """
     from core.tools.fast_search_tool import run_fast_search
+    if path == "all":
+        path_to_check = str(_PROJECT_ROOT)
+    else:
+        path_to_check = path
+    
     try:
-        res = await run_fast_search(path, query, content, threads, case_sensitive, no_skip, max_results)
+        safe_path = _assert_safe_path(path_to_check, write_op=False)
+    except (PermissionError, ValueError) as e:
+        return f"Error: Search path is outside the sandbox. {e}"
+
+    try:
+        res = await run_fast_search(str(safe_path), query, content, threads, case_sensitive, no_skip, max_results)
         results = res.get("results", [])
         summary = res.get("summary", {})
         
@@ -410,14 +410,25 @@ async def convert_file_format(source_path: str, target_format: str, output_path:
     """
     from core.tools.universal_converter import perform_conversion
     try:
-        dest_path = perform_conversion(source_path, target_format, output_path)
+        safe_src = _assert_safe_path(source_path, write_op=False)
+        if output_path:
+            safe_dst = _assert_safe_path(output_path, write_op=True)
+        else:
+            ext_dst = f".{target_format.lower().lstrip('.')}"
+            dst_path = Path(source_path).with_suffix(ext_dst)
+            safe_dst = _assert_safe_path(str(dst_path), write_op=True)
+    except (PermissionError, ValueError) as e:
+        return f"Error: Path outside sandbox. {e}"
+
+    try:
+        dest_path = perform_conversion(str(safe_src), target_format, str(safe_dst))
         return f"File successfully converted! Saved to: {dest_path}"
     except Exception as e:
         return f"Error converting file: {e}"
 
 
 def register_all_tools(router, llm=None, config=None) -> None:
-    """Register all built-in tools with a ToolRouter instance."""
+    """Register all built-in tools with a CapabilityRegistry instance."""
     global _LLM_CLIENT, _CONFIG
     _LLM_CLIENT = llm
     _CONFIG = config

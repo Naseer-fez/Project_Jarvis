@@ -82,71 +82,81 @@ struct ProcessResult {
     double elapsedSeconds = 0.0;
 };
 
-// Function to run a process in Windows and capture its stdout/stderr
 ProcessResult runProcess(const std::wstring& appPath, const std::wstring& args) {
     ProcessResult result;
     
     // Create Pipe
     HANDLE hChildStd_OUT_Rd = NULL;
     HANDLE hChildStd_OUT_Wr = NULL;
-    SECURITY_ATTRIBUTES saAttr;
-    saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
-    saAttr.bInheritHandle = TRUE;
-    saAttr.lpSecurityDescriptor = NULL;
-
-    if (!CreatePipe(&hChildStd_OUT_Rd, &hChildStd_OUT_Wr, &saAttr, 0)) {
-        std::cerr << "Error: CreatePipe failed." << std::endl;
-        return result;
-    }
-
-    if (!SetHandleInformation(hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0)) {
-        std::cerr << "Error: SetHandleInformation failed." << std::endl;
-        CloseHandle(hChildStd_OUT_Rd);
-        CloseHandle(hChildStd_OUT_Wr);
-        return result;
-    }
-
-    STARTUPINFOW si;
-    ZeroMemory(&si, sizeof(STARTUPINFO));
-    si.cb = sizeof(STARTUPINFO);
-    si.hStdError = hChildStd_OUT_Wr;
-    si.hStdOutput = hChildStd_OUT_Wr;
-    si.dwFlags |= STARTF_USESTDHANDLES;
-
     PROCESS_INFORMATION pi;
     ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
+    BOOL bSuccess = FALSE;
 
-    // Construct command line
-    std::wstring cmd = L"\"" + appPath + L"\" " + args;
-    std::vector<wchar_t> cmdBuffer(cmd.begin(), cmd.end());
-    cmdBuffer.push_back(0); // null terminator
+    {
+        // Mutex to serialize process creation and handle closing.
+        // This prevents other threads' concurrent child processes from inheriting this thread's write handle.
+        static std::mutex spawnMutex;
+        std::lock_guard<std::mutex> lock(spawnMutex);
 
-    // Start timing
-    auto startTime = std::chrono::high_resolution_clock::now();
+        SECURITY_ATTRIBUTES saAttr;
+        saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+        saAttr.bInheritHandle = TRUE;
+        saAttr.lpSecurityDescriptor = NULL;
 
-    BOOL bSuccess = CreateProcessW(
-        NULL,
-        cmdBuffer.data(),
-        NULL,          // process security attributes
-        NULL,          // primary thread security attributes
-        TRUE,          // handles are inherited
-        0,             // creation flags
-        NULL,          // use parent's environment
-        NULL,          // use parent's current directory
-        &si,           // STARTUPINFO pointer
-        &pi            // receives PROCESS_INFORMATION
-    );
+        if (!CreatePipe(&hChildStd_OUT_Rd, &hChildStd_OUT_Wr, &saAttr, 0)) {
+            std::cerr << "Error: CreatePipe failed." << std::endl;
+            return result;
+        }
 
-    // Close the write end of the pipe in parent so reading will EOF when child terminates
-    CloseHandle(hChildStd_OUT_Wr);
+        if (!SetHandleInformation(hChildStd_OUT_Rd, HANDLE_FLAG_INHERIT, 0)) {
+            std::cerr << "Error: SetHandleInformation failed." << std::endl;
+            CloseHandle(hChildStd_OUT_Rd);
+            CloseHandle(hChildStd_OUT_Wr);
+            return result;
+        }
+
+        STARTUPINFOW si;
+        ZeroMemory(&si, sizeof(STARTUPINFO));
+        si.cb = sizeof(STARTUPINFO);
+        si.hStdError = hChildStd_OUT_Wr;
+        si.hStdOutput = hChildStd_OUT_Wr;
+        si.dwFlags |= STARTF_USESTDHANDLES;
+
+        // Construct command line
+        std::wstring cmd = L"\"" + appPath + L"\" " + args;
+        std::vector<wchar_t> cmdBuffer(cmd.begin(), cmd.end());
+        cmdBuffer.push_back(0); // null terminator
+
+        bSuccess = CreateProcessW(
+            NULL,
+            cmdBuffer.data(),
+            NULL,          // process security attributes
+            NULL,          // primary thread security attributes
+            TRUE,          // handles are inherited
+            0,             // creation flags
+            NULL,          // use parent's environment
+            NULL,          // use parent's current directory
+            &si,           // STARTUPINFO pointer
+            &pi            // receives PROCESS_INFORMATION
+        );
+
+        // Close the write end of the pipe immediately while holding the mutex.
+        // Since we are holding the mutex, no other thread can execute CreateProcessW
+        // in this split second and leak/inherit this inheritable write handle!
+        CloseHandle(hChildStd_OUT_Wr);
+    }
 
     if (!bSuccess) {
+        std::wstring cmd = L"\"" + appPath + L"\" " + args;
         std::cerr << "Error: CreateProcessW failed for command: " << narrow(cmd) << std::endl;
         CloseHandle(hChildStd_OUT_Rd);
         return result;
     }
 
-    // Read output from the pipe buffer
+    // Start timing
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    // Read output from the pipe buffer (outside the spawn mutex so other threads can start their processes!)
     DWORD dwRead;
     CHAR chBuf[4096];
     std::string outStr = "";

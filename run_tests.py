@@ -6,7 +6,6 @@ Handles automatic compilation of the C++ runner if source files change,
 and falls back to standard pytest if a C++ compiler is not available.
 """
 
-import os
 import sys
 import shutil
 import subprocess
@@ -37,7 +36,7 @@ def compile_runner() -> bool:
         ]
     else:
         cmd = [
-            "g++", "-std=std=c++17", "-O3",
+            "g++", "-std=c++17", "-O3",
             str(CPP_SRC), "-lpthread",
             "-o", str(CPP_BIN)
         ]

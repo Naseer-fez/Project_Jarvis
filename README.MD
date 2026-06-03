@@ -74,9 +74,6 @@ Edit `.env` and add your API keys (see [API Keys Guide](#api-keys-guide) below).
 # Standard text mode
 python main.py
 
-# Text-only (explicitly no voice)
-python Main_No_Voice.py
-
 # With voice input/output
 python main.py --voice
 
@@ -87,9 +84,9 @@ python main.py --gui
 python main.py --health-check
 
 # Windows PowerShell shortcut
-.\run-jarvis.ps1
-.\run-jarvis.ps1 --voice
-.\run-jarvis.ps1 --gui
+.\Start.ps1
+.\Start.ps1 --voice
+.\Start.ps1 --gui
 ```
 
 ### Live Automation + RAG Dropbox
@@ -304,7 +301,7 @@ fallback_model = gemini-2.5-flash
 ```
 Jarvis/
 ├── main.py                    # Entry point
-├── main_connector.py          # Bootstrap wiring
+├── Start.ps1                  # Windows launcher
 ├── config/
 │   └── jarvis.ini             # Runtime configuration
 ├── core/

@@ -18,10 +18,13 @@ class NotificationManager:
         if voice_layer is not None:
             try:
                 import asyncio
+                import inspect
 
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
-                    loop.create_task(voice_layer.speak(message))
+                    res = voice_layer.speak(message)
+                    if inspect.iscoroutine(res):
+                        loop.create_task(res)
             except Exception:
                 pass
 

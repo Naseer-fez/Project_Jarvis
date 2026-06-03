@@ -29,7 +29,7 @@ class HardwareDevice:
             result = await loop.run_in_executor(None, self.controller.send, full_command)
             return result
         except Exception as e:
-            logger.error("Failed to send command to %s: %s", self.name, e)
+            logger.error("Failed to send command to %s: %s", self.name, e, exc_info=True)
             raise
 
     async def firmware_ping(self) -> bool:
@@ -53,7 +53,7 @@ class DeviceRegistry:
             if controller.enabled:
                 self.register_device("main_arduino", controller)
         except Exception as e:
-            logger.error("Failed to load hardware devices from config: %s", e)
+            logger.error("Failed to load hardware devices from config: %s", e, exc_info=True)
 
     def register_device(self, name: str, controller: SerialController) -> None:
         self._devices[name] = HardwareDevice(name, controller)

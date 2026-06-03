@@ -10,7 +10,6 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -164,28 +163,12 @@ class LLMClientV2:
                     prompt, system=system, temperature=temperature
                 )
             except Exception as cloud_exc:
-                logger.error("Cloud fallback also failed: %s", cloud_exc)
+                logger.error("Cloud fallback also failed: %s", cloud_exc, exc_info=True)
 
         return ""
 
     # ── JSON completion helper ───────────────────────────────────────────
 
-    async def complete_json(
-        self,
-        prompt: str,
-        system: str = "",
-        temperature: float = 0.0,
-        task_type: str = "planning",
-    ) -> dict[str, Any] | None:
-        raw = await self.complete(prompt, system=system, temperature=temperature, task_type=task_type)
-        if not raw:
-            return None
-
-        try:
-            return json.loads(_strip_fences(raw))
-        except json.JSONDecodeError as exc:
-            logger.error("JSON parse failed: %s", exc)
-            return None
 
     # ── Chat interface (backward-compat for controller / agent loop) ─────
 
@@ -199,7 +182,7 @@ class LLMClientV2:
     ) -> str:
         """Async version — use this inside any async context (agent loop, controller)."""
         if trace_id:
-            logger.info("[trace=%s] Client chat_async starting", trace_id)
+            logger.info("Client chat_async starting", extra={"trace_id": trace_id})
 
         system = await self._build_system(
             query=query_for_memory,
@@ -226,30 +209,9 @@ class LLMClientV2:
             )
             return future.result()
 
-    def chat_stream(
-        self,
-        messages: list[dict[str, Any]],
-        query_for_memory: str = "",
-        profile_summary: str = "",
-        workspace_path: str = "",
-    ):
-        response = self.chat(messages, query_for_memory, profile_summary, workspace_path)
-        yield response
 
     # ── Health check ─────────────────────────────────────────────────────
 
-    def is_ollama_running(self) -> bool:
-        """Sync health check — runs in its own thread to avoid event loop conflicts."""
-        import concurrent.futures
-
-        async def _check() -> bool:
-            return await self._ollama.is_running()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            try:
-                return pool.submit(asyncio.run, _check()).result(timeout=5)
-            except Exception:
-                return False
 
     # ── Internal helpers ─────────────────────────────────────────────────
 

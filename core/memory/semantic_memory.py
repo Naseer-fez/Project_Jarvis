@@ -114,7 +114,7 @@ class SemanticMemory:
             return True
 
         except Exception as e:
-            logger.error(f"SemanticMemory initialization failed: {e}")
+            logger.error(f"SemanticMemory initialization failed: {e}", exc_info=True)
             return False
 
     async def _ensure_init(self):
@@ -384,7 +384,7 @@ class SemanticMemory:
             logger.info(f"Cleared collection: {collection_name}")
             return True
         except Exception as e:
-            logger.error(f"Failed to clear collection {collection_name}: {e}")
+            logger.error(f"Failed to clear collection {collection_name}: {e}", exc_info=True)
             return False
 
     # ── Stats ─────────────────────────────────────────────────────────────────
@@ -406,3 +406,15 @@ class SemanticMemory:
 
     def is_ready(self) -> bool:
         return self._initialized
+
+    async def close(self) -> None:
+        """Close/stop the ChromaDB client if it has one."""
+        if self._client is not None:
+            try:
+                if hasattr(self._client, "_system") and hasattr(self._client._system, "stop"):
+                    await asyncio.to_thread(self._client._system.stop)
+            except Exception:
+                pass
+            self._client = None
+            self._initialized = False
+

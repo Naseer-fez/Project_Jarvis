@@ -62,7 +62,7 @@ class VisionTool:
             with open(image_path, "rb") as f:
                 img_b64 = base64.b64encode(f.read()).decode()
 
-            resp = requests.post(
+            with requests.post(
                 f"{self._base_url}/api/generate",
                 json={
                     "model": self._model,
@@ -71,9 +71,9 @@ class VisionTool:
                     "stream": False,
                 },
                 timeout=30,
-            )
-            resp.raise_for_status()
-            return str(resp.json().get("response", ""))
+            ) as resp:
+                resp.raise_for_status()
+                return str(resp.json().get("response", ""))
         except Exception as exc:  # noqa: BLE001
             logger.warning("LLaVA call failed: %s", exc)
             return f"[Vision unavailable: {exc}]"

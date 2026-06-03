@@ -18,7 +18,7 @@ class WhatsAppIntegration(BaseIntegration):
         try:
             import twilio  # noqa: F401
             return all(bool(os.environ.get(key)) for key in self.required_config)
-        except Exception:
+        except ImportError:
             return False
 
     def get_tools(self) -> list[dict[str, Any]]:
@@ -48,8 +48,8 @@ class WhatsAppIntegration(BaseIntegration):
             data = await loop.run_in_executor(
                 None,
                 lambda: self._send_whatsapp(
-                    to=str(args.get("to", "")),
-                    message=str(args.get("message", "")),
+                    to=str(args.get("to") or ""),
+                    message=str(args.get("message") or ""),
                 ),
             )
             return {"success": True, "data": data, "error": None}

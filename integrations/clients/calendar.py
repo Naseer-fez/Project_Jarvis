@@ -55,8 +55,8 @@ class CalendarIntegration(BaseIntegration):
                 data = await loop.run_in_executor(
                     None,
                     lambda: self._add_event(
-                        title=str(args.get("title", "")),
-                        date=str(args.get("date", "")),
+                        title=str(args.get("title") or ""),
+                        date=str(args.get("date") or ""),
                         time=str(args.get("time", "09:00") or "09:00"),
                         duration_minutes=int(args.get("duration_minutes", 60) or 60),
                     ),

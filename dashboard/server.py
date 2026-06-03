@@ -324,11 +324,23 @@ def _ws_payload() -> dict[str, Any]:
 @app.get("/health")
 async def health() -> dict[str, Any]:
     """Lightweight readiness probe. Intentionally unauthenticated."""
-    overall = "ok" if _state.state not in ("OFFLINE", "ERROR") else "degraded"
+    from core.introspection.health import run_lightweight_health_check
+    import dataclasses
+    import asyncio
+    import time
+    
+    config = getattr(_controller, "config", None) if _controller else None
+    
+    def _get_report():
+        return run_lightweight_health_check(config)
+        
+    report = await asyncio.to_thread(_get_report)
+    
     return {
-        "ok": overall == "ok",
+        "ok": report.is_healthy,
         "state": _state.state,
         "uptime_seconds": round(time.time() - _state._start_time, 1),
+        "report": dataclasses.asdict(report),
     }
 
 
@@ -435,9 +447,8 @@ async def memory_page(request: Request, q: str = ""):
         message = "No matching memories found." if q else "No memories found yet."
 
     return templates.TemplateResponse(
-        request,
         "memory.html",
-        {"memories": memories, "q": q, "message": message},
+        {"request": request, "memories": memories, "q": q, "message": message},
     )
 
 
@@ -702,7 +713,7 @@ async def command(request: Request, body: CommandRequest):
     text = body.text
     import uuid
     trace_id = uuid.uuid4().hex[:8]
-    logger.info("[trace=%s] Processing command: %r", trace_id, text)
+    logger.info("Processing command: %r", text, extra={"trace_id": trace_id})
 
     if _controller is None:
         response_text = "Jarvis core not connected yet."

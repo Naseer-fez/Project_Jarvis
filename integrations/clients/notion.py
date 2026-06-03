@@ -30,7 +30,7 @@ class NotionIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import aiohttp  # noqa: F401
-        except Exception:
+        except ImportError:
             self.unavailable_reason = "aiohttp not installed"
             return False
         if not os.environ.get("NOTION_API_KEY"):
@@ -163,8 +163,8 @@ class NotionIntegration(BaseIntegration):
     async def _create_page(self, args: dict[str, Any]) -> dict[str, Any]:
         import aiohttp
 
-        parent_id = str(args.get("parent_id", "")).strip()
-        title = str(args.get("title", "")).strip()
+        parent_id = str(args.get("parent_id") or "").strip()
+        title = str(args.get("title") or "").strip()
         content = str(args.get("content", "") or "")
         parent_type = self._validate_parent_type(str(args.get("parent_type", "page_id") or "page_id"))
 
@@ -222,7 +222,7 @@ class NotionIntegration(BaseIntegration):
     async def _query_database(self, args: dict[str, Any]) -> dict[str, Any]:
         import aiohttp
 
-        database_id = str(args.get("database_id", "")).strip()
+        database_id = str(args.get("database_id") or "").strip()
         if not database_id:
             return {"success": False, "data": None, "error": "database_id is required"}
 
@@ -265,8 +265,8 @@ class NotionIntegration(BaseIntegration):
     async def _append_block(self, args: dict[str, Any]) -> dict[str, Any]:
         import aiohttp
 
-        page_id = str(args.get("page_id", "")).strip()
-        text = str(args.get("text", "")).strip()
+        page_id = str(args.get("page_id") or "").strip()
+        text = str(args.get("text") or "").strip()
         block_type = self._validate_block_type(str(args.get("block_type", "paragraph") or "paragraph"))
 
         if not page_id:
@@ -305,7 +305,7 @@ class NotionIntegration(BaseIntegration):
     async def _get_page(self, args: dict[str, Any]) -> dict[str, Any]:
         import aiohttp
 
-        page_id = str(args.get("page_id", "")).strip()
+        page_id = str(args.get("page_id") or "").strip()
         if not page_id:
             return {"success": False, "data": None, "error": "page_id is required"}
 

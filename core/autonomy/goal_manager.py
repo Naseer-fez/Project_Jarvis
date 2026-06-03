@@ -1,5 +1,5 @@
 """
-core/agentic/goal_manager.py
+core/autonomy/goal_manager.py
 
 Owns the lifecycle of long-lived agent goals.
 A Goal is a high-level desired outcome that may span multiple Missions.
@@ -13,6 +13,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -114,6 +115,7 @@ class GoalManager:
 
     def __init__(self) -> None:
         self._goals: dict[str, Goal] = {}
+        self._lock = threading.RLock()
 
     # ── CRUD ─────────────────────────────────────────────────────────────
 
@@ -125,75 +127,86 @@ class GoalManager:
         deadline: Optional[datetime] = None,
         metadata: Optional[dict] = None,
     ) -> str:
-        goal_id = str(uuid.uuid4())
-        self._goals[goal_id] = Goal(
-            goal_id=goal_id,
-            description=description,
-            priority=priority,
-            parent_goal_id=parent_goal_id,
-            deadline=deadline,
-            metadata=metadata or {},
-        )
-        return goal_id
+        with self._lock:
+            goal_id = str(uuid.uuid4())
+            self._goals[goal_id] = Goal(
+                goal_id=goal_id,
+                description=description,
+                priority=priority,
+                parent_goal_id=parent_goal_id,
+                deadline=deadline,
+                metadata=metadata or {},
+            )
+            return goal_id
 
     def get_goal(self, goal_id: str) -> Goal:
-        if goal_id not in self._goals:
-            raise KeyError(f"Unknown goal: {goal_id}")
-        return self._goals[goal_id]
+        with self._lock:
+            if goal_id not in self._goals:
+                raise KeyError(f"Unknown goal: {goal_id}")
+            return self._goals[goal_id]
 
     def start_goal(self, goal_id: str) -> None:
-        self.get_goal(goal_id).start()
+        with self._lock:
+            self.get_goal(goal_id).start()
 
     def complete_goal(self, goal_id: str, outcome: str = "") -> None:
-        self.get_goal(goal_id).complete(outcome)
+        with self._lock:
+            self.get_goal(goal_id).complete(outcome)
 
     def fail_goal(self, goal_id: str, reason: str = "") -> None:
-        self.get_goal(goal_id).fail(reason)
+        with self._lock:
+            self.get_goal(goal_id).fail(reason)
 
     def cancel_goal(self, goal_id: str, reason: str = "") -> None:
-        self.get_goal(goal_id).cancel(reason)
+        with self._lock:
+            self.get_goal(goal_id).cancel(reason)
 
     # ── Queries ──────────────────────────────────────────────────────────
 
     def next_goal(self) -> Optional[Goal]:
         """Return the highest-priority pending or paused goal."""
-        candidates = [
-            g for g in self._goals.values()
-            if g.status in (GoalStatus.PENDING, GoalStatus.PAUSED)
-        ]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda g: (g.priority, g.created_at))
+        with self._lock:
+            candidates = [
+                g for g in self._goals.values()
+                if g.status in (GoalStatus.PENDING, GoalStatus.PAUSED)
+            ]
+            if not candidates:
+                return None
+            return min(candidates, key=lambda g: (g.priority, g.created_at))
 
     def active_goals(self) -> list[Goal]:
-        return [g for g in self._goals.values() if g.status == GoalStatus.ACTIVE]
+        with self._lock:
+            return [g for g in self._goals.values() if g.status == GoalStatus.ACTIVE]
 
     def all_goals(self) -> list[Goal]:
-        return list(self._goals.values())
+        with self._lock:
+            return list(self._goals.values())
 
     # ── Persistence ──────────────────────────────────────────────────────
 
     def snapshot(self) -> list[dict]:
-        return [g.to_dict() for g in self._goals.values()]
+        with self._lock:
+            return [g.to_dict() for g in self._goals.values()]
 
     def restore(self, data: list[dict]) -> None:
         """Reload goals from a persisted snapshot (e.g. after restart)."""
-        for d in data:
-            goal = Goal(
-                goal_id=d["goal_id"],
-                description=d["description"],
-                priority=d["priority"],
-                status=GoalStatus(d["status"]),
-                parent_goal_id=d.get("parent_goal_id"),
-                metadata=d.get("metadata", {}),
-                created_at=datetime.fromisoformat(d["created_at"]),
-                outcome=d.get("outcome"),
-            )
-            if d.get("started_at"):
-                goal.started_at = datetime.fromisoformat(d["started_at"])
-            if d.get("completed_at"):
-                goal.completed_at = datetime.fromisoformat(d["completed_at"])
-            if d.get("deadline"):
-                goal.deadline = datetime.fromisoformat(d["deadline"])
-            self._goals[goal.goal_id] = goal
+        with self._lock:
+            for d in data:
+                goal = Goal(
+                    goal_id=d["goal_id"],
+                    description=d["description"],
+                    priority=d["priority"],
+                    status=GoalStatus(d["status"]),
+                    parent_goal_id=d.get("parent_goal_id"),
+                    metadata=d.get("metadata", {}),
+                    created_at=datetime.fromisoformat(d["created_at"]),
+                    outcome=d.get("outcome"),
+                )
+                if d.get("started_at"):
+                    goal.started_at = datetime.fromisoformat(d["started_at"])
+                if d.get("completed_at"):
+                    goal.completed_at = datetime.fromisoformat(d["completed_at"])
+                if d.get("deadline"):
+                    goal.deadline = datetime.fromisoformat(d["deadline"])
+                self._goals[goal.goal_id] = goal
 

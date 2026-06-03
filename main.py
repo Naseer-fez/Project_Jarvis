@@ -1,4 +1,4 @@
-"""
+r"""
 Production-ready Jarvis entry point.
 
 Usage (cross-platform):
@@ -10,20 +10,24 @@ Usage (cross-platform):
   python main.py --verify
 
 Windows PowerShell convenience:
-  .\run-jarvis.ps1
-  .\run-jarvis.ps1 --voice
-  .\run-jarvis.ps1 --gui
-  .\run-jarvis.ps1 --headless --gui
-  .\run-jarvis.ps1 --health-check
-  .\run-jarvis.ps1 --verify
+  .\Start.ps1
+  .\Start.ps1 --voice
+  .\Start.ps1 --gui
+  .\Start.ps1 --headless --gui
+  .\Start.ps1 --health-check
+  .\Start.ps1 --verify
 """
 
 from __future__ import annotations
 
+import asyncio
 import signal
 import sys
+import traceback
+import argparse
+from collections.abc import Callable, Awaitable
 
-from main_connector import (
+from core.runtime.bootstrap import (
     ExitCode,
     PROJECT_ROOT,
     _ShutdownCoordinator,
@@ -32,13 +36,37 @@ from main_connector import (
     apply_cli_overrides,
     load_config,
     parse_args,
-    run_entrypoint,
 )
 from core.runtime.entrypoint import async_run
 
+ArgsParser = Callable[[list[str] | None], argparse.Namespace]
+AsyncEntry = Callable[[argparse.Namespace], Awaitable[int]]
 
-async def async_main(args) -> int:
+
+async def async_main(args: argparse.Namespace) -> int:
     return await async_run(args, shutdown_cls=_ShutdownCoordinator)
+
+
+def run_entrypoint(
+    *,
+    parse_args_fn: ArgsParser = parse_args,
+    async_entry_fn: AsyncEntry = async_main,
+    argv: list[str] | None = None,
+    interrupted_message: str = "Interrupted - goodbye.",
+) -> int:
+    args = parse_args_fn(argv)
+
+    try:
+        return asyncio.run(async_entry_fn(args))
+    except KeyboardInterrupt:
+        _uprint(interrupted_message, file=sys.stderr)
+        return ExitCode.OK
+    except Exception:
+        _bootstrap.critical(
+            "Unhandled top-level exception:\n%s",
+            "".join(traceback.format_exception(*sys.exc_info())),
+        )
+        return ExitCode.GENERIC_ERROR
 
 
 def main(argv: list[str] | None = None) -> None:

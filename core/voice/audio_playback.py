@@ -42,7 +42,14 @@ class AudioPlayer:
                     self._proc.stdin.close()
             except Exception:
                 pass
-            self._proc.wait(timeout=5)
+            try:
+                self._proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    self._proc.kill()
+                    self._proc.wait()
+                except Exception:
+                    pass
 
     def play(self, audio_bytes: bytes) -> None:
         """Plays raw audio using ffplay."""

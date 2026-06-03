@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import re
@@ -11,51 +10,7 @@ from typing import Any
 
 from core.autonomy.risk_evaluator import RiskLevel, RiskEvaluator
 
-SYSTEM_TOOL_SCHEMA = {
-    "tools": [
-        {"name": "list_directory", "description": "List files in a safe directory."},
-        {"name": "read_file", "description": "Read a text file."},
-        {"name": "write_file", "description": "Write a text file."},
-        {"name": "delete_file", "description": "Delete a text file."},
-        {"name": "sort_files", "description": "Sort and organize files in a directory into folders based on their content/use case using a local LLM."},
-        {"name": "find_files", "description": "Find files matching a wildcard pattern in a sandboxed directory (recursive)."},
-        {"name": "copy_file", "description": "Copy a file from source to destination in the sandbox."},
-        {"name": "move_file", "description": "Move/rename a file or directory from source to destination in the sandbox."},
-        {"name": "create_directory", "description": "Create a directory path in the sandbox."},
-        {"name": "launch_application", "description": "Launch a desktop app."},
-        {"name": "execute_shell", "description": "Run a shell command."},
-        {"name": "capture_screen", "description": "Capture the current screen."},
-        {"name": "capture_region", "description": "Capture a screen region."},
-        {"name": "find_text_on_screen", "description": "Find text on screen."},
-        {"name": "read_screen_text", "description": "Read visible screen text and OCR matches."},
-        {"name": "wait_for_text_on_screen", "description": "Wait for visible screen text to appear."},
-        {"name": "describe_screen", "description": "Describe the current screen."},
-        {"name": "get_active_window", "description": "Get the active window."},
-        {"name": "click", "description": "Click on screen coordinates."},
-        {"name": "double_click", "description": "Double-click on screen coordinates."},
-        {"name": "right_click", "description": "Right-click on screen coordinates."},
-        {"name": "click_text_on_screen", "description": "Find visible text on screen and click it without fixed coordinates."},
-        {"name": "click_screen_target", "description": "Locate a described screen target and click it without fixed coordinates."},
-        {"name": "double_click_screen_target", "description": "Locate a described screen target and double-click it without fixed coordinates."},
-        {"name": "right_click_screen_target", "description": "Locate a described screen target and right-click it without fixed coordinates."},
-        {"name": "move_mouse", "description": "Move the mouse to screen coordinates."},
-        {"name": "scroll", "description": "Scroll the mouse wheel, optionally over coordinates."},
-        {"name": "drag", "description": "Drag the mouse from one location to another."},
-        {"name": "type_text", "description": "Type text into the active window."},
-        {"name": "press_key", "description": "Press a keyboard key one or more times."},
-        {"name": "hotkey", "description": "Send a keyboard shortcut."},
-        {"name": "focus_window", "description": "Focus a window whose title matches the requested text."},
-        {"name": "clipboard_get", "description": "Read the clipboard text."},
-        {"name": "clipboard_set", "description": "Set the clipboard text."},
-        {"name": "clipboard_paste", "description": "Paste the current clipboard into the active window."},
-        {"name": "web_search", "description": "Search the web."},
-        {"name": "web_scrape", "description": "Read a web page."},
-        {"name": "memory_write", "description": "Store a fact in memory."},
-        {"name": "memory_read", "description": "Recall stored facts."},
-        {"name": "speak", "description": "Speak a response."},
-        {"name": "display", "description": "Display a response."},
-    ]
-}
+# SYSTEM_TOOL_SCHEMA removed in favor of CapabilityRegistry dynamic discovery
 
 _GUI_TOOL_NAMES = {
     "click",
@@ -88,34 +43,41 @@ logger = logging.getLogger("Jarvis.Planner")
 
 
 class TaskPlanner:
-    def __init__(self, config=None, llm=None) -> None:
+    def __init__(self, config=None, llm=None, registry=None) -> None:
         self.config = config
         self.risk_evaluator = RiskEvaluator(config)
         self.llm = llm
+        self.registry = registry
 
     def _tool_schema(self) -> dict[str, list[dict[str, str]]]:
-        schema = copy.deepcopy(SYSTEM_TOOL_SCHEMA)
+        tools = []
+        if self.registry:
+            for name in self.registry.registered_tools():
+                cap = self.registry.get(name)
+                desc = getattr(cap, "description", "") or f"Execute {name}"
+                tools.append({"name": name, "description": desc})
+
         allow_gui = False
         try:
-            allow_gui = self.config.getboolean(
-                "execution",
-                "allow_gui_automation",
-                fallback=False,
-            )
+            if self.config:
+                allow_gui = self.config.getboolean(
+                    "execution",
+                    "allow_gui_automation",
+                    fallback=False,
+                )
         except Exception:
             allow_gui = False
 
         if not allow_gui:
-            schema["tools"] = [
-                tool for tool in schema["tools"] if tool["name"] not in _GUI_TOOL_NAMES
-            ]
-        return schema
+            tools = [tool for tool in tools if tool["name"] not in _GUI_TOOL_NAMES]
+
+        return {"tools": tools}
 
     async def _call_ollama(self, prompt: str) -> str:
         if not self.llm or not hasattr(self.llm, "complete"):
             return ""
         try:
-            res = self.llm.complete(prompt, task_type="planning")
+            res = self.llm.complete(prompt, task_type="tool_picker")
             if inspect.isawaitable(res):
                 return await res
             return str(res)

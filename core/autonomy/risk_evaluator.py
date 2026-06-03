@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import Sequence, Any
@@ -65,6 +66,8 @@ class RiskEvaluator:
         self._high: set[str] = set()
         self._medium: set[str] = set()
         self._low: set[str] = set()
+        self._cache: dict[str, RiskLevel] = {}
+        self._lock = threading.Lock()
 
         if config is not None:
             self._load_config(config)
@@ -72,47 +75,57 @@ class RiskEvaluator:
     def register_critical_action(self, action: str) -> None:
         """Dynamically register an action as CRITICAL risk level."""
         action_clean = action.strip().lower()
-        self._critical.add(action_clean)
-        self._confirm.discard(action_clean)
-        self._high.discard(action_clean)
-        self._medium.discard(action_clean)
-        self._low.discard(action_clean)
+        with self._lock:
+            self._critical.add(action_clean)
+            self._confirm.discard(action_clean)
+            self._high.discard(action_clean)
+            self._medium.discard(action_clean)
+            self._low.discard(action_clean)
+            self._cache.pop(action_clean, None)
 
     def register_confirm_action(self, action: str) -> None:
         """Dynamically register an action as CONFIRM risk level."""
         action_clean = action.strip().lower()
-        self._confirm.add(action_clean)
-        self._critical.discard(action_clean)
-        self._high.discard(action_clean)
-        self._medium.discard(action_clean)
-        self._low.discard(action_clean)
+        with self._lock:
+            self._confirm.add(action_clean)
+            self._critical.discard(action_clean)
+            self._high.discard(action_clean)
+            self._medium.discard(action_clean)
+            self._low.discard(action_clean)
+            self._cache.pop(action_clean, None)
 
     def register_high_action(self, action: str) -> None:
         """Dynamically register an action as HIGH risk level."""
         action_clean = action.strip().lower()
-        self._high.add(action_clean)
-        self._critical.discard(action_clean)
-        self._confirm.discard(action_clean)
-        self._medium.discard(action_clean)
-        self._low.discard(action_clean)
+        with self._lock:
+            self._high.add(action_clean)
+            self._critical.discard(action_clean)
+            self._confirm.discard(action_clean)
+            self._medium.discard(action_clean)
+            self._low.discard(action_clean)
+            self._cache.pop(action_clean, None)
 
     def register_medium_action(self, action: str) -> None:
         """Dynamically register an action as MEDIUM risk level."""
         action_clean = action.strip().lower()
-        self._medium.add(action_clean)
-        self._critical.discard(action_clean)
-        self._confirm.discard(action_clean)
-        self._high.discard(action_clean)
-        self._low.discard(action_clean)
+        with self._lock:
+            self._medium.add(action_clean)
+            self._critical.discard(action_clean)
+            self._confirm.discard(action_clean)
+            self._high.discard(action_clean)
+            self._low.discard(action_clean)
+            self._cache.pop(action_clean, None)
 
     def register_low_action(self, action: str) -> None:
         """Dynamically register an action as LOW risk level."""
         action_clean = action.strip().lower()
-        self._low.add(action_clean)
-        self._critical.discard(action_clean)
-        self._confirm.discard(action_clean)
-        self._high.discard(action_clean)
-        self._medium.discard(action_clean)
+        with self._lock:
+            self._low.add(action_clean)
+            self._critical.discard(action_clean)
+            self._confirm.discard(action_clean)
+            self._high.discard(action_clean)
+            self._medium.discard(action_clean)
+            self._cache.pop(action_clean, None)
 
     def _load_config(self, config) -> None:
         def _parse(section: str, key: str) -> set[str]:
@@ -151,45 +164,52 @@ class RiskEvaluator:
             if not action:
                 continue
 
-            level = None
-
-            # 1. Resolve risk dynamically from the Capability Registry if present
-            if self.registry:
-                cap = self.registry.get(action)
-                if cap:
-                    level_name = cap.risk_level.name
-                    level = getattr(RiskLevel, level_name, RiskLevel.LOW)
-
-            # 2. Check dynamic/explicit config updates
+            level = self._cache.get(action)
             if level is None:
-                if action in self._critical:
-                    level = RiskLevel.CRITICAL
-                elif action in self._high:
-                    level = RiskLevel.HIGH
-                elif action in self._confirm:
-                    level = RiskLevel.CONFIRM
-                elif action in self._medium:
-                    level = RiskLevel.MEDIUM
-                elif action in self._low:
-                    level = RiskLevel.LOW
+                with self._lock:
+                    level = self._cache.get(action)
+                    if level is None:
+                        # 1. Resolve risk dynamically from the Capability Registry if present
+                        if self.registry:
+                            cap = self.registry.get(action)
+                            if cap:
+                                level_name = cap.risk_level.name
+                                level = getattr(RiskLevel, level_name, RiskLevel.LOW)
 
-            # 3. Fallback to generic safe keyword patterns (no hardcoded tool name strings)
-            if level is None:
-                critical_kws = {"shell", "exec", "subprocess", "delete_file", "rmdir", "format_disk", "wipe_disk", "serial_send", "serial_write", "physical_actuate"}
-                confirm_kws = {"write", "launch", "send", "click", "drag", "scroll", "type", "press", "hotkey", "focus_window", "clipboard_set", "clipboard_paste", "create_event", "delete_event", "mark_as_read", "create_page", "append_block", "play_track", "create_playlist", "turn_on", "turn_off", "toggle", "set_thermostat", "call_service", "create_issue", "close_issue", "create_gist", "sort_files", "copy_file", "move_file", "create_directory"}
-                high_kws = {"spawn", "popen", "pip_install", "install", "env_write", "system_config", "risky"}
-                medium_kws = {"read", "capture", "sensor", "search", "lookup", "ui_interaction", "key_press", "notification"}
+                        # 2. Check dynamic/explicit config updates
+                        if level is None:
+                            if action in self._critical:
+                                level = RiskLevel.CRITICAL
+                            elif action in self._high:
+                                level = RiskLevel.HIGH
+                            elif action in self._confirm:
+                                level = RiskLevel.CONFIRM
+                            elif action in self._medium:
+                                level = RiskLevel.MEDIUM
+                            elif action in self._low:
+                                level = RiskLevel.LOW
 
-                if any(kw in action for kw in critical_kws):
-                    level = RiskLevel.CRITICAL
-                elif any(kw in action for kw in high_kws):
-                    level = RiskLevel.HIGH
-                elif any(kw in action for kw in confirm_kws):
-                    level = RiskLevel.CONFIRM
-                elif any(kw in action for kw in medium_kws):
-                    level = RiskLevel.MEDIUM
-                else:
-                    level = RiskLevel.LOW
+                        # 3. Fallback to generic safe keyword patterns (no hardcoded tool name strings)
+                        if level is None:
+                            critical_kws = {"shell", "exec", "subprocess", "delete_file", "rmdir", "format_disk", "wipe_disk", "serial_send", "serial_write", "physical_actuate"}
+                            confirm_kws = {"write", "launch", "send", "click", "drag", "scroll", "type", "press", "hotkey", "focus_window", "clipboard_set", "clipboard_paste", "create_event", "delete_event", "mark_as_read", "create_page", "append_block", "play_track", "create_playlist", "turn_on", "turn_off", "toggle", "set_thermostat", "call_service", "create_issue", "close_issue", "create_gist", "sort_files", "copy_file", "move_file", "create_directory"}
+                            high_kws = {"spawn", "popen", "pip_install", "install", "env_write", "system_config", "risky"}
+                            medium_kws = {"read", "capture", "sensor", "search", "lookup", "ui_interaction", "key_press", "notification"}
+
+                            if any(kw in action for kw in critical_kws):
+                                level = RiskLevel.CRITICAL
+                            elif any(kw in action for kw in high_kws):
+                                level = RiskLevel.HIGH
+                            elif any(kw in action for kw in confirm_kws):
+                                level = RiskLevel.CONFIRM
+                            elif any(kw in action for kw in medium_kws):
+                                level = RiskLevel.MEDIUM
+                            else:
+                                level = RiskLevel.LOW
+
+                        if len(self._cache) > 1000:
+                            self._cache.clear()
+                        self._cache[action] = level
 
             # Apply classification results
             if level == RiskLevel.CRITICAL:

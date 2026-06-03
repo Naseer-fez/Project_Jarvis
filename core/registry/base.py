@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any
 
+from core.capability.base import ToolObservation
 from core.context.context import TaskExecutionContext
 
 
@@ -49,6 +50,6 @@ class Capability(ABC):
         pass
 
     @abstractmethod
-    async def run(self, args: dict[str, Any], context: TaskExecutionContext) -> dict[str, Any]:
+    async def run(self, args: dict[str, Any], context: TaskExecutionContext) -> ToolObservation:
         """Asynchronous, non-blocking execution callback."""
         pass

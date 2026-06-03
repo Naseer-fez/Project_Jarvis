@@ -46,7 +46,7 @@ class WeatherIntegration(BaseIntegration):
         if tool_name != "get_current_weather":
             return {"success": False, "data": None, "error": f"Unknown tool '{tool_name}'"}
 
-        city = str((args or {}).get("city", "")).strip()
+        city = str((args or {}).get("city") or "").strip()
         if not city:
             return {"success": False, "data": None, "error": "city is required"}
 
@@ -63,7 +63,8 @@ class WeatherIntegration(BaseIntegration):
             "https://geocoding-api.open-meteo.com/v1/search?"
             + urllib.parse.urlencode({"name": city, "count": 1})
         )
-        geo_data = json.loads(urllib.request.urlopen(geo_url, timeout=10).read().decode("utf-8"))
+        with urllib.request.urlopen(geo_url, timeout=10) as response:
+            geo_data = json.loads(response.read().decode("utf-8"))
         results = geo_data.get("results") or []
         if not results:
             raise ValueError(f"No geocode result for city '{city}'")
@@ -82,7 +83,8 @@ class WeatherIntegration(BaseIntegration):
                 }
             )
         )
-        weather_data = json.loads(urllib.request.urlopen(weather_url, timeout=10).read().decode("utf-8"))
+        with urllib.request.urlopen(weather_url, timeout=10) as response:
+            weather_data = json.loads(response.read().decode("utf-8"))
         current = weather_data.get("current", {})
 
         return {

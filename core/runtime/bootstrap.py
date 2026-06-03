@@ -9,6 +9,7 @@ import faulthandler
 import io
 import json
 import logging
+import math
 import os
 import signal
 import sys
@@ -17,8 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from core.ops.production import validate_production_config
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+from core.runtime.paths import PROJECT_ROOT, _resolve_path
 DEFAULT_CONFIG_PATH = "config/jarvis.ini"
 DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 7070
@@ -29,7 +29,15 @@ def _load_dotenv() -> None:
     try:
         from dotenv import load_dotenv
 
-        load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
+        # Load config/settings.env first as default/fallback
+        settings_env = PROJECT_ROOT / "config" / "settings.env"
+        if settings_env.exists():
+            load_dotenv(dotenv_path=settings_env)
+
+        # Then load root .env to override, if it exists
+        root_env = PROJECT_ROOT / ".env"
+        if root_env.exists():
+            load_dotenv(dotenv_path=root_env, override=True)
     except Exception:
         return
 
@@ -101,11 +109,7 @@ class StartupValidation:
         return not self.errors
 
 
-def _resolve_path(path_str: str | Path) -> Path:
-    path = Path(path_str)
-    if path.is_absolute():
-        return path
-    return PROJECT_ROOT / path
+# _resolve_path is imported from core.runtime.paths
 
 
 def _ensure_section(config: configparser.ConfigParser, section: str) -> None:
@@ -247,15 +251,33 @@ class _ShutdownCoordinator:
 
     def install_signal_handlers(self) -> None:
         if sys.platform == "win32":
-            for sig in (signal.SIGINT, signal.SIGBREAK):  # type: ignore[attr-defined]
-                signal.signal(
-                    sig,
-                    lambda *_, _signame=sig.name: self.request_shutdown(_signame),
-                )
+            supported_signals = [signal.SIGINT]
+            sigbreak = getattr(signal, "SIGBREAK", None)
+            if sigbreak is not None:
+                supported_signals.append(sigbreak)
+            for sig in supported_signals:
+                try:
+                    signal.signal(
+                        sig,
+                        lambda *_, _signame=getattr(sig, "name", str(sig)): self.request_shutdown(_signame),
+                    )
+                except (OSError, RuntimeError, ValueError) as exc:
+                    _bootstrap.warning(
+                        "Unable to install shutdown handler for %s: %s",
+                        getattr(sig, "name", sig),
+                        exc,
+                    )
             return
 
         for sig in (signal.SIGINT, signal.SIGTERM):
-            self._loop.add_signal_handler(sig, self.request_shutdown, sig.name)
+            try:
+                self._loop.add_signal_handler(sig, self.request_shutdown, sig.name)
+            except (NotImplementedError, RuntimeError, ValueError) as exc:
+                _bootstrap.warning(
+                    "Unable to install shutdown handler for %s: %s",
+                    sig.name,
+                    exc,
+                )
 
     async def wait(self) -> None:
         await self._event.wait()
@@ -323,7 +345,6 @@ def _prepare_runtime_paths(config: configparser.ConfigParser) -> None:
         ("memory", "chroma_path", False),
         ("dashboard", "control_file", True),
         ("plugins", "manifest_directory", False),
-        ("plugins", "marketplace_directory", False),
         ("ai_os", "workflow_catalog_dir", False),
         ("automation", "drop_root", False),
         ("automation", "commands_folder", False),
@@ -378,7 +399,11 @@ def _resolve_dashboard_binding(
     port_arg = getattr(args, "dashboard_port", None)
     if port_arg is not None:
         return host, int(port_arg)
-    return host, config.getint("dashboard", "port", fallback=DEFAULT_DASHBOARD_PORT)
+    try:
+        port = config.getint("dashboard", "port", fallback=DEFAULT_DASHBOARD_PORT)
+    except (configparser.Error, TypeError, ValueError):
+        port = DEFAULT_DASHBOARD_PORT
+    return host, port
 
 
 def _resolve_runtime_mode(
@@ -414,7 +439,7 @@ def _validate_startup_settings(
     if getattr(args, "verify", False) and getattr(args, "health_check", False):
         result.errors.append("Choose either --verify or --health-check, not both.")
 
-    if shutdown_timeout <= 0:
+    if not math.isfinite(shutdown_timeout) or shutdown_timeout <= 0:
         result.errors.append("--shutdown-timeout must be greater than 0 seconds.")
 
     if dashboard_enabled:
@@ -428,8 +453,11 @@ def _validate_startup_settings(
 
         port = getattr(args, "dashboard_port", None)
         if port is None:
-            port = config.getint("dashboard", "port", fallback=DEFAULT_DASHBOARD_PORT)
-        if not 1 <= int(port) <= 65535:
+            try:
+                port = config.getint("dashboard", "port", fallback=DEFAULT_DASHBOARD_PORT)
+            except (configparser.Error, TypeError, ValueError):
+                port = None
+        if port is None or not 1 <= int(port) <= 65535:
             result.errors.append("Dashboard port must be between 1 and 65535.")
 
     raw_safe_dirs = config.get("execution", "safe_directories", fallback="")
@@ -591,8 +619,7 @@ def _load_integrations(
         # Dynamically register loaded integration safety rules & risk profiles
         gov = getattr(controller, "autonomy_governor", None)
         risk_eval = getattr(controller, "risk_evaluator", None)
-        disp = getattr(controller, "dispatcher", None)
-        integration_registry.register_safety_rules(gov, risk_eval, disp)
+        integration_registry.register_safety_rules(gov, risk_eval)
 
         setattr(controller, "integration_loader", loader)
         setattr(controller, "integration_registry", integration_registry)
@@ -626,6 +653,8 @@ def _run_startup_health_check(controller: Any | None, *, verbose: bool) -> Any:
 
 async def _cancel_task(task: asyncio.Task[Any]) -> None:
     if task.done():
+        if task.cancelled():
+            return
         with contextlib.suppress(Exception):
             task.exception()
         return

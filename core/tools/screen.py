@@ -1,6 +1,7 @@
 """Screen capture, OCR, and screen-state tools for Jarvis."""
 
 from __future__ import annotations
+from core.types.common import ToolResult
 
 import asyncio
 import logging
@@ -183,7 +184,6 @@ def _match_entries(
 
 def capture_screen():
     """Take a full-screen screenshot and save it to outputs/screenshots/."""
-    from integrations.base import ToolResult
 
     try:
         _ensure_dir()
@@ -193,13 +193,12 @@ def capture_screen():
         logger.info("Screenshot saved: %s", path)
         return ToolResult(success=True, data={"path": str(path), "width": img.width, "height": img.height})
     except Exception as exc:  # noqa: BLE001
-        logger.error("capture_screen failed: %s", exc)
+        logger.error("capture_screen failed: %s", exc, exc_info=True)
         return ToolResult(success=False, error=str(exc))
 
 
 def capture_region(x: int, y: int, width: int, height: int):
     """Screenshot a specific screen region."""
-    from integrations.base import ToolResult
 
     try:
         _ensure_dir()
@@ -209,7 +208,7 @@ def capture_region(x: int, y: int, width: int, height: int):
         logger.info("Region screenshot saved: %s", path)
         return ToolResult(success=True, data={"path": str(path), "x": x, "y": y, "width": width, "height": height})
     except Exception as exc:  # noqa: BLE001
-        logger.error("capture_region failed: %s", exc)
+        logger.error("capture_region failed: %s", exc, exc_info=True)
         return ToolResult(success=False, error=str(exc))
 
 
@@ -222,7 +221,6 @@ def read_screen_text(
     max_text_chars: int = _OCR_MAX_TEXT_CHARS,
 ):
     """Read visible screen text with OCR and optional query matching."""
-    from integrations.base import ToolResult
 
     try:
         import os
@@ -292,13 +290,12 @@ def read_screen_text(
             else:
                 logger.debug("read_screen_text failed (Tesseract not installed): %s", exc)
         else:
-            logger.error("read_screen_text failed: %s", exc)
+            logger.error("read_screen_text failed: %s", exc, exc_info=True)
         return ToolResult(success=False, error=err_msg)
 
 
 def find_text_on_screen(text: str, match_mode: str = "contains"):
     """Search for visible screen text using phrase-aware OCR matching."""
-    from integrations.base import ToolResult
 
     result = read_screen_text(
         query=text,
@@ -328,7 +325,6 @@ async def wait_for_text_on_screen(
     match_mode: str = "contains",
 ):
     """Poll OCR until the requested text appears on screen."""
-    from integrations.base import ToolResult
 
     timeout_value = max(0.1, float(timeout_seconds))
     deadline = time.monotonic() + timeout_value
@@ -361,7 +357,6 @@ async def wait_for_text_on_screen(
 
 def describe_screen(llm_client=None):
     """Describe the current screen contents."""
-    from integrations.base import ToolResult
 
     try:
         img = _capture_image()

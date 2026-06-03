@@ -20,6 +20,3 @@ out/
 .DS_Store
 
 # Legacy and Duplicate reference folders
-archive_legacy/
-to_commit_pool/
-Jarvis-2.0/

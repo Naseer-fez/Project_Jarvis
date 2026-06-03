@@ -23,7 +23,7 @@ class EmailIntegration(BaseIntegration):
             import smtplib as _smtplib  # noqa: F401
             import imaplib as _imaplib  # noqa: F401
             return all(bool(os.environ.get(key)) for key in self.required_config)
-        except Exception:
+        except ImportError:
             return False
 
     def get_tools(self) -> list[dict[str, Any]]:
@@ -68,9 +68,9 @@ class EmailIntegration(BaseIntegration):
                 data = await loop.run_in_executor(
                     None,
                     lambda: self._send_email(
-                        to=str(args.get("to", "")),
-                        subject=str(args.get("subject", "")),
-                        body=str(args.get("body", "")),
+                        to=str(args.get("to") or ""),
+                        subject=str(args.get("subject") or ""),
+                        body=str(args.get("body") or ""),
                     ),
                 )
                 return {"success": True, "data": data, "error": None}

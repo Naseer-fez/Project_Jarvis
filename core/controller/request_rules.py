@@ -164,6 +164,35 @@ def is_active_window_request(lowered: str) -> bool:
     return False
 
 
+def is_preference_relevant(key: str, query: str) -> bool:
+    """Determine if a retrieved preference key is relevant to the user query."""
+    import re
+    def clean(s: str) -> str:
+        return re.sub(r'[^a-z0-9\s]', '', s.lower()).strip()
+    
+    clean_key = clean(key)
+    clean_query = clean(query)
+    
+    if not clean_key or not clean_query:
+        return False
+        
+    # 1. Direct substring match
+    if clean_key in clean_query:
+        return True
+        
+    # 2. Key contains query
+    if clean_query in clean_key:
+        return True
+        
+    # 3. Word overlap: check if all significant words of key are in query
+    stop_words = {"the", "a", "an", "in", "on", "at", "for", "to", "of", "and", "or", "is", "are"}
+    key_words = [w for w in clean_key.split() if w not in stop_words]
+    if key_words and all(w in clean_query for w in key_words):
+        return True
+        
+    return False
+
+
 __all__ = [
     "ACTIVE_WINDOW_PHRASES",
     "AGENTIC_KEYWORDS",
@@ -173,6 +202,8 @@ __all__ = [
     "WEB_SEARCH_EXPLICIT_PHRASES",
     "is_active_window_request",
     "is_explicit_web_search",
+    "is_preference_relevant",
     "looks_like_desktop_control_request",
     "should_force_web_search",
 ]
+

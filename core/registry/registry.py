@@ -11,16 +11,15 @@ import inspect
 import logging
 import time
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable
 
 from core.autonomy.risk_evaluator import RiskLevel
-from core.capability.base import Capability
+from core.capability.base import Capability, ToolObservation, _normalize_tool_result
 from core.context.context import TaskExecutionContext
-from core.tools.tool_router import ToolObservation
 
 # For desktop capability mapping
 from core.desktop.contracts import DesktopAction, DesktopActionType
-from core.desktop.mission import DesktopMissionExecutor, MissionExecutionRecord, DesktopMissionStatus
+from core.desktop.mission import DesktopMissionExecutor, MissionExecutionRecord
 
 logger = logging.getLogger("Jarvis.Registry")
 
@@ -73,6 +72,7 @@ def _build_desktop_action(
     *,
     description: str = "",
     expected_change: str = "",
+    requires_approval: bool | None = None,
 ) -> DesktopAction:
     action_type = _ACTION_TYPE_MAP.get(action_name)
     if action_type is None:
@@ -83,6 +83,7 @@ def _build_desktop_action(
         params=dict(params),
         description=description or f"Agent step: {action_name}",
         expected_change=expected_change,
+        requires_approval=requires_approval,
         metadata={"source": "agent_loop", "original_action": action_name},
     )
 
@@ -164,7 +165,6 @@ class FunctionCapability(Capability):
             result = await asyncio.to_thread(self.handler, **kwargs)
 
         # Normalize outputs into ToolObservation properties
-        from core.tools.tool_router import _normalize_tool_result
         success, output_summary, error_message = _normalize_tool_result(result)
 
         return ToolObservation(
@@ -203,11 +203,16 @@ class DesktopCapability(Capability):
             min_confidence=0.35,
         )
 
+        requires_approval = None
+        if context.get("approval_called") and context.get("approval_result"):
+            requires_approval = False
+
         desktop_action = _build_desktop_action(
             self.name,
             args,
             description=args.get("description", f"Desktop command: {self.name}"),
             expected_change=args.get("expected_change", ""),
+            requires_approval=requires_approval,
         )
 
         record = await mission_executor.run(
@@ -295,25 +300,12 @@ class CapabilityRegistry:
         start = time.monotonic()
 
         try:
-            # Enforce execution timeout
-            obs = await asyncio.wait_for(
-                cap.run(arguments, context),
-                timeout=15.0,
-            )
+            obs = await cap.run(arguments, context)
             obs.duration_seconds = time.monotonic() - start
             if obs.execution_status == "success":
                 logger.info(f"[CAPABILITY OK] {tool_name} completed.", extra={"trace_id": context.trace_id, "task_id": context.task_id})
             else:
                 logger.warning(f"[CAPABILITY FAIL] {tool_name} failed: {obs.error_message}", extra={"trace_id": context.trace_id, "task_id": context.task_id})
-        except asyncio.TimeoutError:
-            obs = ToolObservation(
-                tool_name=tool_name,
-                arguments=arguments,
-                execution_status="failure",
-                output_summary="",
-                error_message=f"Capability '{tool_name}' timed out.",
-                duration_seconds=time.monotonic() - start,
-            )
         except Exception as e:
             obs = ToolObservation(
                 tool_name=tool_name,
@@ -326,6 +318,8 @@ class CapabilityRegistry:
             logger.error(f"[CAPABILITY ERROR] {tool_name}: {e}", exc_info=True, extra={"trace_id": context.trace_id, "task_id": context.task_id})
 
         self._observations.append(obs)
+        if len(self._observations) > 1000:
+            self._observations = self._observations[-500:]
         return obs
 
     def get_observations(self) -> list[ToolObservation]:

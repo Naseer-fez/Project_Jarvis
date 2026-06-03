@@ -1,9 +1,0 @@
--r base.txt
-
-# Optional desktop / computer-use stack
-pyautogui
-pygetwindow
-pytesseract
-pillow
-pyperclip
-opencv-python

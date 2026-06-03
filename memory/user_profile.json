@@ -1,11 +1,11 @@
 {
-  "name": "Bob",
+  "name": "User",
   "communication_style": "casual",
   "expertise_level": "intermediate",
   "preferred_topics": [],
   "timezone": "UTC",
   "language": "en",
-  "interaction_count": 1458,
-  "first_seen": "2026-03-02T16:06:00.672230",
-  "last_seen": "2026-05-30T14:52:22.447522"
+  "interaction_count": 125,
+  "first_seen": "2026-06-01T14:38:00.773283",
+  "last_seen": "2026-06-03T20:47:37.125245"
 }

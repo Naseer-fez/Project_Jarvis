@@ -5,7 +5,6 @@ Context compression and optional low-latency focus titling for Jarvis memory.
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import logging
 import re
 from typing import Any

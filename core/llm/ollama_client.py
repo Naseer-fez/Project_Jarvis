@@ -52,6 +52,11 @@ def list_models_sync(base_url: str = OLLAMA_BASE_URL, timeout_s: float = 3.0) ->
     return extract_model_names(payload)
 
 
+class OllamaTransientError(aiohttp.ClientError):
+    """Raised when Ollama returns a transient HTTP error status."""
+    pass
+
+
 class OllamaClient:
     """Lightweight async client for a local Ollama instance.
 
@@ -95,12 +100,17 @@ class OllamaClient:
                     async with session.post(
                         f"{self.base_url}/api/generate",
                         json=payload,
-                        timeout=aiohttp.ClientTimeout(total=TIMEOUT_S),
+                        timeout=aiohttp.ClientTimeout(total=TIMEOUT_S, sock_connect=2.0),
                     ) as response:
                         if response.status != 200:
-                            raise RuntimeError(
-                                f"Ollama HTTP {response.status} on attempt {attempt + 1}"
-                            )
+                            if response.status in {400, 401, 403, 404, 422}:
+                                raise RuntimeError(
+                                    f"Ollama HTTP {response.status} on attempt {attempt + 1}"
+                                )
+                            else:
+                                raise OllamaTransientError(
+                                    f"Ollama HTTP {response.status} on attempt {attempt + 1}"
+                                )
                         data = await response.json()
                         raw = str(data.get("response", ""))
                         if not raw.strip():
@@ -109,24 +119,19 @@ class OllamaClient:
                             raw = _strip_think(raw)
                         return raw
 
-            except asyncio.TimeoutError as exc:
-                logger.error("Ollama timeout after %ss (attempt %d)", TIMEOUT_S, attempt + 1)
-                last_exc = exc
-                break  # timeouts are not transient — don't retry
-
-            except aiohttp.ClientError as exc:
-                logger.warning("Ollama connection error (attempt %d): %s", attempt + 1, exc)
+            except (asyncio.TimeoutError, aiohttp.ClientError) as exc:
+                logger.warning("Ollama connection error or timeout (attempt %d): %s", attempt + 1, exc)
                 last_exc = exc
                 if attempt < 2:
                     await asyncio.sleep(0.5 * (2 ** attempt))
 
             except RuntimeError as exc:
-                logger.error("Ollama error: %s", exc)
+                logger.error("Ollama error: %s", exc, exc_info=True)
                 last_exc = exc
                 break
 
             except Exception as exc:  # noqa: BLE001
-                logger.error("Ollama unexpected failure: %s", exc)
+                logger.error("Ollama unexpected failure: %s", exc, exc_info=True)
                 last_exc = exc
                 break
 
@@ -157,4 +162,4 @@ class OllamaClient:
             return False
 
 
-__all__ = ["OllamaClient", "extract_model_names", "list_models_sync"]
+__all__ = ["OllamaClient", "OllamaTransientError", "extract_model_names", "list_models_sync"]

@@ -36,7 +36,7 @@ class SpotifyIntegration(BaseIntegration):
     def is_available(self) -> bool:
         try:
             import aiohttp  # noqa: F401
-        except Exception:
+        except ImportError:
             self.unavailable_reason = "aiohttp not installed"
             return False
         if not all(bool(os.environ.get(k)) for k in self.required_config):
@@ -120,7 +120,7 @@ class SpotifyIntegration(BaseIntegration):
             if tool_name == "search_track":
                 return await self._search_track(
                     token,
-                    query=str(args.get("query", "")),
+                    query=str(args.get("query") or ""),
                     limit=min(50, int(args.get("limit", 5) or 5)),
                 )
             if tool_name == "get_current_track":
@@ -300,7 +300,7 @@ class SpotifyIntegration(BaseIntegration):
     async def _create_playlist(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
         import aiohttp
 
-        name = str(args.get("name", "")).strip()
+        name = str(args.get("name") or "").strip()
         if not name:
             return {"success": False, "data": None, "error": "name is required"}
 

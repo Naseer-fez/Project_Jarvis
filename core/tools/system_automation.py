@@ -60,7 +60,9 @@ SHELL_TIMEOUT = 10   # seconds
 def list_directory(path: str) -> ToolResult:
     """List contents of a directory."""
     try:
-        p = Path(path).expanduser().resolve()
+        from core.tools.builtin_tools import _assert_safe_path
+        safe_path = _assert_safe_path(path, write_op=False)
+        p = Path(safe_path)
         if not p.exists():
             return ToolResult(False, error=f"Path does not exist: {p}")
         if not p.is_dir():
@@ -84,7 +86,9 @@ def list_directory(path: str) -> ToolResult:
 def read_file(path: str, max_bytes: int = 32_768) -> ToolResult:
     """Read a text file (capped at max_bytes to protect context window)."""
     try:
-        p = Path(path).expanduser().resolve()
+        from core.tools.builtin_tools import _assert_safe_path
+        safe_path = _assert_safe_path(path, write_op=False)
+        p = Path(safe_path)
         if not p.is_file():
             return ToolResult(False, error=f"File not found: {p}")
         content = p.read_bytes()[:max_bytes].decode("utf-8", errors="replace")
@@ -94,6 +98,8 @@ def read_file(path: str, max_bytes: int = 32_768) -> ToolResult:
             output=content,
             metadata={"path": str(p), "truncated": truncated},
         )
+    except PermissionError as exc:
+        return ToolResult(False, error=f"Permission denied: {exc}")
     except Exception as exc:
         return ToolResult(False, error=str(exc))
 
@@ -101,12 +107,16 @@ def read_file(path: str, max_bytes: int = 32_768) -> ToolResult:
 def write_file(path: str, content: str, overwrite: bool = False) -> ToolResult:
     """Write text content to a file. HIGH RISK – requires confirmation."""
     try:
-        p = Path(path).expanduser().resolve()
+        from core.tools.builtin_tools import _assert_safe_path
+        safe_path = _assert_safe_path(path, write_op=True)
+        p = Path(safe_path)
         if p.exists() and not overwrite:
             return ToolResult(False, error=f"File exists and overwrite=False: {p}")
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return ToolResult(True, output=f"Written {len(content)} chars to {p}", metadata={"path": str(p)})
+    except PermissionError as exc:
+        return ToolResult(False, error=f"Permission denied: {exc}")
     except Exception as exc:
         return ToolResult(False, error=str(exc))
 
@@ -114,37 +124,69 @@ def write_file(path: str, content: str, overwrite: bool = False) -> ToolResult:
 def delete_file(path: str) -> ToolResult:
     """Delete a file. VERY HIGH RISK – requires confirmation."""
     try:
-        p = Path(path).expanduser().resolve()
+        from core.tools.builtin_tools import _assert_safe_path
+        safe_path = _assert_safe_path(path, write_op=True)
+        p = Path(safe_path)
         if not p.exists():
             return ToolResult(False, error=f"Path not found: {p}")
         if p.is_dir():
             return ToolResult(False, error="delete_file does not remove directories. Use a dedicated tool.")
         p.unlink()
         return ToolResult(True, output=f"Deleted: {p}", metadata={"path": str(p)})
+    except PermissionError as exc:
+        return ToolResult(False, error=f"Permission denied: {exc}")
     except Exception as exc:
         return ToolResult(False, error=str(exc))
 
 
-def launch_application(target: str, args: list[str] | None = None) -> ToolResult:
+def launch_application(
+    target: str | None = None,
+    args: list[str] | None = None,
+    application: str | None = None,
+) -> ToolResult:
     """
     Launch a desktop application or open a file with its default handler.
     Uses os.startfile on Windows; subprocess on other platforms.
     """
+    actual_target = target or application
+    if not actual_target:
+        return ToolResult(False, error="Either 'target' or 'application' must be provided to launch_application")
     args = args or []
+
+    # Enforce path sandboxing on the target and arguments if they are paths
+    if actual_target:
+        if "/" in actual_target or "\\" in actual_target or ":" in actual_target or ".." in actual_target:
+            try:
+                from core.tools.builtin_tools import _assert_safe_path
+                _assert_safe_path(actual_target, write_op=False)
+            except Exception as e:
+                return ToolResult(False, error=f"Target path escapes sandbox: {e}")
+
+    if args:
+        for arg in args:
+            if "/" in arg or "\\" in arg or ":" in arg or ".." in arg:
+                if arg.lower().startswith(("http://", "https://")):
+                    continue
+                try:
+                    from core.tools.builtin_tools import _assert_safe_path
+                    _assert_safe_path(arg, write_op=False)
+                except Exception as e:
+                    return ToolResult(False, error=f"Argument path escapes sandbox: {e}")
+
     try:
         if os.name == "nt":
             # os.startfile does not accept extra args, fall through to subprocess for those
             if args:
-                subprocess.Popen([target, *args], shell=False)
-                return ToolResult(True, output=f"Launched: {target} {' '.join(args)}")
-            os.startfile(target)  # type: ignore[attr-defined]
-            return ToolResult(True, output=f"Opened: {target}")
+                subprocess.Popen([actual_target, *args], shell=False)
+                return ToolResult(True, output=f"Launched: {actual_target} {' '.join(args)}")
+            os.startfile(actual_target)  # type: ignore[attr-defined]
+            return ToolResult(True, output=f"Opened: {actual_target}")
         else:
-            cmd = ["xdg-open", target] if not args else [target, *args]
+            cmd = ["xdg-open", actual_target] if not args else [actual_target, *args]
             subprocess.Popen(cmd)
             return ToolResult(True, output=f"Launched: {' '.join(cmd)}")
     except FileNotFoundError:
-        return ToolResult(False, error=f"Executable/file not found: {target}")
+        return ToolResult(False, error=f"Executable/file not found: {actual_target}")
     except Exception as exc:
         return ToolResult(False, error=str(exc))
 
@@ -157,6 +199,12 @@ async def execute_shell(command: str, working_dir: str | None = None) -> ToolRes
     """
     import shlex
     try:
+        if working_dir:
+            from core.tools.builtin_tools import _assert_safe_path
+            try:
+                _assert_safe_path(working_dir, write_op=False)
+            except Exception as exc:
+                return ToolResult(False, error=f"Working directory escapes sandbox: {exc}")
         cwd = Path(working_dir).expanduser().resolve() if working_dir else None
         # Split command string into a token list — avoids shell=True (B602).
         try:
@@ -189,7 +237,7 @@ async def execute_shell(command: str, working_dir: str | None = None) -> ToolRes
             try:
                 proc.kill()
                 await proc.wait()
-            except Exception:
+            except OSError:
                 pass
             return ToolResult(False, error=f"Command timed out after {SHELL_TIMEOUT}s: {command}")
 
@@ -220,8 +268,12 @@ async def async_write_file(path: str, content: str, overwrite: bool = False) -> 
 async def async_delete_file(path: str) -> ToolResult:
     return await asyncio.to_thread(delete_file, path)
 
-async def async_launch_application(target: str, args: list[str] | None = None) -> ToolResult:
-    return await asyncio.to_thread(launch_application, target, args)
+async def async_launch_application(
+    target: str | None = None,
+    args: list[str] | None = None,
+    application: str | None = None,
+) -> ToolResult:
+    return await asyncio.to_thread(launch_application, target=target, args=args, application=application)
 
 async def async_execute_shell(command: str, working_dir: str | None = None) -> ToolResult:
     return await execute_shell(command, working_dir)
