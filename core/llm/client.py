@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 try:
     from core.llm.cloud_client import CloudLLMClient
 except Exception:  # pragma: no cover - cloud fallback is optional
-    CloudLLMClient = None  # type: ignore[assignment]
+    CloudLLMClient = None  # type: ignore
 
 JARVIS_SYSTEM = (
     "You are Jarvis, a local personal AI assistant.\n"
@@ -49,7 +49,10 @@ def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> st
     now = time.time()
 
     if path in _WORKSPACE_CACHE and now - _WORKSPACE_CACHE[path]["time"] < 60:
-        return _WORKSPACE_CACHE[path]["data"]
+        return str(_WORKSPACE_CACHE[path]["data"])
+
+    if len(_WORKSPACE_CACHE) > 50:
+        _WORKSPACE_CACHE.clear()
 
     root = Path(path)
     if not root.exists() or not root.is_dir():
@@ -59,24 +62,29 @@ def _get_workspace_map(path: str, max_depth: int = 3, max_files: int = 50) -> st
     count = 0
     ignored = {"__pycache__", ".git", "node_modules", ".venv", "venv", "jarvis_env"}
 
-    for item in sorted(root.rglob("*")):
-        if count >= max_files:
-            lines.append("... (truncated)")
-            break
+    def _walk(current: Path, depth: int) -> None:
+        nonlocal count
+        if depth > max_depth or count >= max_files:
+            return
+        try:
+            for item in sorted(current.iterdir()):
+                if count >= max_files:
+                    if lines and lines[-1] != "... (truncated)":
+                        lines.append("... (truncated)")
+                    break
+                if item.name in ignored or item.name.startswith("."):
+                    continue
+                indent = "  " * (depth - 1) if depth > 0 else ""
+                marker = "[DIR]" if item.is_dir() else "[FILE]"
+                if depth > 0:
+                    lines.append(f"{indent}{marker} {item.name}")
+                    count += 1
+                if item.is_dir():
+                    _walk(item, depth + 1)
+        except PermissionError:
+            pass
 
-        relative = item.relative_to(root)
-        if any(part in ignored for part in relative.parts):
-            continue
-
-        depth = len(relative.parts)
-        if depth > max_depth:
-            continue
-
-        indent = "  " * (depth - 1)
-        marker = "[DIR]" if item.is_dir() else "[FILE]"
-        lines.append(f"{indent}{marker} {item.name}")
-        count += 1
-
+    _walk(root, 0)
     result = "\n".join(lines)
     _WORKSPACE_CACHE[path] = {"time": time.time(), "data": result}
     return result
@@ -97,11 +105,13 @@ class LLMClientV2:
         model: str = DEFAULT_MODEL,
         profile: Any = None,
         base_url: str = OLLAMA_BASE_URL,
+        max_concurrent: int = 4,
     ) -> None:
         self.memory = hybrid_memory
         self.model = model
         self.profile = profile
         self.base_url = base_url
+        self._semaphore = asyncio.Semaphore(max_concurrent)
 
         # ── Component wiring ─────────────────────────────────────────────
         self._ollama = OllamaClient(base_url=base_url)
@@ -121,6 +131,10 @@ class LLMClientV2:
     def set_router(self, router: ModelRouter) -> None:
         self.model_router = router
 
+    def set_telemetry(self, telemetry: Any) -> None:
+        """Connect execution telemetry for recording LLM call metrics."""
+        self._telemetry = telemetry
+
     # ── Core complete() — the single path every prompt takes ─────────────
 
     async def complete(
@@ -130,42 +144,130 @@ class LLMClientV2:
         temperature: float = 0.1,
         task_type: str = "chat",
         keep_think: bool = False,
+        classification: dict[str, Any] | None = None,
     ) -> str:
         """Text completion: ModelRouter → OllamaClient → CloudLLMClient fallback.
 
         Steps:
             1. Ask ModelRouter for the best model name for this task_type.
             2. Call OllamaClient.complete() with that model.
-            3. If Ollama raises ANY exception, fall back to CloudLLMClient.
+            3. If response quality is poor, auto-escalate once.
+            4. If Ollama raises ANY exception, fall back to CloudLLMClient
+               with the correct tier.
+            5. Record telemetry for every call.
         """
-        # Step 1 — pick model
-        if self.model_router is not None:
-            model_to_use = self.model_router.pick_model(task_type)
-        else:
-            model_to_use = self.model
+        async with self._semaphore:
+            # Step 1 — pick model (adaptive if classification provided)
+            routing_decision = None
+            if self.model_router is not None:
+                if classification is not None and hasattr(self.model_router, "route_adaptive"):
+                    routing_decision = self.model_router.route_adaptive(classification)
+                    model_to_use = routing_decision.model
+                else:
+                    model_to_use = self.model_router.pick_model(task_type)
+            else:
+                model_to_use = self.model
 
-        # Step 2 — try Ollama
-        try:
-            return await self._ollama.complete(
-                prompt,
-                system=system,
-                temperature=temperature,
-                model=model_to_use,
-                keep_think=keep_think,
-            )
-        except Exception as exc:
-            logger.warning("Ollama failed (%s). Attempting cloud fallback.", exc)
+            tier = 2  # default tier for cloud fallback
+            if routing_decision is not None:
+                tier = routing_decision.tier
+            elif self.model_router is not None and hasattr(self.model_router, "_registry"):
+                tier = self.model_router._registry.get_tier(model_to_use)
 
-        # Step 3 — cloud fallback
-        if self._cloud_client is not None:
+            # Step 2 — try Ollama
+            t0 = time.time()
+            response = ""
             try:
-                return await self._cloud_client.complete(
-                    prompt, system=system, temperature=temperature
+                response = await self._ollama.complete(
+                    prompt,
+                    system=system,
+                    temperature=temperature,
+                    model=model_to_use,
+                    keep_think=keep_think,
                 )
-            except Exception as cloud_exc:
-                logger.error("Cloud fallback also failed: %s", cloud_exc, exc_info=True)
+                latency_ms = (time.time() - t0) * 1000
+                self._record_telemetry(model_to_use, task_type, latency_ms, prompt, response, True)
 
-        return ""
+                # Step 3 — auto-escalate if quality is poor
+                if (
+                    self.model_router is not None
+                    and hasattr(self.model_router, "should_escalate")
+                    and self.model_router.should_escalate(model_to_use, task_type, response)
+                ):
+                    escalated_model = self.model_router.escalate(model_to_use)
+                    if escalated_model != model_to_use:
+                        logger.info(
+                            "Auto-escalating from %s to %s (poor quality detected)",
+                            model_to_use, escalated_model,
+                        )
+                        t1 = time.time()
+                        try:
+                            response = await self._ollama.complete(
+                                prompt,
+                                system=system,
+                                temperature=temperature,
+                                model=escalated_model,
+                                keep_think=keep_think,
+                            )
+                            latency_ms = (time.time() - t1) * 1000
+                            self._record_telemetry(
+                                escalated_model, task_type, latency_ms, prompt, response, True
+                            )
+                        except Exception as esc_exc:
+                            logger.warning("Escalated model %s also failed: %s", escalated_model, esc_exc)
+
+                return response
+
+            except Exception as exc:
+                latency_ms = (time.time() - t0) * 1000
+                self._record_telemetry(model_to_use, task_type, latency_ms, prompt, "", False)
+                logger.warning("Ollama failed (%s). Attempting cloud fallback.", exc)
+
+            # Step 4 — cloud fallback with correct tier
+            if self._cloud_client is not None:
+                t0 = time.time()
+                try:
+                    response = await self._cloud_client.complete(
+                        prompt, system=system, temperature=temperature, tier=tier
+                    )
+                    latency_ms = (time.time() - t0) * 1000
+                    cloud_model = f"cloud_tier{tier}"
+                    self._record_telemetry(cloud_model, task_type, latency_ms, prompt, response, True)
+                    return response
+                except Exception as cloud_exc:
+                    latency_ms = (time.time() - t0) * 1000
+                    self._record_telemetry(f"cloud_tier{tier}", task_type, latency_ms, prompt, "", False)
+                    logger.error("Cloud fallback also failed: %s", cloud_exc, exc_info=True)
+
+            return ""
+
+    def _record_telemetry(
+        self,
+        model: str,
+        task_type: str,
+        latency_ms: float,
+        prompt: str,
+        response: str,
+        success: bool,
+    ) -> None:
+        """Record call metrics to telemetry if available."""
+        telemetry = getattr(self, "_telemetry", None)
+        if telemetry is None:
+            return
+        try:
+            # Rough token estimation: ~4 chars per token
+            input_tokens = max(1, len(prompt) // 4)
+            output_tokens = max(0, len(response) // 4)
+            telemetry.record(
+                model=model,
+                task_type=task_type,
+                latency_ms=latency_ms,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                success=success,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Telemetry recording failed: %s", exc)
 
     # ── JSON completion helper ───────────────────────────────────────────
 

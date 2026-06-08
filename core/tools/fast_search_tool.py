@@ -19,7 +19,7 @@ class PythonSearchEngine:
         self.no_skip = no_skip
         self.max_results = max_results
         
-        self.q = queue.Queue()
+        self.q: queue.Queue[str] = queue.Queue()
         self.active_workers = 0
         self.active_workers_lock = threading.Lock()
         self.results = []
@@ -215,6 +215,8 @@ async def run_fast_search(path="all", query="", content="", threads=8, case_sens
     # 1. Determine roots
     if path == "all":
         roots = get_windows_drives() if os.name == "nt" else ["/"]
+    elif isinstance(path, list):
+        roots = path
     else:
         roots = [path]
 
@@ -266,7 +268,7 @@ async def run_fast_search(path="all", query="", content="", threads=8, case_sens
                             results.append({
                                 "type": "match",
                                 "path": parts[0].strip(),
-                                "line": int(parts[1].strip()) if parts[1].strip().isdigit() else parts[1],
+                                "line": parts[1].strip(),
                                 "text": parts[2].strip()
                             })
                     elif "Files scanned" in line_clean:

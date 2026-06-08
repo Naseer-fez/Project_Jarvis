@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    import bcrypt  # type: ignore[import]
+    import bcrypt
 except Exception:  # pragma: no cover - optional optimized hasher
     bcrypt = None  # type: ignore[assignment]
 
@@ -47,6 +47,7 @@ class AuthManager:
     @contextlib.contextmanager
     def _connect(self):
         conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.execute("PRAGMA journal_mode=WAL;")
         conn.row_factory = sqlite3.Row
         try:
             with conn:

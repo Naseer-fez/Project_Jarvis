@@ -14,9 +14,9 @@ class CloudLLMClient:
     # Tiered models for each provider
     MODELS = {
         "gemini": {
-            1: "gemini-1.5-flash",
-            2: "gemini-1.5-pro",
-            3: "gemini-2.0-pro-exp-02-05",
+            1: "gemini-2.0-flash-lite",
+            2: "gemini-2.5-flash",
+            3: "gemini-2.5-pro",
         },
         "groq": {
             1: "llama-3.1-8b-instant",
@@ -31,8 +31,15 @@ class CloudLLMClient:
         "anthropic": {
             1: "claude-3-haiku-20240307",
             2: "claude-3-5-sonnet-20241022",
-            3: "claude-3-5-sonnet-20241022", # Anthropic doesn't have a distinct tier 3 right now, sonnet is very capable
-        }
+            3: "claude-sonnet-4-20250514",
+        },
+    }
+
+    # Tier-aware provider ordering: cheap-first for tiers 1-2, quality-first for tier 3
+    PROVIDER_ORDER = {
+        1: ["groq", "gemini", "openai", "anthropic"],
+        2: ["groq", "gemini", "openai", "anthropic"],
+        3: ["anthropic", "openai", "gemini", "groq"],
     }
 
     def __init__(self) -> None:
@@ -49,23 +56,30 @@ class CloudLLMClient:
         ]
         if not self._available:
             logger.warning("No cloud LLM providers configured. Cloud fallback disabled.")
+        self.last_usage: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
 
     async def complete(self, prompt: str, system: str = "", temperature: float = 0.1, tier: int = 2) -> str:
-        for provider in self._available:
+        ordered = self.PROVIDER_ORDER.get(tier, self.PROVIDERS)
+        providers = [p for p in ordered if p in self._available]
+
+        for provider in providers:
             try:
                 model = self.MODELS[provider].get(tier, self.MODELS[provider][2])
-                response = await self._call(provider, prompt, system, temperature, model)
+                response, usage = await self._call(provider, prompt, system, temperature, model)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Cloud provider '%s' failed: %s", provider, exc)
                 continue
 
             if response:
+                self.last_usage = usage
                 logger.info("Cloud LLM response from '%s' using model '%s'", provider, model)
                 return response
 
         raise RuntimeError(f"All cloud LLM providers failed for tier {tier}.")
 
-    async def _call(self, provider: str, prompt: str, system: str, temperature: float, model: str) -> str:
+    async def _call(
+        self, provider: str, prompt: str, system: str, temperature: float, model: str,
+    ) -> tuple[str, dict[str, int]]:
         if provider == "gemini":
             return await self._call_gemini(prompt, system, temperature, model)
         if provider == "groq":
@@ -74,9 +88,11 @@ class CloudLLMClient:
             return await self._call_openai(prompt, system, temperature, model)
         if provider == "anthropic":
             return await self._call_anthropic(prompt, system, temperature, model)
-        return ""
+        return "", {"input_tokens": 0, "output_tokens": 0}
 
-    async def _call_groq(self, prompt: str, system: str, temperature: float, model: str) -> str:
+    async def _call_groq(
+        self, prompt: str, system: str, temperature: float, model: str,
+    ) -> tuple[str, dict[str, int]]:
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
@@ -98,12 +114,15 @@ class CloudLLMClient:
                 timeout=aiohttp.ClientTimeout(total=45),
             ) as resp:
                 data = await resp.json()
+        usage = self._extract_openai_usage(data)
         if not data.get("choices"):
             logger.debug("Groq response missing choices: %s", data)
-            return ""
-        return str(data["choices"][0]["message"]["content"])
+            return "", usage
+        return str(data["choices"][0]["message"]["content"]), usage
 
-    async def _call_openai(self, prompt: str, system: str, temperature: float, model: str) -> str:
+    async def _call_openai(
+        self, prompt: str, system: str, temperature: float, model: str,
+    ) -> tuple[str, dict[str, int]]:
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
@@ -124,12 +143,15 @@ class CloudLLMClient:
                 timeout=aiohttp.ClientTimeout(total=45),
             ) as resp:
                 data = await resp.json()
+        usage = self._extract_openai_usage(data)
         if not data.get("choices"):
             logger.debug("OpenAI response missing choices: %s", data)
-            return ""
-        return str(data["choices"][0]["message"]["content"])
+            return "", usage
+        return str(data["choices"][0]["message"]["content"]), usage
 
-    async def _call_anthropic(self, prompt: str, system: str, temperature: float, model: str) -> str:
+    async def _call_anthropic(
+        self, prompt: str, system: str, temperature: float, model: str,
+    ) -> tuple[str, dict[str, int]]:
         import aiohttp
 
         async with aiohttp.ClientSession() as session:
@@ -150,12 +172,19 @@ class CloudLLMClient:
                 timeout=aiohttp.ClientTimeout(total=45),
             ) as resp:
                 data = await resp.json()
+        usage_data = data.get("usage", {})
+        usage = {
+            "input_tokens": usage_data.get("input_tokens", 0),
+            "output_tokens": usage_data.get("output_tokens", 0),
+        }
         if not data.get("content"):
             logger.debug("Anthropic response missing content: %s", data)
-            return ""
-        return str(data["content"][0]["text"])
+            return "", usage
+        return str(data["content"][0]["text"]), usage
 
-    async def _call_gemini(self, prompt: str, system: str, temperature: float, model: str) -> str:
+    async def _call_gemini(
+        self, prompt: str, system: str, temperature: float, model: str,
+    ) -> tuple[str, dict[str, int]]:
         import aiohttp
 
         api_key = os.environ["GEMINI_API_KEY"]
@@ -178,11 +207,25 @@ class CloudLLMClient:
                 timeout=aiohttp.ClientTimeout(total=45),
             ) as resp:
                 data = await resp.json()
+        usage_meta = data.get("usageMetadata", {})
+        usage = {
+            "input_tokens": usage_meta.get("promptTokenCount", 0),
+            "output_tokens": usage_meta.get("candidatesTokenCount", 0),
+        }
         try:
-            return str(data["candidates"][0]["content"]["parts"][0]["text"])
+            return str(data["candidates"][0]["content"]["parts"][0]["text"]), usage
         except (KeyError, IndexError):
             logger.debug("Gemini response missing content: %s", data)
-            return ""
+            return "", usage
+
+    @staticmethod
+    def _extract_openai_usage(data: dict) -> dict[str, int]:
+        """Extract usage tokens from OpenAI-compatible API responses (OpenAI, Groq)."""
+        usage_data = data.get("usage", {})
+        return {
+            "input_tokens": usage_data.get("prompt_tokens", 0),
+            "output_tokens": usage_data.get("completion_tokens", 0),
+        }
 
 
 __all__ = ["CloudLLMClient"]

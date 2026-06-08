@@ -16,6 +16,7 @@ from core.desktop.actions import DesktopActionExecutor
 from core.desktop.observation import DesktopObserver
 from core.llm.client import LLMClientV2
 from core.llm.model_router import ModelRouter
+from core.llm.telemetry import RoutingTelemetry
 from core.planner.planner import TaskPlanner
 from core.llm.defaults import DEFAULT_MODEL
 from core.memory.hybrid_memory import HybridMemory
@@ -60,9 +61,9 @@ class ControllerServices:
     monitor: BackgroundMonitor
     desktop_executor: DesktopActionExecutor = None  # type: ignore[assignment]
     desktop_observer: DesktopObserver = None  # type: ignore[assignment]
-    desktop_bridge: Any = None  # type: ignore[assignment]
+    desktop_bridge: Any = None
     event_bus: EventBus = None  # type: ignore[assignment]
-    container: Any = None  # type: ignore[assignment]
+    container: Any = None
 
 
 def build_controller_services(
@@ -231,7 +232,7 @@ def build_controller_services(
 
     # 10. Register Autonomy Governor
     if not container.has("autonomy_governor"):
-        container.register("autonomy_governor", lambda: autonomy_governor_cls(level=3))
+        container.register("autonomy_governor", lambda: autonomy_governor_cls(level=config.get_int("autonomy", "level", fallback=3)))
 
     # 11. Register Desktop Executor
     if not container.has("desktop_executor"):
@@ -309,6 +310,22 @@ def build_controller_services(
     )
     llm.set_router(model_router)
 
+    # Wire telemetry if enabled
+    telemetry_enabled = True
+    try:
+        telemetry_enabled = str(
+            config.get("routing", "telemetry_enabled", fallback="true")
+        ).lower() in ("true", "1", "yes")
+    except Exception:
+        pass
+
+    if telemetry_enabled:
+        if not container.has("telemetry"):
+            container.register("telemetry", lambda: RoutingTelemetry())
+        telemetry = container.resolve("telemetry")
+        model_router.set_telemetry(telemetry)
+        llm.set_telemetry(telemetry)
+
     if hasattr(memory, "set_llm"):
         memory.set_llm(
             llm,
@@ -346,7 +363,8 @@ def build_controller_services(
 
     risk_evaluator = container.resolve("risk_evaluator", config=config)
     risk_evaluator.registry = tool_router
-    autonomy_governor = container.resolve("autonomy_governor", level=3)
+    autonomy_level = config.get_int("autonomy", "level", fallback=3)
+    autonomy_governor = container.resolve("autonomy_governor", level=autonomy_level)
     autonomy_governor.registry = tool_router
     desktop_executor = container.resolve("desktop_executor", risk_evaluator=risk_evaluator)
     desktop_observer = container.resolve("desktop_observer")

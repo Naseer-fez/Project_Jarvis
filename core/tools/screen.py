@@ -231,7 +231,7 @@ def read_screen_text(
         # Configure Tesseract path dynamically
         if getattr(sys, "frozen", False):
             # Packaged desktop app mode: use bundled Tesseract binary from temporary directory
-            base_dir = sys._MEIPASS
+            base_dir = getattr(sys, '_MEIPASS')
             tesseract_dir = os.path.join(base_dir, "bin", "tesseract")
             os.environ["TESSDATA_PREFIX"] = os.path.join(tesseract_dir, "tessdata")
             pytesseract.pytesseract.tesseract_cmd = os.path.join(tesseract_dir, "tesseract.exe")

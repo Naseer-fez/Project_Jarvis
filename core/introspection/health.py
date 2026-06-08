@@ -222,7 +222,7 @@ def _collect_config_checks(config) -> list[HealthCheck]:
                     tesseract_dir = os.path.join(base_dir, "bin", "tesseract")
                     cmd = os.path.join(tesseract_dir, "tesseract.exe")
                 else:
-                    cmd = os.environ.get("TESSERACT_CMD")
+                    cmd = str(os.environ.get("TESSERACT_CMD") or "")
                     if not cmd:
                         project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                         local_bundled = os.path.join(project_root, "bin", "tesseract", "tesseract.exe")

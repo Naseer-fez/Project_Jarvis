@@ -1,104 +1,134 @@
 {% extends "base.html" %}
 
+{% block page_title %}AI OS{% endblock %}
+
 {% block content %}
-  <section class="ai-os-hero">
-    <p class="eyebrow">Local-first automation platform</p>
-    <h1>{{ overview.blueprint.product_name or "Jarvis AI OS" }}</h1>
-    <p class="lede">{{ overview.blueprint.mission or "Blueprint unavailable." }}</p>
-  </section>
+<!-- Hero Section -->
+<section class="hero-section">
+  <div class="hero-eyebrow">Local-first automation platform</div>
+  <h1 class="hero-title">{{ overview.blueprint.product_name or 'Jarvis AI OS' }}</h1>
+  <p class="hero-desc">{{ overview.blueprint.mission or 'Blueprint unavailable.' }}</p>
+</section>
 
-  {% if overview.errors %}
-    <section class="panel warn-panel">
-      <h2>Setup Notes</h2>
-      <ul>
-        {% for error in overview.errors %}
-          <li>{{ error }}</li>
+<!-- Errors -->
+{% if overview.errors %}
+<div class="card mb-lg" style="border-color: var(--warning);">
+  <h3 class="text-warning mb-sm">Setup Notes</h3>
+  <ul>
+    {% for error in overview.errors %}
+    <li class="text-muted">{{ error }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<!-- Grid Panels: Blueprint Details -->
+<div class="grid-panels mb-lg">
+  <div class="card">
+    <h3 class="mb-sm">Principles</h3>
+    <ul>
+      {% for item in overview.blueprint.principles %}
+      <li class="text-secondary" style="margin-bottom: 4px;">{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 class="mb-sm">Architecture Layers</h3>
+    <ul>
+      {% for item in overview.blueprint.layers %}
+      <li class="text-secondary" style="margin-bottom: 4px;">{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 class="mb-sm">Workflow Nodes</h3>
+    <ul>
+      {% for item in overview.blueprint.node_categories %}
+      <li class="text-secondary" style="margin-bottom: 4px;">{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 class="mb-sm">Security Controls</h3>
+    <ul>
+      {% for item in overview.blueprint.security_controls %}
+      <li class="text-secondary" style="margin-bottom: 4px;">{{ item }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<!-- Plugins Table -->
+<div class="card mb-lg">
+  <h3 class="mb-md">Extension Packs <span class="badge badge-accent">{{ overview.plugins.count }}</span></h3>
+  {% if overview.plugins.plugins %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Plugin</th>
+          <th>Types</th>
+          <th>Permissions</th>
+          <th>Local</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in overview.plugins.plugins %}
+        <tr>
+          <td>
+            {{ p.name }}
+            <small class="text-muted">{{ p.version }}</small>
+          </td>
+          <td>{{ p.types | join(', ') }}</td>
+          <td>{{ p.permissions | join(', ') }}</td>
+          <td>{{ 'Yes' if p.local else 'No' }}</td>
+        </tr>
         {% endfor %}
-      </ul>
-    </section>
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">🔌</div>
+    <div class="empty-state-text">No manifest plugins discovered yet</div>
+  </div>
   {% endif %}
+</div>
 
-  <section class="grid-panels">
-    <article class="panel">
-      <h2>Principles</h2>
-      <ul>
-        {% for principle in overview.blueprint.principles or [] %}
-          <li>{{ principle }}</li>
-        {% endfor %}
-      </ul>
-    </article>
-
-    <article class="panel">
-      <h2>Architecture Layers</h2>
-      <ul>
-        {% for layer in overview.blueprint.layers or [] %}
-          <li>{{ layer }}</li>
-        {% endfor %}
-      </ul>
-    </article>
-
-    <article class="panel">
-      <h2>Workflow Nodes</h2>
-      <ul>
-        {% for category in overview.blueprint.node_categories or [] %}
-          <li>{{ category }}</li>
-        {% endfor %}
-      </ul>
-    </article>
-
-    <article class="panel">
-      <h2>Security</h2>
-      <ul>
-        {% for control in overview.blueprint.security_controls or [] %}
-          <li>{{ control }}</li>
-        {% endfor %}
-      </ul>
-    </article>
-  </section>
-
-  <section class="panel">
-    <h2>Installed Extension Packs</h2>
-    {% if overview.plugins.plugins %}
-      <table>
-        <thead>
-          <tr>
-            <th>Plugin</th>
-            <th>Types</th>
-            <th>Permissions</th>
-            <th>Local</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for plugin in overview.plugins.plugins %}
-            <tr>
-              <td>{{ plugin.name }} <span class="muted">({{ plugin.id }} {{ plugin.version }})</span></td>
-              <td>{{ plugin.types | join(", ") }}</td>
-              <td>{{ plugin.permissions | join(", ") }}</td>
-              <td>{{ "Yes" if plugin.local_first else "No" }}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    {% else %}
-      <p class="placeholder">No manifest plugins discovered yet.</p>
-    {% endif %}
-  </section>
-
-  <section class="panel">
-    <h2>Starter Workflow Templates</h2>
-    {% if overview.workflows.templates %}
-      <div class="template-list">
-        {% for workflow in overview.workflows.templates %}
-          <article class="template-card">
-            <h3>{{ workflow.name }}</h3>
-            <p class="muted">{{ workflow.id }} | {{ workflow.mode }} | {{ workflow.node_count }} nodes</p>
-            <p>Permissions: {{ workflow.permission_scopes | join(", ") }}</p>
-            <p>Tags: {{ workflow.tags | join(", ") }}</p>
-          </article>
+<!-- Workflows -->
+<div class="card">
+  <h3 class="mb-md">Workflow Templates <span class="badge badge-violet">{{ overview.workflows.count }}</span></h3>
+  {% if overview.workflows.templates %}
+  <div class="grid-panels">
+    {% for w in overview.workflows.templates %}
+    <div class="card">
+      <h3>{{ w.name }}</h3>
+      <small class="text-muted mono">{{ w.id }} · {{ w.mode }} · {{ w.node_count }} nodes</small>
+      {% if w.permissions %}
+      <div class="mt-sm">
+        {% for perm in w.permissions %}
+        <span class="badge badge-neutral">{{ perm }}</span>
         {% endfor %}
       </div>
-    {% else %}
-      <p class="placeholder">No workflow templates discovered yet.</p>
-    {% endif %}
-  </section>
+      {% endif %}
+      {% if w.tags %}
+      <div class="mt-sm">
+        {% for tag in w.tags %}
+        <span class="badge badge-accent">{{ tag }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <div class="empty-state-icon">⚡</div>
+    <div class="empty-state-text">No workflow templates discovered yet</div>
+  </div>
+  {% endif %}
+</div>
 {% endblock %}

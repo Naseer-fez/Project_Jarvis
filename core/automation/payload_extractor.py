@@ -65,7 +65,7 @@ class PayloadExtractor:
 
     def extract_text_from_video(self, path: Path) -> str:
         try:
-            import cv2  # type: ignore[import]
+            import cv2
             from PIL import Image
             import pytesseract
         except Exception as exc:  # noqa: BLE001

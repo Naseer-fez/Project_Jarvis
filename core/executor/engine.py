@@ -34,7 +34,7 @@ class DAGExecutor:
                 rb_action = rollback_def.get("action")
                 rb_params = rollback_def.get("params", {})
                 async def rollback_callback():
-                    context.log(f"Rolling back step {step_id} via {rb_action}")
+                    logger.info("Rolling back step %s via %s", step_id, rb_action, extra={"metadata": {"step_id": step_id, "action": rb_action}})
                     sig_rb = inspect.signature(self.router.execute)
                     if "context" in sig_rb.parameters:
                         await self.router.execute(rb_action, rb_params, context=context)
@@ -58,7 +58,7 @@ class DAGExecutor:
         try:
             topo_order = dag.topological_sort()
         except Exception as e:
-            context.log(f"Topological sort failed: {e}", level="ERROR")
+            logger.error("Topological sort failed: %s", e, extra={"metadata": {"error": str(e)}})
             publish_event("task_finished", {"trace_id": context.trace_id, "task_id": context.task_id, "status": "failed", "error": str(e)})
             return {"status": "failure", "error": str(e)}
 
@@ -79,7 +79,7 @@ class DAGExecutor:
                 if isinstance(res, dict) and res.get("success", True) is not False:
                     step_states[sid] = "success"
                     completed_steps.add(sid)
-                    context.log(f"Replay: loaded step {sid} status as completed from snapshot.")
+                    logger.info("Replay: loaded step %s status as completed from snapshot", sid, extra={"metadata": {"step_id": sid}})
                     if sid in dag.step_map:
                         register_rollback(sid, dag.step_map[sid])
 
@@ -105,7 +105,7 @@ class DAGExecutor:
             if replay_active and step_id in step_results:
                 prior_res = step_results[step_id]
                 if isinstance(prior_res, dict) and prior_res.get("success", True) is not False:
-                    context.log(f"Replay: mocking execution of step {step_id} with prior successful result.")
+                    logger.info("Replay: mocking execution of step %s with prior successful result", step_id, extra={"metadata": {"step_id": step_id}})
                     return prior_res
 
             if self.gov and action:
@@ -116,11 +116,12 @@ class DAGExecutor:
             backoff = 1.0
             for attempt in range(retry_count + 1):
                 try:
-                    context.log(
-                        f"Step {step_id}: executing '{action}' (attempt {attempt + 1})"
+                    logger.info(
+                        "Step %s: executing '%s' (attempt %d)", step_id, action, attempt + 1,
+                        extra={"metadata": {"step_id": step_id, "action": action, "attempt": attempt + 1}}
                     )
                     # Snapshot at start of step
-                    context.save_snapshot(step_id=step_id, metadata={"status": "running", "action": action, "attempt": attempt + 1})
+                    await context.save_snapshot(step_id=step_id, metadata={"status": "running", "action": action, "attempt": attempt + 1})
                     publish_event("step_executing", {"trace_id": context.trace_id, "task_id": context.task_id, "step_id": step_id, "action": action})
 
                     sig = inspect.signature(self.router.execute)
@@ -130,11 +131,11 @@ class DAGExecutor:
                         observation = await self.router.execute(action, params)
 
                     if observation.execution_status == "success":
-                        context.log(f"Step {step_id} succeeded.")
-                        res_dict = observation.to_dict()
+                        logger.info("Step %s succeeded.", step_id, extra={"metadata": {"step_id": step_id}})
+                        res_dict: Dict[str, Any] = dict(observation.to_dict())
 
                         # Snapshot at end of step (success)
-                        context.save_snapshot(step_id=step_id, metadata={"status": "success", "action": action})
+                        await context.save_snapshot(step_id=step_id, metadata={"status": "success", "action": action})
                         publish_event("step_completed", {"trace_id": context.trace_id, "task_id": context.task_id, "step_id": step_id, "status": "success", "result": res_dict})
 
                         # Set up step rollback callback if defined in step schema
@@ -145,17 +146,18 @@ class DAGExecutor:
                         raise RuntimeError(observation.error_message or "Tool execution failed")
                 except Exception as exc:
                     if attempt < retry_count:
-                        context.log(
-                            f"Step {step_id} failed: {exc}. Retrying in {backoff}s...", 
-                            level="WARNING"
+                        logger.warning(
+                            "Step %s failed: %s. Retrying in %ss...", step_id, exc, backoff,
+                            extra={"metadata": {"step_id": step_id, "error": str(exc), "retry_backoff": backoff}}
                         )
                         await asyncio.sleep(backoff)
                         backoff *= 2.0
                     else:
                         # Snapshot at end of step (failure)
-                        context.save_snapshot(step_id=step_id, metadata={"status": "failed", "action": action, "error": str(exc)})
+                        await context.save_snapshot(step_id=step_id, metadata={"status": "failed", "action": action, "error": str(exc)})
                         publish_event("step_completed", {"trace_id": context.trace_id, "task_id": context.task_id, "step_id": step_id, "status": "failed", "error": str(exc)})
                         raise exc
+            raise RuntimeError(f"Step {step_id} failed to execute.")
 
         running_tasks: set[asyncio.Task] = set()
 
@@ -170,18 +172,18 @@ class DAGExecutor:
                 async with cond:
                     step_states[sid] = "cancelled"
                     step_results[sid] = {"success": False, "error": "Cancelled"}
-                    context.log(f"Step {sid} cancelled.", level="INFO")
+                    logger.info("Step %s cancelled.", sid, extra={"metadata": {"step_id": sid}})
                 raise
             except Exception as e:
                 async with cond:
                     step_states[sid] = "failed"
                     step_results[sid] = {"success": False, "error": str(e)}
-                    context.log(f"Step {sid} permanently failed: {e}", level="ERROR")
+                    logger.error("Step %s permanently failed: %s", sid, e, extra={"metadata": {"step_id": sid, "error": str(e)}})
             except BaseException as e:
                 async with cond:
                     step_states[sid] = "failed"
                     step_results[sid] = {"success": False, "error": f"BaseException: {type(e).__name__}"}
-                    context.log(f"Step {sid} aborted due to critical error: {e}", level="ERROR")
+                    logger.error("Step %s aborted due to critical error: %s", sid, e, extra={"metadata": {"step_id": sid, "error": str(e)}})
                 raise
             finally:
                 async with cond:
@@ -230,16 +232,16 @@ class DAGExecutor:
 
         failed_steps = [sid for sid, state in step_states.items() if state == "failed"]
         if failed_steps:
-            context.log(
-                f"DAG execution halted at failed steps {failed_steps}. Rolling back in reverse topological order...", 
-                level="ERROR"
+            logger.error(
+                "DAG execution halted at failed steps %s. Rolling back in reverse topological order...", failed_steps,
+                extra={"metadata": {"failed_steps": failed_steps}}
             )
             for sid in reversed(topo_order):
                 if sid in rollbacks:
                     try:
                         await rollbacks[sid]()
                     except Exception as e:
-                        context.log(f"Rollback callback failure for step {sid}: {e}", level="ERROR")
+                        logger.error("Rollback callback failure for step %s: %s", sid, e, extra={"metadata": {"step_id": sid, "error": str(e)}})
             
             publish_event("task_finished", {"trace_id": context.trace_id, "task_id": context.task_id, "status": "failed", "failed_steps": failed_steps})
             return {"status": "failure", "failed_steps": failed_steps, "results": step_results}

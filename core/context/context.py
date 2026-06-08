@@ -8,7 +8,9 @@ from __future__ import annotations
 import logging
 import uuid
 from typing import Any
+from contextvars import Token
 from core.state_machine import StateMachine, State
+from core.logging.logger import set_trace_ids, reset_trace_ids
 
 logger = logging.getLogger("Jarvis.Context")
 
@@ -30,6 +32,8 @@ class TaskExecutionContext:
         self.state_machine.task_id = self.task_id
         self.variables: dict[str, Any] = {}
         self.logs: list[str] = []
+        self._trace_token: Token[str | None] | None = None
+        self._task_token: Token[str | None] | None = None
 
     def log(self, message: str, level: str = "INFO") -> None:
         """Log an execution trace message, enriched with correlation IDs."""
@@ -67,25 +71,30 @@ class TaskExecutionContext:
             "state": self.state_machine.state.value if self.state_machine else "unknown",
         }
 
-    def save_snapshot(self, step_id: str | None = None, metadata: dict[str, Any] | None = None) -> None:
+    async def save_snapshot(self, step_id: str | None = None, metadata: dict[str, Any] | None = None) -> None:
         import json
         from pathlib import Path
+        import asyncio
         
         snapshot_dir = Path("logs/traces")
-        snapshot_dir.mkdir(parents=True, exist_ok=True)
-        snapshot_file = snapshot_dir / f"{self.trace_id}.json"
         
         snapshot_data = self.to_dict()
         snapshot_data["step_id"] = step_id
         snapshot_data["metadata"] = metadata or {}
         
-        try:
-            snapshot_file.write_text(json.dumps(snapshot_data, indent=2, default=str), encoding="utf-8")
-        except Exception as e:
-            logger.warning("Failed to save trace snapshot for %s: %s", self.trace_id, e)
+        def _write():
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            snapshot_file = snapshot_dir / f"{self.trace_id}.json"
+            try:
+                snapshot_file.write_text(json.dumps(snapshot_data, indent=2, default=str), encoding="utf-8")
+            except Exception as e:
+                logger.warning("Failed to save trace snapshot for %s: %s", self.trace_id, e)
+                
+        await asyncio.to_thread(_write)
 
 
     def __enter__(self) -> TaskExecutionContext:
+        self._trace_token, self._task_token = set_trace_ids(self.trace_id, self.task_id)
         return self
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
@@ -107,8 +116,12 @@ class TaskExecutionContext:
                             self.state_machine.force_idle()
                 except Exception as e:
                     self.log(f"Error during context cleanup: {e}", level="ERROR")
+        
+        if self._trace_token and self._task_token:
+            reset_trace_ids(self._trace_token, self._task_token)
 
     async def __aenter__(self) -> TaskExecutionContext:
+        self._trace_token, self._task_token = set_trace_ids(self.trace_id, self.task_id)
         return self
 
     async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:

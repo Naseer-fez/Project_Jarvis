@@ -258,7 +258,7 @@ class StartupValidator:
         root_dir_str = str(self.root_dir)
         if root_dir_str not in sys.path:
             sys.path.insert(0, root_dir_str)
-        report = {
+        report: dict[str, Any] = {
             "status": "GREEN",
             "passed": [],
             "failed": [],

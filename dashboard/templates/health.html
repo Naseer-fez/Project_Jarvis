@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+
+{% block page_title %}Health{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">System Health</h1>
+  <p class="page-subtitle">Real-time diagnostics and dependency status</p>
+</div>
+
+<!-- Overall Status -->
+<div class="card mb-lg" id="health-hero" style="position:relative; overflow:hidden;">
+  <div class="flex items-center gap-md" style="position:relative; z-index:1;">
+    <div id="health-orb" class="health-orb health-loading">
+      <div class="health-orb-inner"></div>
+    </div>
+    <div>
+      <div id="health-headline" class="health-headline">Running diagnostics…</div>
+      <div id="health-sub" class="health-sub text-muted">Querying subsystems</div>
+    </div>
+    <button id="health-refresh" class="btn btn-sm" style="margin-left:auto;" title="Re-run health check">
+      ↻ Refresh
+    </button>
+  </div>
+</div>
+
+<!-- Summary Stats -->
+<div class="stats-grid mb-lg">
+  <div class="stat-card">
+    <div class="stat-label">STATUS</div>
+    <div class="stat-value mono" id="stat-health-ok">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">JARVIS STATE</div>
+    <div class="stat-value mono" id="stat-health-state">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">UPTIME</div>
+    <div class="stat-value mono" id="stat-health-uptime">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">CHECKS PASSED</div>
+    <div class="stat-value text-success mono" id="stat-health-pass">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">WARNINGS</div>
+    <div class="stat-value text-warning mono" id="stat-health-warn">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">FAILURES</div>
+    <div class="stat-value text-danger mono" id="stat-health-fail">—</div>
+  </div>
+</div>
+
+<!-- Checks Table -->
+<div class="card" id="checks-card">
+  <h3 class="mb-md">Diagnostic Checks</h3>
+  <div id="checks-loading" class="empty-state">
+    <div class="spinner" style="margin:0 auto var(--space-md);"></div>
+    <div class="empty-state-text">Running health checks…</div>
+  </div>
+  <div id="checks-table-wrap" class="table-wrap hidden">
+    <table>
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Check</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody id="checks-body"></tbody>
+    </table>
+  </div>
+  <div id="checks-error" class="empty-state hidden">
+    <div class="empty-state-icon">⚠️</div>
+    <div class="empty-state-text" id="checks-error-msg">Failed to reach health endpoint</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function() {
+  const STATUS_BADGE = {
+    ok:   '<span class="badge badge-success">OK</span>',
+    warn: '<span class="badge badge-warning">WARN</span>',
+    fail: '<span class="badge badge-danger">FAIL</span>',
+  };
+
+  function formatUptime(seconds) {
+    if (seconds == null) return '—';
+    if (seconds < 60) return seconds.toFixed(1) + 's';
+    if (seconds < 3600) return (seconds / 60).toFixed(1) + 'm';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    return h + 'h ' + m + 'm';
+  }
+
+  function prettifyName(name) {
+    return name
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+  }
+
+  async function fetchHealth() {
+    const orb = document.getElementById('health-orb');
+    const headline = document.getElementById('health-headline');
+    const sub = document.getElementById('health-sub');
+    const loading = document.getElementById('checks-loading');
+    const tableWrap = document.getElementById('checks-table-wrap');
+    const errorPanel = document.getElementById('checks-error');
+    const tbody = document.getElementById('checks-body');
+
+    orb.className = 'health-orb health-loading';
+    headline.textContent = 'Running diagnostics…';
+    sub.textContent = 'Querying subsystems';
+    loading.classList.remove('hidden');
+    tableWrap.classList.add('hidden');
+    errorPanel.classList.add('hidden');
+
+    try {
+      const res = await fetch('/health');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+
+      const checks = (data.report && data.report.checks) || [];
+      const okCount = checks.filter(function(c) { return c.status === 'ok'; }).length;
+      const warnCount = checks.filter(function(c) { return c.status === 'warn'; }).length;
+      const failCount = checks.filter(function(c) { return c.status === 'fail'; }).length;
+
+      // Hero
+      if (data.ok) {
+        orb.className = 'health-orb health-ok';
+        headline.textContent = 'All Systems Operational';
+        sub.textContent = okCount + ' checks passed';
+      } else if (failCount > 0) {
+        orb.className = 'health-orb health-fail';
+        headline.textContent = 'System Issues Detected';
+        sub.textContent = failCount + ' check(s) failing';
+      } else {
+        orb.className = 'health-orb health-warn';
+        headline.textContent = 'Warnings Present';
+        sub.textContent = warnCount + ' warning(s)';
+      }
+
+      // Stats
+      const okEl = document.getElementById('stat-health-ok');
+      okEl.textContent = data.ok ? 'HEALTHY' : 'DEGRADED';
+      okEl.className = 'stat-value mono ' + (data.ok ? 'text-success' : 'text-danger');
+
+      document.getElementById('stat-health-state').textContent = data.state || '—';
+      document.getElementById('stat-health-uptime').textContent = formatUptime(data.uptime_seconds);
+      document.getElementById('stat-health-pass').textContent = okCount;
+      document.getElementById('stat-health-warn').textContent = warnCount;
+      document.getElementById('stat-health-fail').textContent = failCount;
+
+      // Table
+      tbody.innerHTML = '';
+      checks.forEach(function(check) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + (STATUS_BADGE[check.status] || STATUS_BADGE.warn) + '</td>' +
+          '<td class="fw-600">' + prettifyName(check.name) + '</td>' +
+          '<td class="text-muted" style="font-size:0.82rem; word-break:break-word;">' +
+            (check.message || '—') +
+          '</td>';
+        tbody.appendChild(tr);
+      });
+
+      loading.classList.add('hidden');
+      tableWrap.classList.remove('hidden');
+
+    } catch (err) {
+      orb.className = 'health-orb health-fail';
+      headline.textContent = 'Health Check Failed';
+      sub.textContent = err.message || 'Could not reach the health endpoint';
+      loading.classList.add('hidden');
+      document.getElementById('checks-error-msg').textContent =
+        'Could not reach /health — ' + (err.message || 'unknown error');
+      errorPanel.classList.remove('hidden');
+    }
+  }
+
+  document.getElementById('health-refresh').addEventListener('click', fetchHealth);
+
+  // Auto-run on load
+  fetchHealth();
+})();
+</script>
+
+<style>
+/* Health orb */
+.health-orb {
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.4s ease;
+}
+.health-orb-inner {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  transition: all 0.4s ease;
+}
+
+.health-loading {
+  background: rgba(107,114,128,0.15);
+}
+.health-loading .health-orb-inner {
+  background: radial-gradient(circle at 35% 35%, #6b7280, #374151);
+  animation: orb-pulse 1.2s ease-in-out infinite;
+}
+
+.health-ok {
+  background: rgba(34,197,94,0.12);
+  box-shadow: 0 0 24px rgba(34,197,94,0.15);
+}
+.health-ok .health-orb-inner {
+  background: radial-gradient(circle at 35% 35%, var(--success), #0a5c24);
+  box-shadow: 0 0 20px rgba(34,197,94,0.35);
+  animation: orb-pulse 3s ease-in-out infinite;
+}
+
+.health-warn {
+  background: rgba(245,158,11,0.12);
+  box-shadow: 0 0 24px rgba(245,158,11,0.15);
+}
+.health-warn .health-orb-inner {
+  background: radial-gradient(circle at 35% 35%, var(--warning), #5e3c00);
+  box-shadow: 0 0 20px rgba(245,158,11,0.35);
+  animation: orb-pulse 1.5s ease-in-out infinite;
+}
+
+.health-fail {
+  background: rgba(239,68,68,0.12);
+  box-shadow: 0 0 24px rgba(239,68,68,0.15);
+}
+.health-fail .health-orb-inner {
+  background: radial-gradient(circle at 35% 35%, var(--danger), #5e1010);
+  box-shadow: 0 0 20px rgba(239,68,68,0.35);
+  animation: orb-flicker 0.5s ease-in-out infinite;
+}
+
+.health-headline {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.health-sub {
+  font-size: 0.85rem;
+  margin-top: 2px;
+}
+</style>
+{% endblock %}

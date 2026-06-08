@@ -12,6 +12,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Enforce UTF-8 globally to prevent mixed UTF-16LE / cp1252 corruption in logs and artifacts
+$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
+$env:PYTHONIOENCODING = "utf-8"
+
 function Resolve-ProjectPython {
     $candidates = @(
         (Join-Path $PSScriptRoot "jarvis_env\Scripts\python.exe"),

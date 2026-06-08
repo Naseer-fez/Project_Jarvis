@@ -66,24 +66,33 @@ class DeterministicMockSentenceTransformer:
         if not word:
             return np.zeros(self.dimension)
         if word not in self._word_vectors:
-            import hashlib
             h = hashlib.md5(word.encode('utf-8')).digest()
             seed = int.from_bytes(h[:4], byteorder='big')
             rng = np.random.default_rng(seed)
             # Uniform positive vectors so similarity is always positive in [0, 1]
             vec = rng.uniform(0.1, 1.0, size=self.dimension)
-            self._word_vectors[word] = vec / np.linalg.norm(vec)
+        if word in self._word_vectors:
+            self._word_vectors[word] = self._word_vectors.pop(word)
+            return self._word_vectors[word]
+        
+        h = hashlib.md5(word.encode('utf-8')).digest()
+        seed = int.from_bytes(h[:4], byteorder='big')
+        rng = np.random.default_rng(seed)
+        # Uniform positive vectors so similarity is always positive in [0, 1]
+        vec = rng.uniform(0.1, 1.0, size=self.dimension)
+        if len(self._word_vectors) >= 5000:
+            oldest = next(iter(self._word_vectors))
+            del self._word_vectors[oldest]
+        self._word_vectors[word] = vec / np.linalg.norm(vec)
         return self._word_vectors[word]
 
-    def encode(self, sentences, batch_size=32, normalize_embeddings=True, show_progress_bar=False):
-        import numpy as np
+    def encode(self, sentences, batch_size=32, **_kwargs):
         if isinstance(sentences, str):
             return self._encode_single(sentences)
         else:
             return np.array([self._encode_single(s) for s in sentences])
 
     def _encode_single(self, text: str) -> np.ndarray:
-        import numpy as np
         words = text.split()
         if not words:
             return np.zeros(self.dimension)
@@ -92,7 +101,8 @@ class DeterministicMockSentenceTransformer:
         norm = np.linalg.norm(sum_vec)
         if norm > 0:
             sum_vec = sum_vec / norm
-        return sum_vec
+        from typing import cast
+        return cast(np.ndarray, sum_vec)
 
 
 # ─── EmbeddingManager ─────────────────────────────────────────────────────────
@@ -138,15 +148,23 @@ class EmbeddingManager:
 
         try:
             logger.info(f"Loading sentence-transformer model: {self.model_name}")
-            from sentence_transformers import SentenceTransformer
-            self._model = SentenceTransformer(self.model_name)
+
+            def _load_model():
+                from sentence_transformers import SentenceTransformer
+                return SentenceTransformer(self.model_name)
+
+            self._model = await asyncio.to_thread(_load_model)
+
+            model = self._model
+            if model is None:
+                raise RuntimeError("Failed to load model")
 
             if warm_up:
                 logger.debug("Warming up embedding model...")
-                _ = await asyncio.to_thread(self._model.encode, WARM_UP_TEXT, normalize_embeddings=True)
+                _ = await asyncio.to_thread(model.encode, WARM_UP_TEXT, normalize_embeddings=True)
 
             self._initialized = True
-            dim = self._model.get_sentence_embedding_dimension()
+            dim = model.get_sentence_embedding_dimension()
             logger.info(f"Embedding model ready. Dimension: {dim}")
             return True
 
@@ -177,23 +195,30 @@ class EmbeddingManager:
             List of floats (normalized embedding vector).
         """
         if not self._initialized:
-            raise RuntimeError("EmbeddingManager not initialized. Call initialize() first.")
+            await self.initialize()
 
         # Cache key: MD5 hash of (model + text) for safety
         cache_key = hashlib.md5(f"{self.model_name}::{text}".encode(), usedforsecurity=False).hexdigest()
 
         with self._cache_lock:
             if use_cache and cache_key in self._cache:
-                return self._cache[cache_key]
+                val = self._cache.pop(cache_key)
+                self._cache[cache_key] = val
+                return val
 
-        vector_array = await asyncio.to_thread(self._model.encode, text, normalize_embeddings=True)
-        vector = vector_array.tolist()
+        model = self._model
+        if model is None:
+            raise RuntimeError("EmbeddingManager not initialized properly (model is None).")
+
+        vector_array = await asyncio.to_thread(model.encode, text, normalize_embeddings=True)
+        from typing import cast
+        vector = cast(list[float], vector_array.tolist())
         self._embed_count += 1
 
         if use_cache:
             with self._cache_lock:
                 # Evict oldest if cache is full
-                if len(self._cache) >= CACHE_SIZE:
+                while len(self._cache) >= CACHE_SIZE:
                     oldest = next(iter(self._cache))
                     del self._cache[oldest]
                 self._cache[cache_key] = vector
@@ -211,20 +236,25 @@ class EmbeddingManager:
         Returns a list of normalized embedding vectors.
         """
         if not self._initialized:
-            raise RuntimeError("EmbeddingManager not initialized.")
+            await self.initialize()
 
         if not texts:
             return []
 
+        model = self._model
+        if model is None:
+            raise RuntimeError("EmbeddingManager not initialized properly (model is None).")
+
         vectors = await asyncio.to_thread(
-            self._model.encode,
+            model.encode,
             texts,
             batch_size=batch_size,
             normalize_embeddings=True,
             show_progress_bar=show_progress,
         )
         self._embed_count += len(texts)
-        return vectors.tolist()
+        from typing import cast
+        return cast(list[list[float]], vectors.tolist())
 
     # ── Similarity ─────────────────────────────────────────────────────────────
 

@@ -1,0 +1,35 @@
+{
+  "modules": {
+    "core.autonomy": {
+      "status": "active",
+      "description": "Autonomy layer (governor, risk evaluator, goals)"
+    },
+    "core.executor": {
+      "status": "active",
+      "description": "DAG based execution engine"
+    },
+    "core.controller": {
+      "status": "active",
+      "dependencies": [
+        "core.controller_v2.py"
+      ],
+      "description": "Submodules for the controller"
+    },
+    "core.controller_v2": {
+      "status": "decomposing",
+      "description": "Main orchestrator needing decomposition",
+      "notes": "Extracted web_search fastpath to core.controller.web_search"
+    },
+    "core.memory": {
+      "status": "active",
+      "notes": "hybrid_memory.py is massive"
+    },
+    "core.tools": {
+      "status": "active",
+      "notes": "builtin_tools.py, web_tools.py, gui_control.py are massive"
+    }
+  },
+  "legacy_entrypoints": [
+    "main.py"
+  ]
+}

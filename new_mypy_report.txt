@@ -1,0 +1,2 @@
+temp_intent_handlers.py:8: error: Expected an indented block after 'if' statement on line 5  [syntax]
+Found 1 error in 1 file (errors prevented further checking)

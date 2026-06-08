@@ -13,9 +13,9 @@ class SQLitePool:
     def __init__(self, db_path: str, pool_size: int = 3):
         self.db_path = db_path
         self.pool_size = pool_size
-        self._pool: asyncio.Queue | None = None
-        self._all_conns: set = set()
-        self._in_use_conns: set = set()
+        self._pool: asyncio.Queue[aiosqlite.Connection] | None = None
+        self._all_conns: set[aiosqlite.Connection] = set()
+        self._in_use_conns: set[aiosqlite.Connection] = set()
         self._closed = False
         self._close_waiter: asyncio.Event | None = None
         self._lock = asyncio.Lock()
@@ -23,16 +23,18 @@ class SQLitePool:
     async def _init_pool(self):
         if self._pool is not None:
             return
-        pool = asyncio.Queue(maxsize=self.pool_size)
-        conns = []
+        pool: asyncio.Queue[aiosqlite.Connection] = asyncio.Queue(maxsize=self.pool_size)
+        conns: list[aiosqlite.Connection] = []
         try:
             for _ in range(self.pool_size):
                 conn = await aiosqlite.connect(self.db_path, timeout=30.0)
+                conns.append(conn)
                 conn.row_factory = aiosqlite.Row
                 # Configure Write-Ahead Logging (WAL) and performance/concurrency defaults
-                await conn.execute("PRAGMA journal_mode=WAL;")
-                await conn.execute("PRAGMA synchronous=NORMAL;")
-                conns.append(conn)
+                async with conn.execute("PRAGMA journal_mode=WAL;"):
+                    pass
+                async with conn.execute("PRAGMA synchronous=NORMAL;"):
+                    pass
                 await pool.put(conn)
         except Exception:
             # Roll back/close all opened connections on initialization failure to prevent resource leak
@@ -48,14 +50,14 @@ class SQLitePool:
             self._closed = False
 
     @staticmethod
-    async def _rollback_quietly(conn) -> None:
+    async def _rollback_quietly(conn: aiosqlite.Connection) -> None:
         try:
             await conn.rollback()
         except Exception:
             pass
 
     @staticmethod
-    async def _close_connection(conn) -> None:
+    async def _close_connection(conn: aiosqlite.Connection) -> None:
         try:
             await conn.close()
         except Exception:

@@ -1,0 +1,91 @@
+.git
+.github
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env_dir/
+jarvis_env/
+min_venv/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.cursor/
+
+# Testing and linting
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+vulture_report.txt
+mypy_report.txt
+new_ruff_report.txt
+
+# Databases and local storage
+chroma_db/
+data/
+memory/
+logs/
+outputs/
+workspace/
+runtime/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific
+dump.txt
+dump_2.txt
+*.txt
+!requirements.txt
+!requirements.lock
+!mypy.ini
+!pytest.ini
+!jarvis_voice_section.ini

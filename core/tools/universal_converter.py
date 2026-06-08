@@ -29,8 +29,10 @@ def convert_image(src: Path, dst: Path):
     with Image.open(src) as img:
         # Convert RGBA to RGB for formats that do not support transparency (like JPG/BMP)
         if dst.suffix.lower() in [".jpg", ".jpeg", ".bmp"] and img.mode in ("RGBA", "LA", "P"):
-            img = img.convert("RGB")
-        img.save(dst)
+            converted_img = img.convert("RGB")
+            converted_img.save(dst)
+        else:
+            img.save(dst)
 
 def csv_to_json(src: Path, dst: Path):
     with open(src, 'r', encoding='utf-8', errors='ignore') as f:
@@ -180,7 +182,7 @@ def convert_media_ffmpeg(src: Path, dst: Path):
 # ----------------------------------------------------------------------
 # Universal Entry Point
 # ----------------------------------------------------------------------
-def perform_conversion(source_path: str, target_format: str, output_path: str = None) -> str:
+def perform_conversion(source_path: str, target_format: str, output_path: str | None = None) -> str:
     """
     Main entry point to convert files.
     :param source_path: Path of the input file.

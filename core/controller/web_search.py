@@ -76,8 +76,8 @@ async def handle_web_search(
                 trace_id=trace_id,
                 task_type="web_search_summary",
             )
-            if response and response != "LLM Offline.":
-                return response
+            if response and str(response) != "LLM Offline.":
+                return str(response)
     except Exception as exc:
         logger.warning("Web search synthesis LLM call failed: %s", exc, extra={"trace_id": trace_id})
 
@@ -114,8 +114,8 @@ async def _dispatch_llm_fallback(
                 profile_summary=profile_summary,
                 trace_id=trace_id,
             )
-            if response and response != "LLM Offline.":
-                return response
+            if response and str(response) != "LLM Offline.":
+                return str(response)
     except Exception as exc:
         logger.warning("Fallback LLM dispatch failed: %s", exc, extra={"trace_id": trace_id})
 

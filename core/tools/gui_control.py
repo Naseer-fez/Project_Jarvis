@@ -49,7 +49,7 @@ def _validate_coords(x: int, y: int) -> bool:
         import pyautogui
 
         width, height = pyautogui.size()
-        return 0 <= x < width and 0 <= y < height
+        return bool(0 <= x < width and 0 <= y < height)
     except Exception:
         return True
 
@@ -171,11 +171,11 @@ async def click(x: int, y: int, button: str = "left"):
     if not _validate_coords(x, y):
         return ToolResult(success=False, error=f"Coordinates ({x}, {y}) are outside screen bounds")
 
-    _save_audit_screenshot("before_click")
+    await asyncio.to_thread(_save_audit_screenshot, "before_click")
     await asyncio.sleep(_CLICK_SAFETY_DELAY)
     _LAST_CLICK_TIME = time.time()
-    pag.click(x, y, button=button)
-    _save_audit_screenshot("after_click")
+    await asyncio.to_thread(pag.click, x, y, button=button)
+    await asyncio.to_thread(_save_audit_screenshot, "after_click")
     logger.info("click(%d, %d, button=%s)", x, y, button)
     return ToolResult(success=True, data={"action": "click", "x": x, "y": y, "button": button})
 
@@ -191,10 +191,10 @@ async def double_click(x: int, y: int):
     if not _validate_coords(x, y):
         return ToolResult(success=False, error=f"Coordinates ({x}, {y}) are outside screen bounds")
 
-    _save_audit_screenshot("before_dblclick")
+    await asyncio.to_thread(_save_audit_screenshot, "before_dblclick")
     await asyncio.sleep(_CLICK_SAFETY_DELAY)
-    pag.doubleClick(x, y)
-    _save_audit_screenshot("after_dblclick")
+    await asyncio.to_thread(pag.doubleClick, x, y)
+    await asyncio.to_thread(_save_audit_screenshot, "after_dblclick")
     logger.info("double_click(%d, %d)", x, y)
     return ToolResult(success=True, data={"action": "double_click", "x": x, "y": y})
 
@@ -210,10 +210,10 @@ async def right_click(x: int, y: int):
     if not _validate_coords(x, y):
         return ToolResult(success=False, error=f"Coordinates ({x}, {y}) are outside screen bounds")
 
-    _save_audit_screenshot("before_rightclick")
+    await asyncio.to_thread(_save_audit_screenshot, "before_rightclick")
     await asyncio.sleep(_CLICK_SAFETY_DELAY)
-    pag.rightClick(x, y)
-    _save_audit_screenshot("after_rightclick")
+    await asyncio.to_thread(pag.rightClick, x, y)
+    await asyncio.to_thread(_save_audit_screenshot, "after_rightclick")
     logger.info("right_click(%d, %d)", x, y)
     return ToolResult(success=True, data={"action": "right_click", "x": x, "y": y})
 
@@ -284,7 +284,7 @@ async def _resolve_target_coordinates(
     from core.tools.screen import find_text_on_screen
 
     # 1. Try OCR text locator first
-    text_res = find_text_on_screen(target, match_mode=match_mode)
+    text_res = await asyncio.to_thread(find_text_on_screen, target, match_mode=match_mode)
     text_error = ""
     if text_res.success:
         matches = list(text_res.data.get("matches", []))
@@ -306,7 +306,7 @@ async def _resolve_target_coordinates(
         text_error = text_res.error or "OCR text lookup failed."
 
     # 2. Try Vision locator fallback
-    vision_result = _vision_locate_target(target)
+    vision_result = await asyncio.to_thread(_vision_locate_target, target)
     if not vision_result.success:
         error = text_error or vision_result.error
         if text_error and vision_result.error:
@@ -441,7 +441,7 @@ async def move_mouse(x: int, y: int, duration: float = 0.0):
     if not _validate_coords(x, y):
         return ToolResult(success=False, error=f"Coordinates ({x}, {y}) are outside screen bounds")
 
-    pag.moveTo(x, y, duration=max(0.0, float(duration)))
+    await asyncio.to_thread(pag.moveTo, x, y, duration=max(0.0, float(duration)))
     return ToolResult(success=True, data={"action": "move_mouse", "x": x, "y": y, "duration": duration})
 
 
@@ -455,8 +455,8 @@ async def scroll(clicks: int, x: int | None = None, y: int | None = None):
     if x is not None and y is not None:
         if not _validate_coords(int(x), int(y)):
             return ToolResult(success=False, error=f"Coordinates ({x}, {y}) are outside screen bounds")
-        pag.moveTo(int(x), int(y))
-    pag.scroll(int(clicks))
+        await asyncio.to_thread(pag.moveTo, int(x), int(y))
+    await asyncio.to_thread(pag.scroll, int(clicks))
     return ToolResult(success=True, data={"action": "scroll", "clicks": int(clicks), "x": x, "y": y})
 
 
@@ -478,8 +478,8 @@ async def drag(
     if not _validate_coords(start_x, start_y) or not _validate_coords(end_x, end_y):
         return ToolResult(success=False, error="Drag coordinates are outside screen bounds")
 
-    pag.moveTo(start_x, start_y)
-    pag.dragTo(end_x, end_y, duration=max(0.0, float(duration)), button=button)
+    await asyncio.to_thread(pag.moveTo, start_x, start_y)
+    await asyncio.to_thread(pag.dragTo, end_x, end_y, duration=max(0.0, float(duration)), button=button)
     return ToolResult(
         success=True,
         data={
@@ -507,7 +507,7 @@ async def type_text(text: str, interval: float = 0.05):
         return ToolResult(success=False, error=str(exc))
 
     await asyncio.sleep(_CLICK_SAFETY_DELAY)
-    pag.typewrite(text, interval=max(0.0, float(interval)))
+    await asyncio.to_thread(pag.typewrite, text, interval=max(0.0, float(interval)))
     logger.info("type_text: typed %d character(s)", len(text))
     return ToolResult(success=True, data={"action": "type_text", "length": len(text)})
 
@@ -520,7 +520,7 @@ async def press_key(key: str, presses: int = 1, interval: float = 0.05):
         return ToolResult(success=False, error=str(exc))
 
     await asyncio.sleep(0.1)
-    pag.press(str(key), presses=max(1, int(presses)), interval=max(0.0, float(interval)))
+    await asyncio.to_thread(pag.press, str(key), presses=max(1, int(presses)), interval=max(0.0, float(interval)))
     return ToolResult(
         success=True,
         data={"action": "press_key", "key": str(key), "presses": max(1, int(presses))},
@@ -535,7 +535,7 @@ async def hotkey(*keys: str):
         return ToolResult(success=False, error=str(exc))
 
     await asyncio.sleep(0.1)
-    pag.hotkey(*keys)
+    await asyncio.to_thread(pag.hotkey, *keys)
     logger.info("hotkey: %s", "+".join(keys))
     return ToolResult(success=True, data={"action": "hotkey", "keys": list(keys)})
 
@@ -618,7 +618,7 @@ async def get_mouse_position():
     except ImportError as exc:
         return ToolResult(success=False, error=str(exc))
 
-    x, y = pag.position()
+    x, y = await asyncio.to_thread(pag.position)
     return ToolResult(success=True, data={"action": "get_mouse_position", "x": x, "y": y})
 
 
@@ -629,7 +629,7 @@ async def mouse_down(button: str = "left"):
     except ImportError as exc:
         return ToolResult(success=False, error=str(exc))
 
-    pag.mouseDown(button=button)
+    await asyncio.to_thread(pag.mouseDown, button=button)
     logger.info("mouse_down(button=%s)", button)
     return ToolResult(success=True, data={"action": "mouse_down", "button": button})
 
@@ -641,7 +641,7 @@ async def mouse_up(button: str = "left"):
     except ImportError as exc:
         return ToolResult(success=False, error=str(exc))
 
-    pag.mouseUp(button=button)
+    await asyncio.to_thread(pag.mouseUp, button=button)
     logger.info("mouse_up(button=%s)", button)
     return ToolResult(success=True, data={"action": "mouse_up", "button": button})
 
@@ -653,7 +653,7 @@ async def key_down(key: str):
     except ImportError as exc:
         return ToolResult(success=False, error=str(exc))
 
-    pag.keyDown(str(key))
+    await asyncio.to_thread(pag.keyDown, str(key))
     logger.info("key_down(key=%s)", key)
     return ToolResult(success=True, data={"action": "key_down", "key": str(key)})
 
@@ -665,7 +665,7 @@ async def key_up(key: str):
     except ImportError as exc:
         return ToolResult(success=False, error=str(exc))
 
-    pag.keyUp(str(key))
+    await asyncio.to_thread(pag.keyUp, str(key))
     logger.info("key_up(key=%s)", key)
     return ToolResult(success=True, data={"action": "key_up", "key": str(key)})
 
@@ -681,10 +681,10 @@ async def middle_click(x: int, y: int):
     if not _validate_coords(x, y):
         return ToolResult(success=False, error=f"Coordinates ({x}, {y}) are outside screen bounds")
 
-    _save_audit_screenshot("before_middleclick")
+    await asyncio.to_thread(_save_audit_screenshot, "before_middleclick")
     await asyncio.sleep(_CLICK_SAFETY_DELAY)
-    pag.middleClick(x, y)
-    _save_audit_screenshot("after_middleclick")
+    await asyncio.to_thread(pag.middleClick, x, y)
+    await asyncio.to_thread(_save_audit_screenshot, "after_middleclick")
     logger.info("middle_click(%d, %d)", x, y)
     return ToolResult(success=True, data={"action": "middle_click", "x": x, "y": y})
 

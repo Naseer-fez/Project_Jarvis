@@ -2,7 +2,6 @@
 -r integrations.txt
 -r voice.txt
 -r desktop.txt
--r dev.txt
 
 # Additional plugins and data processing
 pandas>=3.0,<4.0

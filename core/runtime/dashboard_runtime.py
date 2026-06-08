@@ -18,7 +18,7 @@ class DashboardRuntime:
         self.host = host
         self.port = port
         self.log = log
-        self._server = None
+        self._server: Any = None
         self._thread: threading.Thread | None = None
         self._thread_error: BaseException | None = None
 
@@ -73,7 +73,7 @@ class DashboardRuntime:
         model_name = getattr(llm_obj, "model", getattr(llm_obj, "model_name", "unknown"))
         active_goals = 0
         goal_manager = getattr(controller, "goal_manager", None)
-        if hasattr(goal_manager, "active_goals"):
+        if goal_manager is not None and hasattr(goal_manager, "active_goals"):
             with contextlib.suppress(Exception):
                 active_goals = len(goal_manager.active_goals())
 
@@ -90,6 +90,16 @@ class DashboardRuntime:
         if self._server is not None:
             try:
                 self._server.should_exit = True
+                self._server.force_exit = True
+                
+                # Wake up the uvicorn event loop if it is idle
+                import socket
+                host = "127.0.0.1" if self.host == "0.0.0.0" else self.host
+                with contextlib.suppress(Exception):
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(0.5)
+                    sock.connect((host, self.port))
+                    sock.close()
             except Exception:
                 pass
 

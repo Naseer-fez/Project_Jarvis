@@ -61,7 +61,7 @@ class ServiceContainer:
             import inspect
             if isinstance(factory_or_class, type):
                 try:
-                    sig = inspect.signature(factory_or_class.__init__)
+                    sig = inspect.signature(factory_or_class)
                     has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                     if has_var_keyword:
                         valid_kwargs = kwargs

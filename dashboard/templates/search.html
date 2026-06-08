@@ -1,241 +1,202 @@
 {% extends "base.html" %}
 
-{% block content %}
-<div class="search-container">
-  <h2>🔍 Fast PC File Search & Grep</h2>
-  <p style="opacity: 0.8; margin-top: -10px;">Search files by name or search inside their content instantly using multi-threaded execution.</p>
+{% block page_title %}Search{% endblock %}
 
-  <form id="search-form" class="card">
-    <div class="form-row">
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Fast Search</h1>
+  <p class="page-subtitle">Multi-threaded file search and grep across your entire PC</p>
+</div>
+
+<!-- Search Form -->
+<div class="card mb-lg">
+  <form id="search-form">
+    <div class="form-row mb-md">
       <div class="form-group flex-2">
-        <label for="search-path">Search Path</label>
-        <input type="text" id="search-path" name="path" value="all" placeholder="e.g. C:\Users or 'all' for all drives" class="cmd-input">
+        <label class="form-label" for="search-path">Search Path</label>
+        <input class="form-input" type="text" id="search-path" value="all" placeholder="e.g. C:\Users or 'all' for all drives">
       </div>
       <div class="form-group flex-1">
-        <label for="search-threads">Threads</label>
-        <select id="search-threads" name="threads" class="cmd-input" style="height: 38px; padding: 5px;">
-          <option value="4">4 Threads</option>
-          <option value="8" selected>8 Threads</option>
-          <option value="16">16 Threads</option>
-          <option value="32">32 Threads</option>
+        <label class="form-label" for="search-threads">Threads</label>
+        <select class="form-select" id="search-threads">
+          <option value="4">4</option>
+          <option value="8" selected>8</option>
+          <option value="16">16</option>
+          <option value="32">32</option>
         </select>
       </div>
     </div>
 
-    <div class="form-row">
+    <div class="form-row mb-md">
       <div class="form-group flex-1">
-        <label for="search-query">Filename Pattern (Glob)</label>
-        <input type="text" id="search-query" name="query" placeholder="e.g. *.py, config*, index.html" class="cmd-input">
+        <label class="form-label" for="search-query">Filename Pattern</label>
+        <input class="form-input" type="text" id="search-query" placeholder="e.g. *.py, config*">
       </div>
       <div class="form-group flex-1">
-        <label for="search-content">Search Inside File (Grep Content)</label>
-        <input type="text" id="search-content" name="content" placeholder="e.g. todo, API_KEY, import os" class="cmd-input">
+        <label class="form-label" for="search-content">Content Search (Grep)</label>
+        <input class="form-input" type="text" id="search-content" placeholder="e.g. TODO, API_KEY">
       </div>
     </div>
 
-    <div class="form-options">
-      <label class="checkbox-label">
-        <input type="checkbox" id="search-case" name="case_sensitive"> Case Sensitive Search
+    <div class="flex gap-md mb-md">
+      <label class="form-check">
+        <input type="checkbox" id="search-case"> Case Sensitive
       </label>
-      <label class="checkbox-label" style="margin-left: 20px;">
-        <input type="checkbox" id="search-noskip" name="no_skip"> Search System Folders (Slow)
+      <label class="form-check">
+        <input type="checkbox" id="search-noskip"> Include System Folders
       </label>
     </div>
 
-    <button type="submit" class="btn" style="margin-top: 15px; width: 100%; display: flex; justify-content: center; align-items: center; gap: 10px;">
-      <span id="btn-text">Start Scan</span>
-      <div id="btn-spinner" class="spinner hidden"></div>
+    <button class="btn btn-accent btn-full" type="submit">
+      <span id="search-btn-text">Start Scan</span>
+      <span id="search-spinner" class="spinner spinner-sm hidden"></span>
     </button>
   </form>
+</div>
 
-  <!-- Live Stats Display -->
-  <div id="stats-panel" class="info-bar hidden" style="margin-top: 20px; display: flex; justify-content: space-around; flex-wrap: wrap; gap: 15px; border-color: rgba(78, 204, 163, 0.4);">
-    <div>⚙️ Engine: <strong id="stat-engine" style="color: var(--accent);">--</strong></div>
-    <div>📁 Folders Scanned: <strong id="stat-dirs">--</strong></div>
-    <div>📄 Files Scanned: <strong id="stat-files">--</strong></div>
-    <div>🎯 Matches: <strong id="stat-matches" style="color: var(--accent);">--</strong></div>
-    <div>⏱️ Time: <strong id="stat-time">--</strong></div>
+<!-- Stats Panel -->
+<div id="search-stats" class="stats-grid mb-lg hidden">
+  <div class="stat-card">
+    <div class="stat-label">ENGINE</div>
+    <div class="stat-value" id="stat-engine">—</div>
   </div>
-
-  <!-- Results Table -->
-  <div id="results-panel" class="hidden" style="margin-top: 20px;">
-    <h3>Results (<span id="results-count">0</span>)</h3>
-    <div style="max-height: 500px; overflow-y: auto; border: 1px solid rgba(78, 204, 163, 0.25); border-radius: 8px;">
-      <table style="margin-top: 0; width: 100%;">
-        <thead>
-          <tr>
-            <th style="width: 120px;">Type</th>
-            <th>Location</th>
-            <th style="width: 100px;">Line</th>
-            <th>Snippet / Content</th>
-          </tr>
-        </thead>
-        <tbody id="results-body">
-          <!-- Populated by JS -->
-        </tbody>
-      </table>
-    </div>
+  <div class="stat-card">
+    <div class="stat-label">FOLDERS SCANNED</div>
+    <div class="stat-value" id="stat-dirs">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">FILES SCANNED</div>
+    <div class="stat-value" id="stat-files">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">MATCHES</div>
+    <div class="stat-value text-accent" id="stat-matches">—</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">ELAPSED</div>
+    <div class="stat-value" id="stat-time">—</div>
   </div>
 </div>
 
-<style>
-  .card {
-    background: var(--bg2);
-    border: 1px solid rgba(78, 204, 163, 0.22);
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
-  }
-  .form-row {
-    display: flex;
-    gap: 15px;
-    margin-bottom: 15px;
-    flex-wrap: wrap;
-  }
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .flex-1 { flex: 1; min-width: 200px; }
-  .flex-2 { flex: 2; min-width: 250px; }
-  .form-options {
-    display: flex;
-    align-items: center;
-    font-size: 0.9rem;
-    opacity: 0.9;
-  }
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-  }
-  label {
-    font-size: 0.9rem;
-    font-weight: bold;
-    color: var(--accent);
-  }
-  td {
-    word-break: break-all;
-    font-size: 0.85rem;
-  }
-  .highlight {
-    background-color: rgba(78, 204, 163, 0.3);
-    padding: 0 4px;
-    border-radius: 3px;
-    font-weight: bold;
-  }
-</style>
+<!-- Results Panel -->
+<div id="search-results" class="hidden">
+  <h3 class="mb-md">Results (<span id="search-results-count">0</span>)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Location</th>
+          <th>Line</th>
+          <th>Snippet</th>
+        </tr>
+      </thead>
+      <tbody id="search-results-body"></tbody>
+    </table>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-document.getElementById('search-form').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  
-  const form = e.target;
-  const btnText = document.getElementById('btn-text');
-  const btnSpinner = document.getElementById('btn-spinner');
-  const statsPanel = document.getElementById('stats-panel');
-  const resultsPanel = document.getElementById('results-panel');
-  const resultsBody = document.getElementById('results-body');
-  const resultsCount = document.getElementById('results-count');
-  
-  // Set UI state
-  btnText.textContent = "Scanning...";
-  form.querySelector('button').disabled = true;
-  btnSpinner.classList.remove('hidden');
-  statsPanel.classList.add('hidden');
-  resultsPanel.classList.add('hidden');
-  resultsBody.innerHTML = '';
-  
-  // Prepare payload
-  const formData = new FormData(form);
-  const payload = {
-    path: formData.get('path'),
-    query: formData.get('query'),
-    content: formData.get('content'),
-    threads: parseInt(formData.get('threads')),
-    case_sensitive: form.elements.case_sensitive.checked,
-    no_skip: form.elements.no_skip.checked
-  };
-  
-  try {
-    const response = await fetch('/api/search', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Dashboard-Token': 'jarvis' // standard auth token header
-      },
-      body: JSON.stringify(payload)
-    });
-    
-    if (!response.ok) {
-      throw new Error(await response.text());
-    }
-    
-    const data = await response.json();
-    
-    // Update Stats
-    document.getElementById('stat-engine').textContent = data.engine.toUpperCase();
-    document.getElementById('stat-dirs').textContent = data.summary.dirs_scanned;
-    document.getElementById('stat-files').textContent = data.summary.files_scanned;
-    document.getElementById('stat-matches').textContent = data.results.length;
-    document.getElementById('stat-time').textContent = data.summary.elapsed;
-    statsPanel.classList.remove('hidden');
-    
-    // Update Results
-    resultsCount.textContent = data.results.length;
-    if (data.results.length === 0) {
-      resultsBody.innerHTML = `<tr><td colspan="4" style="text-align: center; opacity: 0.7;">No matches found matching the criteria.</td></tr>`;
-    } else {
-      data.results.forEach(item => {
-        const row = document.createElement('tr');
-        
-        const typeTd = document.createElement('td');
-        typeTd.innerHTML = item.type === 'file' 
-          ? `<span style="color: var(--accent); font-weight:bold;">📄 FILE</span>` 
-          : `<span style="color: var(--warn); font-weight:bold;">🎯 MATCH</span>`;
-        
-        const pathTd = document.createElement('td');
-        // Make filepath clickable to download/view
-        pathTd.innerHTML = `<a href="/api/view-file?path=${encodeURIComponent(item.path)}" target="_blank" style="color: var(--text); text-decoration: none; border-bottom: 1px dashed rgba(255,255,255,0.3);">${item.path}</a>`;
-        
-        const lineTd = document.createElement('td');
-        lineTd.textContent = item.line || '-';
-        lineTd.style.textAlign = 'center';
-        
-        const textTd = document.createElement('td');
-        if (item.type === 'match' && item.text) {
-          // Simple highlighting of match term
-          const term = payload.content;
-          if (term) {
-            const regex = new RegExp(`(${term.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&')})`, payload.case_sensitive ? 'g' : 'gi');
-            textTd.innerHTML = item.text.replace(regex, '<span class="highlight">$1</span>');
-          } else {
-            textTd.textContent = item.text;
-          }
-        } else {
-          textTd.innerHTML = `<span style="opacity: 0.5;">-</span>`;
-        }
-        
-        row.appendChild(typeTd);
-        row.appendChild(pathTd);
-        row.appendChild(lineTd);
-        row.appendChild(textTd);
-        resultsBody.appendChild(row);
-      });
-    }
-    resultsPanel.classList.remove('hidden');
-    
-  } catch (error) {
-    alert("Search failed: " + error.message);
-  } finally {
-    btnText.textContent = "Start Scan";
-    form.querySelector('button').disabled = false;
-    btnSpinner.classList.add('hidden');
+(function() {
+  const form = document.getElementById('search-form');
+  const btnText = document.getElementById('search-btn-text');
+  const spinner = document.getElementById('search-spinner');
+  const statsPanel = document.getElementById('search-stats');
+  const resultsPanel = document.getElementById('search-results');
+  const resultsCount = document.getElementById('search-results-count');
+  const resultsBody = document.getElementById('search-results-body');
+
+  function setLoading(loading) {
+    const btn = form.querySelector('button[type="submit"]');
+    btn.disabled = loading;
+    btnText.textContent = loading ? 'Scanning...' : 'Start Scan';
+    spinner.classList.toggle('hidden', !loading);
   }
-});
+
+  function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+
+  function highlightText(text, term) {
+    if (!term) return escapeHtml(text);
+    const escaped = escapeHtml(text);
+    const re = new RegExp('(' + term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+    return escaped.replace(re, '<span class="highlight">$1</span>');
+  }
+
+  form.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    setLoading(true);
+
+    const query = document.getElementById('search-query').value.trim();
+    const content = document.getElementById('search-content').value.trim();
+
+    const payload = {
+      path: document.getElementById('search-path').value.trim(),
+      query: query,
+      content: content,
+      threads: parseInt(document.getElementById('search-threads').value, 10),
+      case_sensitive: document.getElementById('search-case').checked,
+      no_skip: document.getElementById('search-noskip').checked
+    };
+
+    try {
+      const resp = await fetch('/api/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await resp.json();
+
+      /* Populate stats */
+      const summary = data.summary || {};
+      document.getElementById('stat-engine').textContent = (data.engine || '—').toUpperCase();
+      document.getElementById('stat-dirs').textContent = (summary.dirs_scanned ?? '—').toLocaleString();
+      document.getElementById('stat-files').textContent = (summary.files_scanned ?? '—').toLocaleString();
+      document.getElementById('stat-matches').textContent = (data.results?.length ?? 0).toLocaleString();
+      document.getElementById('stat-time').textContent = summary.elapsed || '—';
+      statsPanel.classList.remove('hidden');
+
+      /* Populate results */
+      const results = data.results || [];
+      resultsCount.textContent = results.length;
+      resultsBody.innerHTML = '';
+
+      const highlightTerm = content || query;
+
+      results.forEach(function(r) {
+        const tr = document.createElement('tr');
+
+        const isGrep = r.type === 'match' || r.type === 'grep' || r.line;
+        const typeBadge = isGrep
+          ? '<span class="badge badge-warning">MATCH</span>'
+          : '<span class="badge badge-accent">FILE</span>';
+
+        const pathLink = '<a href="/api/view-file?path=' + encodeURIComponent(r.path || r.location || '') + '">' + escapeHtml(r.path || r.location || '') + '</a>';
+        const lineNum = r.line != null ? r.line : '—';
+        const snippet = r.text || r.snippet || '';
+
+        tr.innerHTML =
+          '<td>' + typeBadge + '</td>' +
+          '<td>' + pathLink + '</td>' +
+          '<td class="mono">' + lineNum + '</td>' +
+          '<td>' + highlightText(snippet, highlightTerm) + '</td>';
+
+        resultsBody.appendChild(tr);
+      });
+
+      resultsPanel.classList.remove('hidden');
+    } catch (err) {
+      console.error('Search failed:', err);
+      alert('Search request failed. Check console for details.');
+    } finally {
+      setLoading(false);
+    }
+  });
+})();
 </script>
 {% endblock %}

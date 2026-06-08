@@ -30,8 +30,8 @@ try:
     import chromadb
     from chromadb.config import Settings
 except Exception:
-    chromadb = None  # type: ignore[assignment]
-    Settings = None  # type: ignore[assignment]
+    chromadb = None  # type: ignore
+    Settings = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +91,8 @@ class SemanticMemory:
                 from core.memory.embeddings import get_embedding_manager
                 self.embedding_manager = get_embedding_manager(self.model_name)
 
-            if not self.embedding_manager.is_ready():
-                if not await self.embedding_manager.initialize():
-                    logger.warning("Embedding manager failed to initialize; disabling semantic memory.")
-                    return False
+            # Embedding manager now lazy-loads on first use via its embed() method.
+            # We no longer block startup waiting for it.
 
             logger.info(f"Connecting to ChromaDB at: {self.chroma_path}")
             self._client = chromadb.PersistentClient(
@@ -124,7 +122,8 @@ class SemanticMemory:
 
     async def _embed(self, text: str) -> List[float]:
         """Generate a normalized embedding vector for the given text."""
-        return await self.embedding_manager.embed(text)
+        from typing import cast
+        return cast(list[float], await self.embedding_manager.embed(text))
 
     def _collection(self, name: str):
         return self._collections[name]
@@ -332,7 +331,7 @@ class SemanticMemory:
             )
             return []
 
-        hits = []
+        hits: List[Dict[str, Any]] = []
         if not results["ids"]:
             return hits
 

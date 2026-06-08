@@ -66,7 +66,7 @@ class SerialController:
     def send(self, command: str):
         if not self.enabled:
             raise NotImplementedError("Hardware serial control is disabled by config.")
-        if not self.is_connected:
+        if not self.is_connected or self._serial is None:
             raise RuntimeError("Serial controller is not connected.")
 
         payload = f"{command}\n".encode("utf-8")

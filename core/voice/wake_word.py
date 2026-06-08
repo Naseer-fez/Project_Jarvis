@@ -22,12 +22,12 @@ logger = logging.getLogger(__name__)
 try:
     import pvporcupine
 except ImportError:
-    pvporcupine = None  # type: ignore[assignment]
+    pvporcupine = None
 
 try:
     from pvrecorder import PvRecorder
 except ImportError:
-    PvRecorder = None  # type: ignore[assignment]
+    PvRecorder = None
 
 
 class WakeWordDetector:
@@ -130,13 +130,13 @@ class WakeWordDetector:
             if self.access_key:
                 kwargs["access_key"] = self.access_key
             try:
-                porcupine = pvporcupine.create(**kwargs)  # type: ignore[union-attr]
+                porcupine = pvporcupine.create(**kwargs)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Wake-word init failed (%s); falling back", exc)
                 self._continuous_mode = True
                 return not self._stop_event.is_set()
 
-            recorder = PvRecorder(device_index=-1, frame_length=porcupine.frame_length)  # type: ignore[union-attr]
+            recorder = PvRecorder(device_index=-1, frame_length=porcupine.frame_length)
             recorder.start()
 
             while not self._stop_event.is_set():

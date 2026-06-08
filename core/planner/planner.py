@@ -49,13 +49,39 @@ class TaskPlanner:
         self.llm = llm
         self.registry = registry
 
-    def _tool_schema(self) -> dict[str, list[dict[str, str]]]:
+    def _tool_schema(self) -> dict[str, list[dict[str, Any]]]:
         tools = []
         if self.registry:
             for name in self.registry.registered_tools():
                 cap = self.registry.get(name)
                 desc = getattr(cap, "description", "") or f"Execute {name}"
-                tools.append({"name": name, "description": desc})
+                schema: dict[str, Any] = {"name": name, "description": desc}
+                
+                if hasattr(cap, "handler") and cap.handler:
+                    try:
+                        sig = inspect.signature(cap.handler)
+                        params = {}
+                        for param_name, param in sig.parameters.items():
+                            if param_name == "context":
+                                continue
+                            param_info: dict[str, Any] = {"type": "string"}
+                            if param.annotation != inspect.Parameter.empty:
+                                if hasattr(param.annotation, "__name__"):
+                                    param_info["type"] = param.annotation.__name__
+                                else:
+                                    param_info["type"] = str(param.annotation)
+                            if param.default != inspect.Parameter.empty:
+                                if isinstance(param.default, (str, int, float, bool, type(None))):
+                                    param_info["default"] = param.default
+                                else:
+                                    param_info["default"] = str(param.default)
+                            else:
+                                param_info["required"] = True
+                            params[param_name] = param_info
+                        schema["parameters"] = params
+                    except Exception:
+                        pass
+                tools.append(schema)
 
         allow_gui = False
         try:
@@ -79,7 +105,7 @@ class TaskPlanner:
         try:
             res = self.llm.complete(prompt, task_type="tool_picker")
             if inspect.isawaitable(res):
-                return await res
+                return str(await res)
             return str(res)
         except Exception as exc:
             logger.error("LLM completion failed: %s", exc)
@@ -87,14 +113,19 @@ class TaskPlanner:
 
     async def plan(self, user_input: str, context: str = "") -> dict[str, Any]:
         text = str(user_input or "").strip()
+        logger.info("Starting task planning", extra={"metadata": {"intent_length": len(text), "context_length": len(context)}})
         raw = await self._call_ollama(self._build_prompt(text, context))
 
         if raw:
+            logger.info("Raw LLM output: %s", raw)
             parsed = self._parse_llm_plan(raw)
             if parsed is not None:
+                logger.info("Successfully parsed plan from LLM output", extra={"metadata": {"confidence": parsed.get("confidence")}})
                 return self._enrich_plan(text, parsed)
+            logger.warning("Failed to parse LLM plan, falling back to clarification")
             return self._clarification_plan(text)
 
+        logger.warning("Empty LLM response, falling back to basic plan")
         return self._enrich_plan(text, self._fallback_plan(text))
 
     def _build_prompt(self, user_input: str, context: str) -> str:
@@ -107,146 +138,59 @@ class TaskPlanner:
                     "id": 1,
                     "action": "tool_name",
                     "description": "why we call this tool",
-                    "params": {"param_key": "param_value"}
+                    "parameters": {"<argument_name>": "<argument_value>"}
                 }
             ],
             "clarification_needed": False,
             "clarification_prompt": ""
         }
+        
+        example_json = {
+            "intent": "read a file",
+            "summary": "I will use read_file",
+            "confidence": 0.99,
+            "steps": [
+                {
+                    "id": 1,
+                    "action": "read_file",
+                    "description": "Read the config file",
+                    "parameters": {"path": "/etc/config.json"}
+                }
+            ],
+            "clarification_needed": False,
+            "clarification_prompt": ""
+        }
+
         return (
             "You are a task planner. Create a step-by-step action plan using the available tools to satisfy the user request.\n"
             f"User request: {user_input}\n"
             f"Context: {context}\n"
             f"Available tools: {json.dumps(self._tool_schema())}\n\n"
-            "You MUST return a valid JSON object matching the following structure:\n"
+            "You MUST return a valid JSON object matching the following structure exactly:\n"
             f"{json.dumps(schema_format, indent=2)}\n\n"
+            "CRITICAL: For EVERY tool step in 'steps', you MUST include a 'parameters' dictionary containing the required arguments. "
+            "The keys in 'parameters' MUST exactly match the argument names shown in the tool's schema.\n\n"
+            f"Example Output:\n{json.dumps(example_json, indent=2)}\n\n"
             "Return ONLY the strict JSON object. No explanations, no markdown block, no extra text."
         )
 
     def _parse_llm_plan(self, raw: str) -> dict[str, Any] | None:
+        cleaned = _strip_planner_artifacts(raw)
         try:
-            payload = json.loads(_strip_planner_artifacts(raw))
+            payload = json.loads(cleaned)
         except json.JSONDecodeError:
-            return None
+            # Attempt basic repair for missing commas (a common issue with smaller models)
+            import re
+            cleaned = re.sub(r'"\s*\n\s*"', '",\n"', cleaned)
+            try:
+                payload = json.loads(cleaned)
+            except json.JSONDecodeError:
+                return None
         if not isinstance(payload, dict):
             return None
         return payload
 
     def _fallback_plan(self, text: str) -> dict[str, Any]:
-        lowered = text.lower()
-
-        if "sort" in lowered or "organize" in lowered:
-            return {
-                "intent": text,
-                "summary": "Sort and organize files in the workspace.",
-                "confidence": 0.85,
-                "steps": [
-                    {
-                        "id": 1,
-                        "action": "sort_files",
-                        "description": "Sort files in the workspace directory into categorized folders.",
-                        "params": {"directory": "./workspace", "output_dir": "./workspace"},
-                    }
-                ],
-                "clarification_needed": False,
-                "clarification_prompt": "",
-            }
-
-        if "find" in lowered or "search file" in lowered:
-            pattern = "*"
-            words = text.split()
-            for w in words:
-                if "*" in w or "." in w:
-                    pattern = w.strip("'\"")
-                    break
-            return {
-                "intent": text,
-                "summary": f"Search for files matching '{pattern}' in workspace.",
-                "confidence": 0.85,
-                "steps": [
-                    {
-                        "id": 1,
-                        "action": "find_files",
-                        "description": f"Find files matching pattern {pattern}.",
-                        "params": {"pattern": pattern, "directory": "./workspace"},
-                    }
-                ],
-                "clarification_needed": False,
-                "clarification_prompt": "",
-            }
-
-        if lowered.startswith("remember ") and " is " in lowered:
-            key, value = text[9:].split(" is ", 1)
-            return {
-                "intent": text,
-                "summary": f"Store the fact that {key.strip()} is {value.strip()}.",
-                "confidence": 0.9,
-                "steps": [
-                    {
-                        "id": 1,
-                        "action": "memory_write",
-                        "description": "Store a user fact.",
-                        "params": {"key": key.strip(), "value": value.strip()},
-                    }
-                ],
-                "clarification_needed": False,
-                "clarification_prompt": "",
-            }
-
-        if any(
-            word in lowered
-            for word in (
-                "search",
-                "look up",
-                "weather",
-                "latest",
-                "current",
-                "today",
-                "live",
-                "internet",
-                "online",
-                "web",
-                "news",
-                "score",
-                "stats",
-                "toss",
-                "ipl",
-                "match",
-            )
-        ):
-            return {
-                "intent": text,
-                "summary": "Search for the requested information.",
-                "confidence": 0.6,
-                "steps": [
-                    {
-                        "id": 1,
-                        "action": "web_search",
-                        "description": "Search the web for the answer.",
-                        "params": {"query": text},
-                    }
-                ],
-                "clarification_needed": False,
-                "clarification_prompt": "",
-            }
-
-        if "write" in lowered and "note" in lowered:
-            return {
-                "intent": text,
-                "summary": "Write a note to a file.",
-                "confidence": 0.7,
-                "steps": [
-                    {
-                        "id": 1,
-                        "action": "file_write",
-                        "description": "Write the requested note.",
-                        "params": {"path": "workspace/notes.txt", "content": text},
-                    }
-                ],
-                "clarification_needed": False,
-                "clarification_prompt": "",
-            }
-
         return self._clarification_plan(text)
 
     def _clarification_plan(self, text: str) -> dict[str, Any]:
@@ -260,17 +204,18 @@ class TaskPlanner:
         }
 
     def _enrich_plan(self, text: str, plan: dict[str, Any]) -> dict[str, Any]:
-        normalized = {
+        steps_list = self._normalize_steps(plan.get("steps", []))
+        normalized: dict[str, Any] = {
             "intent": str(plan.get("intent", text)),
             "summary": str(plan.get("summary", "")).strip(),
             "confidence": float(plan.get("confidence", 0.0) or 0.0),
-            "steps": self._normalize_steps(plan.get("steps", [])),
+            "steps": steps_list,
             "clarification_needed": bool(plan.get("clarification_needed", False)),
             "clarification_prompt": str(plan.get("clarification_prompt", "") or ""),
         }
 
         tools_required = [
-            step["action"] for step in normalized["steps"] if step.get("action")
+            step["action"] for step in steps_list if step.get("action")
         ]
         risk = self.risk_evaluator.evaluate(tools_required)
         risk_label = risk.level.label().lower()
@@ -286,13 +231,15 @@ class TaskPlanner:
         normalized["tools_required"] = tools_required
         normalized["risk_level"] = risk_label
         normalized["confirmation_required"] = risk.requires_confirmation
+        logger.debug("Plan enriched with risk evaluation", extra={"metadata": {"risk_level": risk_label, "tools_count": len(tools_required)}})
         return normalized
 
     def _normalize_steps(self, steps: Any) -> list[dict[str, Any]]:
         if not isinstance(steps, list):
             return []
-        normalized = []
-        for idx, step in enumerate(steps, start=1):
+        normalized: list[dict[str, Any]] = []
+        step_list: list[Any] = steps
+        for idx, step in enumerate(step_list, start=1):
             if not isinstance(step, dict):
                 continue
             params = step.get("params", {})

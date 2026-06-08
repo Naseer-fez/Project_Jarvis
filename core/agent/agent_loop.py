@@ -137,127 +137,159 @@ class AgentLoopEngine:
             trace = ExecutionTrace(goal=goal)
             logger.info("Agent loop start: %s", goal)
 
-            self._ensure_thinking_state(sm)
-            sm.transition(AgentState.PLANNING)
-
-            context_str = context.get("context_block", "")
-            plan = await self._build_plan(goal, context_str)
-            if not plan:
-                trace.final_response = "I couldn't generate a plan for that goal."
-                return self._stop(trace, "planning_failed", sm)
-
-            trace.plan = plan
-            intent_score = getattr(plan, "confidence", None)
-            if intent_score is None and isinstance(plan, dict):
-                intent_score = plan.get("confidence", plan.get("intent_confidence", 0.5))
             try:
-                intent_score_value = float(intent_score)
-            except (TypeError, ValueError):
-                intent_score_value = 0.5
-            self.confidence.update("intent_clarity", intent_score_value)
+                self._ensure_thinking_state(sm)
+                sm.transition(AgentState.PLANNING)
 
-            if plan.get("clarification_needed"):
-                trace.final_response = str(
-                    plan.get("clarification_prompt")
-                    or plan.get("summary")
-                    or "I need clarification before I can continue."
+                context_str = context.get("context_block", "")
+                plan = await self._build_plan(goal, context_str)
+                if not plan:
+                    trace.final_response = "I couldn't generate a plan for that goal."
+                    return self._stop(trace, "planning_failed", sm)
+
+                trace.plan = plan
+                intent_score = getattr(plan, "confidence", None)
+                if intent_score is None and isinstance(plan, dict):
+                    intent_score = plan.get("confidence", plan.get("intent_confidence", 0.5))
+                try:
+                    intent_score_value = float(intent_score) if intent_score is not None else 0.5
+                except (TypeError, ValueError):
+                    intent_score_value = 0.5
+                self.confidence.update("intent_clarity", intent_score_value)
+
+                if plan.get("clarification_needed"):
+                    trace.final_response = str(
+                        plan.get("clarification_prompt")
+                        or plan.get("summary")
+                        or "I need clarification before I can continue."
+                    )
+                    return self._stop(trace, "clarification_needed", sm)
+
+                sm.transition(AgentState.RISK_EVALUATION)
+
+                if self.risk is None:
+                    raise RuntimeError("risk_evaluator is required but not provided.")
+                plan_risk = self.risk.evaluate_plan(plan)
+                trace.risk_scores.append(
+                    {
+                        "scope": "plan",
+                        "level": plan_risk.level.label(),
+                        "blocking": list(plan_risk.blocking_actions),
+                        "confirm": list(plan_risk.confirm_actions),
+                        "high": list(plan_risk.high_risk_actions),
+                    }
                 )
-                return self._stop(trace, "clarification_needed", sm)
 
-            sm.transition(AgentState.RISK_EVALUATION)
-
-            plan_risk = self.risk.evaluate_plan(plan)
-            trace.risk_scores.append(
-                {
-                    "scope": "plan",
-                    "level": plan_risk.level.label(),
-                    "blocking": list(plan_risk.blocking_actions),
-                    "confirm": list(plan_risk.confirm_actions),
-                    "high": list(plan_risk.high_risk_actions),
-                }
-            )
-
-            if plan_risk.is_blocked:
-                trace.final_response = (
-                    "I cannot execute that safely because the plan contains blocked actions: "
-                    + ", ".join(plan_risk.blocking_actions)
-                )
-                sm.transition(AgentState.CANCELLED)
-                return self._stop(trace, "risk_threshold_exceeded", sm)
-
-            if plan_risk.requires_confirmation:
-                sm.transition(AgentState.AWAITING_CONFIRMATION)
-                approved = await self._ask_confirmation(
-                    "This request includes high-impact actions. Continue? [y/N]: ",
-                    confirm_callback,
-                    context,
-                )
-                if not approved:
+                if plan_risk.is_blocked:
+                    trace.final_response = (
+                        "I cannot execute that safely because the plan contains blocked actions: "
+                        + ", ".join(plan_risk.blocking_actions)
+                    )
                     sm.transition(AgentState.CANCELLED)
-                    return self._stop(trace, "user_interrupt", sm)
-                sm.transition(AgentState.APPROVED)
-            else:
-                sm.transition(AgentState.APPROVED)
+                    return self._stop(trace, "risk_threshold_exceeded", sm)
 
-            # ── DAG Execution Engine integration (Session 8 Target Architecture) ──
-            context.log(f"Starting DAG Executor for goal: {goal}")
-            
-            if self.container and self.container.has("dag_executor"):
-                executor = self.container.resolve("dag_executor", tool_router=self.router, risk_evaluator=self.risk, autonomy_governor=self.gov)
-            else:
-                raise RuntimeError("dag_executor not found in container")
-            
-            sm.transition(AgentState.EXECUTING)
+                from core.autonomy.autonomy_governor import AutonomyLevel
+                is_autonomous = self.gov is not None and self.gov.level >= AutonomyLevel.AUTONOMOUS
 
-            try:
-                # Enforce 5 minute task-level timeout (Part 5)
-                async with asyncio.timeout(300):
-                    res = await executor.execute(plan, context)
-            except asyncio.TimeoutError:
-                context.log("Task execution timed out.", level="ERROR")
-                res = {"status": "failure", "error": "Task execution timed out after 300s."}
-            except Exception as exc:
-                context.log(f"Execution engine failure: {exc}", level="ERROR")
-                res = {"status": "failure", "error": str(exc)}
+                if plan_risk.requires_confirmation and not is_autonomous:
+                    sm.transition(AgentState.AWAITING_CONFIRMATION)
+                    approved = await self._ask_confirmation(
+                        "This request includes high-impact actions. Continue? [y/N]: ",
+                        confirm_callback,
+                        context,
+                    )
+                    if not approved:
+                        sm.transition(AgentState.CANCELLED)
+                        return self._stop(trace, "user_interrupt", sm)
+                    sm.transition(AgentState.APPROVED)
+                else:
+                    sm.transition(AgentState.APPROVED)
 
-            # Map execution results back into trace observations
-            observations: list[ToolObservation] = []
-            for sid, step_res in res.get("results", {}).items():
-                obs = ToolObservation(
-                    tool_name=step_res.get("tool_name", ""),
-                    arguments=step_res.get("arguments", {}),
-                    execution_status=step_res.get("execution_status", "failure"),
-                    output_summary=step_res.get("output_summary", ""),
-                    error_message=step_res.get("error_message"),
-                    duration_seconds=step_res.get("duration_seconds", 0.0),
-                )
-                observations.append(obs)
+                # ── DAG Execution Engine integration (Session 8 Target Architecture) ──
+                logger.info("Starting DAG Executor for goal: %s", goal, extra={"metadata": {"goal": goal}})
+                
+                if self.container and self.container.has("dag_executor"):
+                    executor = self.container.resolve("dag_executor", tool_router=self.router, risk_evaluator=self.risk, autonomy_governor=self.gov)
+                else:
+                    raise RuntimeError("dag_executor not found in container")
+                
+                sm.transition(AgentState.EXECUTING)
 
-                obs_dict = obs.to_dict()
-                obs_dict["step_id"] = sid
-                obs_dict["output_summary"] = _truncate_obs(str(obs_dict.get("output_summary", "")))
-                if obs_dict.get("error_message"):
-                    obs_dict["error_message"] = _truncate_obs(str(obs_dict["error_message"]))
-                trace.observations.append(obs_dict)
+                try:
+                    # Enforce 5 minute task-level timeout (Part 5)
+                    async with asyncio.timeout(300):
+                        res = await executor.execute(plan, context)
+                except asyncio.TimeoutError:
+                    logger.error("Task execution timed out.", extra={"metadata": {"timeout_s": 300}})
+                    res = {"status": "failure", "error": "Task execution timed out after 300s."}
+                except Exception as exc:
+                    logger.error("Execution engine failure: %s", exc, extra={"metadata": {"error": str(exc)}})
+                    res = {"status": "failure", "error": str(exc)}
 
-                tool_success = 1.0 if obs.execution_status == "success" else 0.0
-                self.confidence.update("tool_reliability", tool_success)
+                # Map execution results back into trace observations
+                observations: list[ToolObservation] = []
+                for sid, step_res in res.get("results", {}).items():
+                    obs = ToolObservation(
+                        tool_name=step_res.get("tool_name", ""),
+                        arguments=step_res.get("arguments", {}),
+                        execution_status=step_res.get("execution_status", "failure"),
+                        output_summary=step_res.get("output_summary", ""),
+                        error_message=step_res.get("error_message"),
+                        duration_seconds=step_res.get("duration_seconds", 0.0),
+                    )
+                    observations.append(obs)
 
-            if res.get("status") == "success":
-                sm.transition(AgentState.REFLECTING)
-                response = await self._reflect(goal, plan, observations, trace)
-                trace.reflection = response
-                trace.final_response = response
-                trace.close(True, "goal_completed")
-                sm.transition(AgentState.SPEAKING)
-                sm.transition(AgentState.COMPLETED)
-                sm.transition(AgentState.IDLE)
-            else:
-                trace.final_response = res.get("error") or "Task execution failed."
-                return self._stop(trace, "unrecoverable_tool_failure", sm)
+                    obs_dict = obs.to_dict()
+                    obs_dict["step_id"] = sid
+                    obs_dict["output_summary"] = _truncate_obs(str(obs_dict.get("output_summary", "")))
+                    if obs_dict.get("error_message"):
+                        obs_dict["error_message"] = _truncate_obs(str(obs_dict["error_message"]))
+                    trace.observations.append(obs_dict)
 
-            logger.info("Agent loop complete: success=%s", trace.success)
-            return trace
+                    tool_success = 1.0 if obs.execution_status == "success" else 0.0
+                    self.confidence.update("tool_reliability", tool_success)
+
+                if res.get("status") == "success":
+                    sm.transition(AgentState.REFLECTING)
+                    response = await self._reflect(goal, plan, observations, trace)
+                    trace.reflection = response
+                    trace.final_response = response
+                    trace.close(True, "goal_completed")
+                    sm.transition(AgentState.SPEAKING)
+                    sm.transition(AgentState.COMPLETED)
+                    sm.transition(AgentState.IDLE)
+                else:
+                    trace.final_response = res.get("error") or "Task execution failed."
+                    return self._stop(trace, "unrecoverable_tool_failure", sm)
+
+                logger.info("Agent loop complete: success=%s", trace.success)
+                return trace
+
+            except asyncio.CancelledError:
+                logger.warning("Agent loop cancelled via asyncio.CancelledError")
+                if sm.state not in {AgentState.ABORTED, AgentState.ERROR, AgentState.SHUTDOWN}:
+                    if sm.can_transition(AgentState.ABORTED):
+                        sm.transition(AgentState.ABORTED)
+                    else:
+                        sm.force_idle()
+                raise
+            except Exception as e:
+                import traceback
+                logger.error("Agent loop crashed: %s\n%s", e, traceback.format_exc())
+                if sm.state not in {AgentState.ERROR, AgentState.ABORTED, AgentState.SHUTDOWN}:
+                    if sm.can_transition(AgentState.ERROR):
+                        sm.transition(AgentState.ERROR)
+                    else:
+                        sm.force_idle()
+                        sm.transition(AgentState.ERROR)
+                trace.final_response = f"Internal error during execution: {e}"
+                return self._stop(trace, "internal_error", sm)
+            finally:
+                if sm.state not in {AgentState.IDLE, AgentState.SHUTDOWN, AgentState.ERROR, AgentState.ABORTED}:
+                    try:
+                        sm.force_idle()
+                    except Exception:
+                        pass
 
     def _ensure_thinking_state(self, sm: StateMachine) -> None:
         if sm.state == AgentState.THINKING:
@@ -277,8 +309,7 @@ class AgentLoopEngine:
             if inspect.iscoroutinefunction(plan_fn):
                 result = await plan_fn(goal, context)
             else:
-                loop = asyncio.get_running_loop()
-                result = await loop.run_in_executor(None, plan_fn, goal, context)
+                result = await asyncio.to_thread(plan_fn, goal, context)
         except Exception as exc:  # noqa: BLE001
             logger.error("Planner execution failed: %s", exc, exc_info=True)
             return {}
@@ -296,7 +327,9 @@ class AgentLoopEngine:
         for idx, step in enumerate(steps, start=1):
             if not isinstance(step, dict):
                 continue
-            params = step.get("params", {})
+            params = step.get("params")
+            if not params:
+                params = step.get("parameters") or step.get("args") or {}
             if not isinstance(params, dict):
                 params = {}
             normalized.append(
@@ -316,9 +349,18 @@ class AgentLoopEngine:
 
         approved = False
         if confirm_callback is None:
-            loop = asyncio.get_running_loop()
-            answer = await loop.run_in_executor(None, input, prompt)
-            approved = str(answer).strip().lower() in {"y", "yes"}
+            import sys
+            from core.autonomy.autonomy_governor import AutonomyLevel
+            
+            is_headless = not sys.stdin.isatty()
+            is_autonomous = self.gov is not None and self.gov.level >= AutonomyLevel.AUTONOMOUS
+            
+            if is_headless or is_autonomous:
+                logger.warning("Bypassing manual confirmation due to headless environment or LEVEL_4 autonomy.")
+                approved = True
+            else:
+                answer = await asyncio.to_thread(input, prompt)
+                approved = str(answer).strip().lower() in {"y", "yes"}
         else:
             try:
                 result = confirm_callback(prompt)

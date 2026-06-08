@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+
+{% block page_title %}Auto-Clicker{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1 class="page-title">Auto-Clicker</h1>
+  <p class="page-subtitle">Vision-based screen automation tool</p>
+</div>
+
+<div class="stats-grid mb-lg">
+  <div class="stat-card">
+    <div class="stat-label">STATUS</div>
+    <div class="status-indicator" id="clicker-status">
+      <span class="status-dot"></span> Stopped
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">ATTEMPTS</div>
+    <div class="stat-value mono" id="clicker-attempts">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">SUCCESSES</div>
+    <div class="stat-value text-success mono" id="clicker-successes">0</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">FAILURES</div>
+    <div class="stat-value text-danger mono" id="clicker-failures">0</div>
+  </div>
+</div>
+
+<div class="card mb-lg">
+  <h3 class="mb-md">Configuration</h3>
+  <div class="form-row mb-md">
+    <div class="form-group flex-2">
+      <label class="form-label">Target Text</label>
+      <input type="text" id="clicker-target" class="form-input" placeholder="Text to find on screen...">
+    </div>
+    <div class="form-group flex-1">
+      <label class="form-label">Interval (seconds)</label>
+      <input type="number" id="clicker-interval" class="form-input" value="5" min="0.5" max="3600" step="0.5">
+    </div>
+  </div>
+  <div class="form-row mb-md">
+    <div class="form-group flex-1">
+      <label class="form-label">Min Confidence</label>
+      <input type="number" id="clicker-confidence" class="form-input" value="0.2" min="0" max="1" step="0.05">
+    </div>
+    <div class="form-group flex-1 flex items-center gap-md">
+      <label class="form-label">Continuous Mode</label>
+      <label class="toggle-switch">
+        <input type="checkbox" id="clicker-continuous">
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  </div>
+  <div class="btn-group">
+    <button id="clicker-start-btn" class="btn btn-success">Start Clicker</button>
+    <button id="clicker-stop-btn" class="btn btn-danger">Stop Clicker</button>
+    <button id="clicker-clear-btn" class="btn">Clear Logs</button>
+  </div>
+</div>
+
+<div class="card mb-lg">
+  <h3 class="mb-md">Live Log</h3>
+  <div id="clicker-log" class="log-panel"></div>
+</div>
+
+<div class="card">
+  <h3 class="mb-md">Recent Screenshots</h3>
+  <div id="clicker-screenshots" class="screenshot-gallery"></div>
+  <div id="clicker-no-screenshots" class="empty-state">
+    <div class="empty-state-icon">📸</div>
+    <div class="empty-state-text">No screenshots yet</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const statusEl = document.getElementById('clicker-status');
+  const attemptsEl = document.getElementById('clicker-attempts');
+  const successesEl = document.getElementById('clicker-successes');
+  const failuresEl = document.getElementById('clicker-failures');
+  const logPanel = document.getElementById('clicker-log');
+  const screenshotsEl = document.getElementById('clicker-screenshots');
+  const noScreenshotsEl = document.getElementById('clicker-no-screenshots');
+
+  const LOG_LEVEL_CLASS = {
+    info: 'log-info',
+    success: 'log-success',
+    warning: 'log-warning',
+    error: 'log-error'
+  };
+
+  function renderLogEntries(logs) {
+    logPanel.innerHTML = '';
+    logs.forEach((entry) => {
+      const div = document.createElement('div');
+      div.className = 'log-entry';
+
+      const time = document.createElement('span');
+      time.className = 'log-time';
+      time.textContent = entry.time || '';
+
+      const msg = document.createElement('span');
+      msg.className = LOG_LEVEL_CLASS[entry.level] || 'log-info';
+      msg.textContent = entry.message || '';
+
+      div.appendChild(time);
+      div.appendChild(msg);
+      logPanel.appendChild(div);
+    });
+  }
+
+  function updateStatus(state) {
+    const dot = statusEl.querySelector('.status-dot');
+    if (state.running) {
+      dot.classList.add('running');
+      dot.classList.remove('stopped');
+      statusEl.childNodes[1].textContent = ' Running';
+    } else {
+      dot.classList.remove('running');
+      dot.classList.add('stopped');
+      statusEl.childNodes[1].textContent = ' Stopped';
+    }
+
+    attemptsEl.textContent = state.attempts ?? 0;
+    successesEl.textContent = state.successes ?? 0;
+    failuresEl.textContent = state.failures ?? 0;
+
+    if (state.logs) {
+      renderLogEntries(state.logs);
+    }
+  }
+
+  async function pollState() {
+    try {
+      const res = await fetch('/api/clicker/state');
+      if (res.ok) {
+        const state = await res.json();
+        updateStatus(state);
+      }
+    } catch (err) {
+      // silently retry on next tick
+    }
+  }
+
+  setInterval(pollState, 2000);
+  pollState();
+
+  async function loadScreenshots() {
+    try {
+      const res = await fetch('/api/clicker/screenshots');
+      if (res.ok) {
+        const data = await res.json();
+        const shots = data.screenshots || data || [];
+        if (shots.length > 0) {
+          noScreenshotsEl.classList.add('hidden');
+          screenshotsEl.innerHTML = '';
+          shots.forEach((shot) => {
+            const thumb = document.createElement('div');
+            thumb.className = 'screenshot-thumb';
+
+            const img = document.createElement('img');
+            img.src = shot.url || shot.src || '';
+            img.alt = shot.label || 'Screenshot';
+
+            const label = document.createElement('span');
+            label.className = 'screenshot-thumb-label';
+            label.textContent = shot.label || shot.time || '';
+
+            thumb.appendChild(img);
+            thumb.appendChild(label);
+            screenshotsEl.appendChild(thumb);
+          });
+        } else {
+          noScreenshotsEl.classList.remove('hidden');
+        }
+      }
+    } catch (err) {
+      // keep empty state visible
+    }
+  }
+
+  loadScreenshots();
+
+  document.getElementById('clicker-start-btn').addEventListener('click', async () => {
+    const body = {
+      target: document.getElementById('clicker-target').value,
+      interval: parseFloat(document.getElementById('clicker-interval').value),
+      min_confidence: parseFloat(document.getElementById('clicker-confidence').value),
+      continuous: document.getElementById('clicker-continuous').checked
+    };
+
+    try {
+      await fetch('/api/clicker/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      pollState();
+    } catch (err) {
+      // ignore
+    }
+  });
+
+  document.getElementById('clicker-stop-btn').addEventListener('click', async () => {
+    try {
+      await fetch('/api/clicker/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      pollState();
+    } catch (err) {
+      // ignore
+    }
+  });
+
+  document.getElementById('clicker-clear-btn').addEventListener('click', async () => {
+    try {
+      await fetch('/api/clicker/clear-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      logPanel.innerHTML = '';
+    } catch (err) {
+      // ignore
+    }
+  });
+</script>
+{% endblock %}

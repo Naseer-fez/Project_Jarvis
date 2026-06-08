@@ -1,0 +1,8 @@
+﻿core\voice\tts.py:236: error: Unused "type: ignore" comment  [unused-ignore]
+core\voice\tts.py:236: error: Cannot assign to a type  [misc]
+core\voice\tts.py:236: note: Error code "misc" not covered by "type: ignore[no-redef]" comment
+core\voice\tts.py:236: error: Incompatible types in assignment (expression has type "type[_TextToSpeechStub]", variable has type "type[TextToSpeech]")  [assignment]
+core\voice\tts.py:236: note: Error code "assignment" not covered by "type: ignore[no-redef]" comment
+core\voice\audio_utils.py:193: error: Name "Any" is not defined  [name-defined]
+core\voice\audio_utils.py:193: note: Did you forget to import it from "typing"? (Suggestion: "from typing import Any")
+Found 4 errors in 2 files (checked 115 source files)

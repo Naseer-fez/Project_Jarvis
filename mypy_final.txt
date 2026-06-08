@@ -1,0 +1,17 @@
+core\voice\tts.py:236: error: Name "TextToSpeech" already defined on line 147  [no-redef]
+core\voice\stt.py:28: error: Name "np" already defined (by an import)  [no-redef]
+core\voice\audio_utils.py:193: error: Name "Any" is not defined  [name-defined]
+core\voice\audio_utils.py:193: note: Did you forget to import it from "typing"? (Suggestion: "from typing import Any")
+core\voice\audio_utils.py:209: error: Unused "type: ignore" comment  [unused-ignore]
+core\memory\sqlite_pool.py:26: error: Name "Any" is not defined  [name-defined]
+core\memory\sqlite_pool.py:26: note: Did you forget to import it from "typing"? (Suggestion: "from typing import Any")
+core\desktop\actions.py:69: error: Name "metadata" already defined on line 54  [no-redef]
+core\tools\web_tools.py:20: error: Cannot assign to a type  [misc]
+core\tools\web_tools.py:20: note: Error code "misc" not covered by "type: ignore[assignment]" comment
+core\tools\web_tools.py:30: error: Cannot assign to a type  [misc]
+core\tools\web_tools.py:30: note: Error code "misc" not covered by "type: ignore[assignment]" comment
+core\controller\services.py:63: error: Unused "type: ignore" comment  [unused-ignore]
+core\controller\services.py:65: error: Unused "type: ignore" comment  [unused-ignore]
+core\controller_v2.py:238: error: Returning Any from function declared to return "str | None"  [no-any-return]
+core\controller\intent_handlers.py:35: error: Returning Any from function declared to return "str | None"  [no-any-return]
+Found 12 errors in 9 files (checked 115 source files)

@@ -23,19 +23,19 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 try:
-    import numpy as np  # type: ignore[import]
+    import numpy as np
 except ImportError:
     np = None  # type: ignore[assignment]
 
 try:
-    import sounddevice as sd  # type: ignore[import]
+    import sounddevice as sd
 except ImportError:
-    sd = None  # type: ignore[assignment]
+    sd = None
 
 try:
-    from faster_whisper import WhisperModel  # type: ignore[import]
+    from faster_whisper import WhisperModel
 except ImportError:
-    WhisperModel = None  # type: ignore[assignment]
+    WhisperModel = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ class STT:
                 return False
             samples = struct.unpack(f"{num_samples}h", pcm_bytes[: num_samples * 2])
             rms = (sum(s * s for s in samples) / num_samples) ** 0.5
-            return rms > self._VAD_ENERGY_THRESHOLD
+            return bool(rms > self._VAD_ENERGY_THRESHOLD)
         except Exception:  # noqa: BLE001
             return False
 
@@ -234,7 +234,10 @@ class SpeechToText:
             frames = int(self.max_duration_s * self.sample_rate)
             recording = sd.rec(frames, samplerate=self.sample_rate, channels=1, dtype="float32")
             sd.wait()
-            segments, _ = self._model.transcribe(recording.flatten(), language=self.language)
+            model = self._model
+            if model is None:
+                return ""
+            segments, _ = model.transcribe(recording.flatten(), language=self.language)
             return " ".join(s.text.strip() for s in segments if s.text).strip()
         except Exception as exc:  # noqa: BLE001
             logger.warning("STT whisper failed: %s", exc)

@@ -1,327 +1,274 @@
 {% extends "base.html" %}
 
+{% block page_title %}Converter{% endblock %}
+
 {% block content %}
-<div class="converter-container">
-  <h2>🔄 Universal File Converter</h2>
-  <p style="opacity: 0.8; margin-top: -10px;">Upload any file to convert it instantly to another format. Libraries are installed dynamically on demand!</p>
+<div class="page-header">
+  <h1 class="page-title">Universal Converter</h1>
+  <p class="page-subtitle">Convert files between formats — libraries are installed on demand</p>
+</div>
 
-  <div class="card">
-    <!-- Drag and Drop Zone -->
-    <div id="drop-zone" class="drop-zone">
-      <div class="drop-zone-content">
-        <span class="icon">📤</span>
-        <p class="main-text">Drag and drop your file here, or click to browse</p>
-        <p class="sub-text">Supports Images, Documents, Data (JSON/CSV), Audio, and Video files</p>
-      </div>
-      <input type="file" id="file-input" class="hidden">
-    </div>
-
-    <!-- File Information & Selection (Hidden initially) -->
-    <div id="file-info-section" class="hidden" style="margin-top: 25px; padding-top: 20px; border-top: 1px solid rgba(78, 204, 163, 0.25);">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <div>
-          <span style="font-size: 0.9rem; opacity: 0.7;">Selected File:</span>
-          <div id="file-name" style="font-size: 1.1rem; font-weight: bold; color: var(--accent);">filename.ext</div>
-          <div id="file-size" style="font-size: 0.85rem; opacity: 0.8;">0 KB</div>
-        </div>
-        <button id="reset-btn" class="btn-sm" style="border-color: var(--danger); background: rgba(255, 107, 107, 0.1);">Clear File</button>
-      </div>
-
-      <div class="form-row" style="margin-top: 20px;">
-        <div class="form-group flex-1">
-          <label for="target-format">Target Format</label>
-          <select id="target-format" name="target_format" class="cmd-input" style="height: 38px; padding: 5px;">
-            <!-- Populated dynamically by JS -->
-          </select>
-        </div>
-        <div id="custom-format-group" class="form-group flex-1 hidden">
-          <label for="custom-format">Enter Custom Extension</label>
-          <input type="text" id="custom-format" placeholder="e.g. mp4, webp, csv" class="cmd-input">
-        </div>
-      </div>
-
-      <button id="convert-btn" class="btn" style="margin-top: 20px; width: 100%; display: flex; justify-content: center; align-items: center; gap: 10px;">
-        <span id="convert-text">Convert & Download</span>
-        <div id="convert-spinner" class="spinner hidden"></div>
-      </button>
-    </div>
+<!-- Upload Card -->
+<div class="card mb-lg">
+  <div id="drop-zone" class="drop-zone">
+    <div class="drop-zone-icon">📤</div>
+    <div class="drop-zone-title">Drag and drop your file here, or click to browse</div>
+    <div class="drop-zone-sub">Supports images, documents, data, audio, and video</div>
   </div>
+  <input id="file-input" class="hidden" type="file">
 
-  <div id="log-section" class="info-bar hidden" style="margin-top: 20px; border-color: rgba(78, 204, 163, 0.35);">
-    <div style="font-weight: bold; color: var(--accent); margin-bottom: 5px;">📋 System Logs</div>
-    <div id="conversion-log" style="font-family: monospace; font-size: 0.85rem; max-height: 120px; overflow-y: auto; white-space: pre-wrap;">
-      Starting...
+  <!-- File Info Section -->
+  <div id="file-info" class="hidden mt-lg">
+    <div class="flex justify-between items-center mb-md">
+      <div>
+        <small class="text-muted">Selected File:</small>
+        <div id="file-name" class="fw-700 text-accent"></div>
+        <small class="text-muted" id="file-size"></small>
+      </div>
+      <button id="reset-btn" class="btn btn-sm btn-danger">Clear</button>
     </div>
+
+    <div class="form-row mb-md">
+      <div class="form-group flex-1">
+        <label class="form-label" for="target-format">Target Format</label>
+        <select class="form-select" id="target-format"></select>
+      </div>
+      <div id="custom-format-group" class="form-group flex-1 hidden">
+        <label class="form-label" for="custom-format">Custom Extension</label>
+        <input class="form-input" type="text" id="custom-format" placeholder="e.g. mp4, webp">
+      </div>
+    </div>
+
+    <button id="convert-btn" class="btn btn-accent btn-full">
+      <span id="convert-text">Convert &amp; Download</span>
+      <span id="convert-spinner" class="spinner spinner-sm hidden"></span>
+    </button>
   </div>
 </div>
 
-<style>
-  .card {
-    background: var(--bg2);
-    border: 1px solid rgba(78, 204, 163, 0.22);
-    border-radius: 12px;
-    padding: 20px;
-    margin-bottom: 20px;
-  }
-  .drop-zone {
-    border: 2px dashed rgba(78, 204, 163, 0.4);
-    border-radius: 8px;
-    padding: 40px 20px;
-    text-align: center;
-    background: rgba(21, 47, 42, 0.15);
-    cursor: pointer;
-    transition: all 0.3s ease;
-  }
-  .drop-zone:hover, .drop-zone.dragover {
-    border-color: var(--accent);
-    background: rgba(78, 204, 163, 0.08);
-  }
-  .drop-zone-content .icon {
-    font-size: 3rem;
-    display: block;
-    margin-bottom: 10px;
-  }
-  .drop-zone-content .main-text {
-    font-size: 1.1rem;
-    font-weight: bold;
-    margin: 5px 0;
-  }
-  .drop-zone-content .sub-text {
-    font-size: 0.85rem;
-    opacity: 0.7;
-    margin: 0;
-  }
-  .form-row {
-    display: flex;
-    gap: 15px;
-    margin-bottom: 15px;
-    flex-wrap: wrap;
-  }
-  .form-group {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .flex-1 { flex: 1; min-width: 200px; }
-  label {
-    font-size: 0.9rem;
-    font-weight: bold;
-    color: var(--accent);
-  }
-</style>
+<!-- Log Section -->
+<div id="convert-log-section" class="card hidden mt-lg">
+  <h3 class="mb-sm">Conversion Log</h3>
+  <div id="convert-log" class="log-panel"></div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('file-input');
-const fileInfoSection = document.getElementById('file-info-section');
-const fileNameDisp = document.getElementById('file-name');
-const fileSizeDisp = document.getElementById('file-size');
-const resetBtn = document.getElementById('reset-btn');
-const targetFormat = document.getElementById('target-format');
-const customFormatGroup = document.getElementById('custom-format-group');
-const customFormat = document.getElementById('custom-format');
-const convertBtn = document.getElementById('convert-btn');
-const convertText = document.getElementById('convert-text');
-const convertSpinner = document.getElementById('convert-spinner');
-const logSection = document.getElementById('log-section');
-const logDiv = document.getElementById('conversion-log');
+(function() {
+  const FORMAT_MAP = {
+    'png':  ['jpg', 'webp', 'gif', 'bmp', 'pdf'],
+    'jpg':  ['png', 'webp', 'gif', 'bmp', 'pdf'],
+    'jpeg': ['png', 'webp', 'gif', 'bmp', 'pdf'],
+    'gif':  ['png', 'jpg', 'webp', 'bmp'],
+    'bmp':  ['png', 'jpg', 'webp', 'gif'],
+    'webp': ['png', 'jpg', 'gif', 'bmp'],
+    'svg':  ['png', 'jpg', 'pdf'],
+    'csv':  ['json', 'xlsx'],
+    'json': ['csv', 'xlsx'],
+    'xlsx': ['csv', 'json'],
+    'xls':  ['csv', 'json', 'xlsx'],
+    'mp3':  ['wav', 'ogg'],
+    'wav':  ['mp3', 'ogg'],
+    'ogg':  ['mp3', 'wav'],
+    'flac': ['mp3', 'wav', 'ogg'],
+    'mp4':  ['avi', 'mkv', 'webm', 'gif'],
+    'avi':  ['mp4', 'mkv', 'webm'],
+    'mkv':  ['mp4', 'avi', 'webm'],
+    'webm': ['mp4', 'avi', 'mkv'],
+    'pdf':  ['png', 'jpg', 'txt'],
+    'docx': ['pdf', 'txt', 'html'],
+    'txt':  ['pdf', 'html'],
+    'html': ['pdf', 'txt'],
+    'md':   ['pdf', 'html', 'txt']
+  };
 
-let selectedFile = null;
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const fileInfo = document.getElementById('file-info');
+  const fileName = document.getElementById('file-name');
+  const fileSize = document.getElementById('file-size');
+  const resetBtn = document.getElementById('reset-btn');
+  const targetFormat = document.getElementById('target-format');
+  const customGroup = document.getElementById('custom-format-group');
+  const customFormat = document.getElementById('custom-format');
+  const convertBtn = document.getElementById('convert-btn');
+  const convertText = document.getElementById('convert-text');
+  const convertSpinner = document.getElementById('convert-spinner');
+  const logSection = document.getElementById('convert-log-section');
+  const logPanel = document.getElementById('convert-log');
 
-// Conversion possibilities map based on extension
-const FORMAT_MAP = {
-  // Images
-  'png': ['jpg', 'webp', 'gif', 'bmp', 'pdf'],
-  'jpg': ['png', 'webp', 'gif', 'bmp', 'pdf'],
-  'jpeg': ['png', 'webp', 'gif', 'bmp', 'pdf'],
-  'webp': ['png', 'jpg', 'gif', 'bmp', 'pdf'],
-  'bmp': ['png', 'jpg', 'webp', 'gif', 'pdf'],
-  'gif': ['png', 'jpg', 'webp', 'bmp', 'pdf'],
-  // Documents
-  'txt': ['html', 'pdf'],
-  'md': ['html'],
-  'pdf': ['txt'],
-  // Data
-  'csv': ['json', 'xlsx'],
-  'json': ['csv', 'yaml', 'xlsx'],
-  'yaml': ['json'],
-  'yml': ['json'],
-  // Audio
-  'mp3': ['wav', 'ogg', 'm4a', 'flac'],
-  'wav': ['mp3', 'ogg', 'm4a', 'flac'],
-  'ogg': ['mp3', 'wav', 'm4a', 'flac'],
-  'm4a': ['mp3', 'wav', 'ogg', 'flac'],
-  'flac': ['mp3', 'wav', 'ogg', 'm4a'],
-  // Video
-  'mp4': ['avi', 'mkv', 'webm', 'mov', 'gif'],
-  'avi': ['mp4', 'mkv', 'webm', 'mov', 'gif'],
-  'mkv': ['mp4', 'avi', 'webm', 'mov', 'gif'],
-  'webm': ['mp4', 'avi', 'mkv', 'mov', 'gif'],
-  'mov': ['mp4', 'avi', 'mkv', 'webm', 'gif']
-};
+  let selectedFile = null;
 
-// Drag and drop events
-dropZone.addEventListener('click', () => fileInput.click());
-
-dropZone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropZone.classList.add('dragover');
-});
-
-dropZone.addEventListener('dragleave', () => {
-  dropZone.classList.remove('dragover');
-});
-
-dropZone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropZone.classList.remove('dragover');
-  if (e.dataTransfer.files.length > 0) {
-    handleFileSelected(e.dataTransfer.files[0]);
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + units[i];
   }
-});
 
-fileInput.addEventListener('change', (e) => {
-  if (e.target.files.length > 0) {
-    handleFileSelected(e.target.files[0]);
+  function getExtension(name) {
+    const parts = name.split('.');
+    return parts.length > 1 ? parts.pop().toLowerCase() : '';
   }
-});
 
-resetBtn.addEventListener('click', () => {
-  resetUI();
-});
+  function addLog(message, level) {
+    level = level || 'info';
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
 
-function handleFileSelected(file) {
-  selectedFile = file;
-  fileNameDisp.textContent = file.name;
-  
-  // Format File Size
-  const kb = file.size / 1024;
-  fileSizeDisp.textContent = kb > 1024 
-    ? `${(kb / 1024).toFixed(2)} MB` 
-    : `${kb.toFixed(2)} KB`;
-    
-  // Populate target extensions
-  const ext = file.name.split('.').pop().toLowerCase();
-  targetFormat.innerHTML = '';
-  
-  const options = FORMAT_MAP[ext] || [];
-  options.forEach(fmt => {
-    const opt = document.createElement('option');
-    opt.value = fmt;
-    opt.textContent = fmt.toUpperCase();
-    targetFormat.appendChild(opt);
-  });
-  
-  // Add fallback option
-  const optCustom = document.createElement('option');
-  optCustom.value = 'custom';
-  optCustom.textContent = 'Custom Format...';
-  targetFormat.appendChild(optCustom);
-  
-  // Event listener for showing custom formats
-  targetFormat.addEventListener('change', () => {
-    if (targetFormat.value === 'custom') {
-      customFormatGroup.classList.remove('hidden');
-    } else {
-      customFormatGroup.classList.add('hidden');
-    }
-  });
-  
-  // Initial check
-  if (targetFormat.value === 'custom') {
-    customFormatGroup.classList.remove('hidden');
-  } else {
-    customFormatGroup.classList.add('hidden');
+    const time = document.createElement('span');
+    time.className = 'log-time';
+    time.textContent = new Date().toLocaleTimeString();
+
+    const msg = document.createElement('span');
+    msg.className = 'log-' + level;
+    msg.textContent = message;
+
+    entry.appendChild(time);
+    entry.appendChild(msg);
+    logPanel.appendChild(entry);
+    logSection.classList.remove('hidden');
+    logPanel.scrollTop = logPanel.scrollHeight;
   }
-  
-  dropZone.classList.add('hidden');
-  fileInfoSection.classList.remove('hidden');
-}
 
-function resetUI() {
-  selectedFile = null;
-  fileInput.value = '';
-  dropZone.classList.remove('hidden');
-  fileInfoSection.classList.add('hidden');
-  logSection.classList.add('hidden');
-  logDiv.innerHTML = '';
-}
+  function handleFile(file) {
+    if (!file) return;
+    selectedFile = file;
+    fileName.textContent = file.name;
+    fileSize.textContent = formatBytes(file.size);
 
-convertBtn.addEventListener('click', async () => {
-  if (!selectedFile) return;
-  
-  let targetExt = targetFormat.value;
-  if (targetExt === 'custom') {
-    targetExt = customFormat.value.trim().toLowerCase();
-    if (!targetExt) {
-      alert("Please enter a custom target format extension.");
-      return;
-    }
-  }
-  
-  // Set conversion progress UI
-  convertText.textContent = "Converting File...";
-  convertBtn.disabled = true;
-  convertSpinner.classList.remove('hidden');
-  logSection.classList.remove('hidden');
-  logDiv.textContent = `[System] Preparing conversion: ${selectedFile.name} -> .${targetExt}\n`;
-  logDiv.textContent += `[System] Uploading file data...\n`;
-  
-  const formData = new FormData();
-  formData.append('file', selectedFile);
-  formData.append('target_format', targetExt);
-  
-  try {
-    logDiv.textContent += `[System] Processing conversion (installing libraries if needed)...\n`;
-    const response = await fetch('/api/convert', {
-      method: 'POST',
-      headers: {
-        'X-Dashboard-Token': 'jarvis'
-      },
-      body: formData
+    const ext = getExtension(file.name);
+    const targets = FORMAT_MAP[ext] || [];
+
+    targetFormat.innerHTML = '';
+    targets.forEach(function(fmt) {
+      const opt = document.createElement('option');
+      opt.value = fmt;
+      opt.textContent = '.' + fmt.toUpperCase();
+      targetFormat.appendChild(opt);
     });
-    
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || "Conversion failed on server.");
+
+    const customOpt = document.createElement('option');
+    customOpt.value = '__custom__';
+    customOpt.textContent = 'Custom Format...';
+    targetFormat.appendChild(customOpt);
+
+    customGroup.classList.add('hidden');
+    customFormat.value = '';
+
+    dropZone.classList.add('hidden');
+    fileInfo.classList.remove('hidden');
+  }
+
+  function resetState() {
+    selectedFile = null;
+    fileInput.value = '';
+    fileName.textContent = '';
+    fileSize.textContent = '';
+    targetFormat.innerHTML = '';
+    customFormat.value = '';
+    customGroup.classList.add('hidden');
+    fileInfo.classList.add('hidden');
+    dropZone.classList.remove('hidden');
+  }
+
+  /* Drag & drop */
+  dropZone.addEventListener('click', function() {
+    fileInput.click();
+  });
+
+  dropZone.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    dropZone.classList.add('active');
+  });
+
+  dropZone.addEventListener('dragleave', function() {
+    dropZone.classList.remove('active');
+  });
+
+  dropZone.addEventListener('drop', function(e) {
+    e.preventDefault();
+    dropZone.classList.remove('active');
+    if (e.dataTransfer.files.length) {
+      handleFile(e.dataTransfer.files[0]);
     }
-    
-    logDiv.textContent += `[System] Conversion complete! Downloading file...\n`;
-    
-    // Read the blob data and download the file
-    const blob = await response.blob();
-    
-    // Extract filename from header or guess one
-    const disposition = response.headers.get('Content-Disposition');
-    let outputFilename = `converted_${selectedFile.name.split('.')[0]}.${targetExt}`;
-    if (disposition && disposition.indexOf('filename=') !== -1) {
-      const matches = /filename="?([^";]+)"?/g.exec(disposition);
-      if (matches != null && matches[1]) { 
-        outputFilename = matches[1];
+  });
+
+  fileInput.addEventListener('change', function() {
+    if (fileInput.files.length) {
+      handleFile(fileInput.files[0]);
+    }
+  });
+
+  /* Target format change */
+  targetFormat.addEventListener('change', function() {
+    if (targetFormat.value === '__custom__') {
+      customGroup.classList.remove('hidden');
+    } else {
+      customGroup.classList.add('hidden');
+    }
+  });
+
+  /* Reset */
+  resetBtn.addEventListener('click', resetState);
+
+  /* Convert */
+  convertBtn.addEventListener('click', async function() {
+    if (!selectedFile) return;
+
+    let target = targetFormat.value;
+    if (target === '__custom__') {
+      target = customFormat.value.trim().replace(/^\./, '');
+      if (!target) {
+        alert('Please enter a custom format extension.');
+        return;
       }
     }
-    
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = outputFilename;
-    document.body.appendChild(a);
-    a.click();
-    window.URL.revokeObjectURL(url);
-    document.body.removeChild(a);
-    
-    logDiv.textContent += `[Success] Saved to local downloads folder: ${outputFilename}\n`;
-    
-  } catch (error) {
-    logDiv.textContent += `[Error] ${error.message}\n`;
-    alert("Conversion failed: " + error.message);
-  } finally {
-    convertText.textContent = "Convert & Download";
-    convertBtn.disabled = false;
-    convertSpinner.classList.add('hidden');
-  }
-});
+
+    convertBtn.disabled = true;
+    convertText.textContent = 'Converting...';
+    convertSpinner.classList.remove('hidden');
+
+    addLog('Starting conversion: ' + selectedFile.name + ' → .' + target, 'info');
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    formData.append('target_format', target);
+
+    try {
+      const resp = await fetch('/api/convert', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!resp.ok) {
+        const errData = await resp.json().catch(function() { return {}; });
+        throw new Error(errData.error || 'Conversion failed (HTTP ' + resp.status + ')');
+      }
+
+      addLog('Conversion complete — downloading file', 'success');
+
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const baseName = selectedFile.name.replace(/\.[^.]+$/, '');
+      a.href = url;
+      a.download = baseName + '.' + target;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      addLog('Error: ' + err.message, 'error');
+      console.error('Conversion failed:', err);
+    } finally {
+      convertBtn.disabled = false;
+      convertText.textContent = 'Convert & Download';
+      convertSpinner.classList.add('hidden');
+    }
+  });
+})();
 </script>
 {% endblock %}

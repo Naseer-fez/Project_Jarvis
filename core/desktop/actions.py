@@ -50,7 +50,8 @@ def _normalize_tool_result(result: Any) -> tuple[bool, str, str, dict[str, Any]]
             or result.get("metadata")
         )
         error = str(result.get("error", "") or "")
-        metadata = result.get("metadata") if isinstance(result.get("metadata"), dict) else {}
+        from typing import cast
+        metadata: dict[str, Any] = cast(dict, result.get("metadata")) if isinstance(result.get("metadata"), dict) else {}
         data = result.get("data") if isinstance(result.get("data"), dict) else {}
         return success, output, error, {"data": data, **metadata}
 
@@ -65,13 +66,13 @@ def _normalize_tool_result(result: Any) -> tuple[bool, str, str, dict[str, Any]]
         or getattr(result, "metadata", None)
     )
     error = str(getattr(result, "error", "") or "")
-    metadata = getattr(result, "metadata", None)
+    metadata_raw = getattr(result, "metadata", None)
     data = getattr(result, "data", None)
     normalized_metadata: dict[str, Any] = {}
     if isinstance(data, dict):
         normalized_metadata["data"] = data
-    if isinstance(metadata, dict):
-        normalized_metadata.update(metadata)
+    if isinstance(metadata_raw, dict):
+        normalized_metadata.update(metadata_raw)
     return success, output, error, normalized_metadata
 
 

@@ -125,9 +125,9 @@ class EventBus:
 
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            for res in results:
-                if isinstance(res, Exception):
-                    logger.error("Error in async subscriber execution for event '%s': %s", record.event_type, res, exc_info=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error("Error in async subscriber execution for event '%s': %s", record.event_type, result, exc_info=True)
         return record
 
     def replay(self, event_type: str | None = None, *, limit: int | None = None) -> list[EventRecord]:

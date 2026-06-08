@@ -16,6 +16,7 @@ class AutonomyLevel(IntEnum):
     SUGGEST_ONLY = 1
     READ_ONLY = 2
     WRITE_WITH_CONFIRM = 3
+    AUTONOMOUS = 4
 
 
 class AutonomyGovernor:
@@ -143,6 +144,9 @@ class AutonomyGovernor:
         if not is_write:
             return True, f"Read-only tool '{tool_name}' approved at LEVEL_{self.level}."
 
+        if self.level >= AutonomyLevel.AUTONOMOUS:
+            return True, f"Write tool '{tool_name}' approved at LEVEL_4 (fully autonomous)."
+
         if self.level >= AutonomyLevel.WRITE_WITH_CONFIRM:
             return True, f"Write tool '{tool_name}' approved at LEVEL_3 (confirmation required separately)."
         
@@ -150,12 +154,14 @@ class AutonomyGovernor:
 
     def requires_confirmation(self, tool_name: str) -> bool:
         """Write tools at LEVEL_3 always need explicit user confirmation."""
+        if self.level >= AutonomyLevel.AUTONOMOUS:
+            return False
         return self.level == AutonomyLevel.WRITE_WITH_CONFIRM and self._is_write_tool(tool_name)
 
     def escalate(self, new_level: int) -> bool:
         """Temporarily escalate autonomy (user must consent upstream)."""
-        if new_level > AutonomyLevel.WRITE_WITH_CONFIRM:
-            logger.warning("Escalation above LEVEL_3 is not permitted.")
+        if new_level > AutonomyLevel.AUTONOMOUS:
+            logger.warning("Escalation above LEVEL_4 is not permitted.")
             return False
         old = self.level
         self.level = AutonomyLevel(new_level)
@@ -168,5 +174,6 @@ class AutonomyGovernor:
             1: "Suggest only — describes actions but never runs them.",
             2: "Read-only — can inspect files, web, screen, and status automatically.",
             3: "Write with confirmation — can change files, apps, and desktop state after your approval.",
+            4: "Fully autonomous — can run any allowed tool without confirmation.",
         }
-        return f"LEVEL_{self.level}: {descriptions[self.level]}"
+        return f"LEVEL_{self.level}: {descriptions.get(self.level, 'Unknown')}"

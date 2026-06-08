@@ -46,8 +46,9 @@ def extract_code_chunks(file_path: str, content: str) -> list[dict[str, Any]]:
             continue
 
         start = max(0, getattr(node, "lineno", 1) - 1)
-        end_lineno = getattr(node, "end_lineno", None) or getattr(node, "lineno", 1)
-        end = min(len(lines), max(start + 1, end_lineno))
+        end_lineno_attr = getattr(node, "end_lineno", None)
+        end_lineno = int(end_lineno_attr) if end_lineno_attr is not None else getattr(node, "lineno", 1)
+        end = min(len(lines), max(start + 1, int(end_lineno)))
         chunk = "\n".join(lines[start:end]).strip()
         if not chunk:
             continue

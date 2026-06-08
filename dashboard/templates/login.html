@@ -3,79 +3,67 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Jarvis Dashboard - Login</title>
+  <title>JARVIS — Login</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
-  <style>
-    .login-container {
-      max-width: 400px;
-      margin: 80px auto;
-      padding: 30px;
-      background: var(--bg2);
-      border: 1px solid rgba(78, 204, 163, 0.3);
-      border-radius: 16px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-    }
-    .login-container h2 {
-      margin-top: 0;
-      color: var(--accent);
-      text-align: center;
-      letter-spacing: 0.1rem;
-    }
-    .form-group {
-      margin-bottom: 20px;
-    }
-    .form-group label {
-      display: block;
-      margin-bottom: 8px;
-      font-size: 0.9rem;
-      opacity: 0.9;
-    }
-    .form-group input {
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid rgba(78, 204, 163, 0.35);
-      background: #0f0f20;
-      color: var(--text);
-      font-family: var(--font);
-    }
-    .form-group input:focus {
-      outline: none;
-      border-color: var(--accent);
-    }
-    .login-btn {
-      width: 100%;
-      margin-top: 10px;
-    }
-    .error-msg {
-      color: var(--danger);
-      margin-bottom: 15px;
-      font-size: 0.9rem;
-      text-align: center;
-    }
-  </style>
 </head>
 <body>
-  <div class="login-container">
-    <h2>JARVIS SYSTEM ACCESS</h2>
-    
-    {% if error %}
-      <div class="error-msg">{{ error }}</div>
-    {% endif %}
-    
-    <form method="POST" action="/login">
-      <div class="form-group">
-        <label for="username">USERNAME</label>
-        <input type="text" id="username" name="username" required autocomplete="username" autofocus>
+  <canvas id="particle-canvas"></canvas>
+
+  <div class="login-layout">
+    <div class="login-card">
+      <div class="login-card-inner">
+
+        <div class="login-logo">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#00f0ff"/>
+                <stop offset="100%" stop-color="#8b5cf6"/>
+              </linearGradient>
+            </defs>
+            <polygon points="24,2 44,14 44,34 24,46 4,34 4,14"
+                     stroke="url(#logo-grad)" stroke-width="2" fill="none"/>
+            <polygon points="24,8 38,16 38,32 24,40 10,32 10,16"
+                     stroke="url(#logo-grad)" stroke-width="1.2" fill="none" opacity="0.5"/>
+            <circle cx="24" cy="24" r="6"
+                    fill="url(#logo-grad)" opacity="0.8"/>
+          </svg>
+        </div>
+
+        <h1 class="login-title">JARVIS</h1>
+        <p class="login-subtitle">System Authentication Required</p>
+
+        {% if error %}
+        <div class="login-error">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST" action="/login">
+          <div class="form-group">
+            <label class="form-label" for="username">USERNAME</label>
+            <input class="form-input" type="text" name="username" id="username"
+                   required autofocus autocomplete="username">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="password">PASSWORD</label>
+            <input class="form-input" type="password" name="password" id="password"
+                   required autocomplete="current-password">
+          </div>
+
+          <button class="btn btn-accent btn-full" type="submit">AUTHENTICATE</button>
+        </form>
+
+        <div class="login-footer">
+          <span class="ws-dot"></span> System Online
+        </div>
+
       </div>
-      
-      <div class="form-group">
-        <label for="password">PASSWORD</label>
-        <input type="password" id="password" name="password" required autocomplete="current-password">
-      </div>
-      
-      <button class="btn login-btn" type="submit">AUTHENTICATE</button>
-    </form>
+    </div>
   </div>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>

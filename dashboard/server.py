@@ -35,6 +35,37 @@ class GoalAddRequest(BaseModel):
     description: TrimmedText
     priority: int = Field(default=1, ge=1, le=10)
 
+class GenericResponse(BaseModel):
+    ok: bool = True
+    error: str | None = None
+
+class CommandResponse(BaseModel):
+    response: str
+    error: str | None = None
+
+class ClickerStateResponse(BaseModel):
+    running: bool
+    target: str
+    interval: float
+    continuous: bool
+    min_confidence: float
+    attempts: int
+    successes: int
+    failures: int
+    uptime: float
+    logs: list[dict[str, Any]]
+
+class ScreenshotResponse(BaseModel):
+    name: str
+    url: str
+    time: str
+
+class HealthResponse(BaseModel):
+    ok: bool
+    state: str
+    uptime_seconds: float
+    report: dict[str, Any]
+
 
 @dataclass
 class JarvisState:
@@ -221,9 +252,9 @@ def _format_created(value: Any) -> str:
         return ""
     if hasattr(value, "isoformat"):
         try:
-            return value.isoformat(sep=" ", timespec="seconds")
+            return str(value.isoformat(sep=" ", timespec="seconds"))
         except TypeError:
-            return value.isoformat()
+            return str(value.isoformat())
     return str(value)
 
 
@@ -321,8 +352,8 @@ def _ws_payload() -> dict[str, Any]:
 # Public readiness probe — intentionally unauthenticated and non-verbose.
 # ---------------------------------------------------------------------------
 
-@app.get("/health")
-async def health() -> dict[str, Any]:
+@app.get("/health", response_model=HealthResponse)
+async def health() -> Any:
     """Lightweight readiness probe. Intentionally unauthenticated."""
     from core.introspection.health import run_lightweight_health_check
     import dataclasses
@@ -405,7 +436,9 @@ async def memory_page(request: Request, q: str = ""):
         try:
             search = f"%{q}%"
             def _query():
-                with sqlite3.connect(memory_db) as conn:
+                conn = sqlite3.connect(memory_db)
+                try:
+                    conn.execute("PRAGMA journal_mode=WAL;")
                     conn.row_factory = sqlite3.Row
                     # The real schema has preferences / episodes / conversations.
                     # We UNION them into a common (timestamp, category, content) shape
@@ -429,6 +462,8 @@ async def memory_page(request: Request, q: str = ""):
                         """,
                         (search, search, search),
                     ).fetchall()
+                finally:
+                    conn.close()
 
             rows = await asyncio.to_thread(_query)
             for row in rows:
@@ -447,8 +482,9 @@ async def memory_page(request: Request, q: str = ""):
         message = "No matching memories found." if q else "No memories found yet."
 
     return templates.TemplateResponse(
+        request,
         "memory.html",
-        {"request": request, "memories": memories, "q": q, "message": message},
+        {"memories": memories, "q": q, "message": message},
     )
 
 
@@ -492,6 +528,13 @@ async def converter_page(request: Request):
     if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
     return templates.TemplateResponse(request, "converter.html")
+
+
+@app.get("/health-ui")
+async def health_ui_page(request: Request):
+    if not await _is_authorized(request):
+        return RedirectResponse(url="/login", status_code=303)
+    return templates.TemplateResponse(request, "health.html")
 
 
 # ---------------------------------------------------------------------------
@@ -564,13 +607,21 @@ class AutoClickerManager:
             self.add_log(f"Attempt {self.attempts}: Searching for target...", "info")
             try:
                 # Run the actual click_screen_target tool
-                result = await click_screen_target(
+                coro = click_screen_target(
                     target=self.target,
                     occurrence=1,
                     button="left",
                     match_mode="contains",
                     min_confidence=self.min_confidence,
                 )
+                
+                # PyAutoGUI is not thread-safe. Delegate to the main loop to avoid race conditions.
+                loop = getattr(_controller, "_runtime_loop", None) if _controller else None
+                if loop is not None and loop is not asyncio.get_running_loop():
+                    future = asyncio.run_coroutine_threadsafe(coro, loop)
+                    result = await asyncio.wrap_future(future)
+                else:
+                    result = await coro
                 
                 if result.success:
                     self.successes += 1
@@ -600,7 +651,7 @@ async def clicker_page(request: Request):
     return templates.TemplateResponse(request, "clicker.html", {"clicker": _clicker})
 
 
-@app.get("/api/clicker/state")
+@app.get("/api/clicker/state", response_model=ClickerStateResponse)
 async def api_clicker_state(request: Request):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -623,7 +674,7 @@ async def api_clicker_state(request: Request):
     }
 
 
-@app.post("/api/clicker/start")
+@app.post("/api/clicker/start", response_model=GenericResponse)
 async def api_clicker_start(request: Request, body: ClickerStartRequest):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -637,7 +688,7 @@ async def api_clicker_start(request: Request, body: ClickerStartRequest):
     return {"ok": True}
 
 
-@app.post("/api/clicker/stop")
+@app.post("/api/clicker/stop", response_model=GenericResponse)
 async def api_clicker_stop(request: Request):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -646,7 +697,7 @@ async def api_clicker_stop(request: Request):
     return {"ok": True}
 
 
-@app.post("/api/clicker/clear-logs")
+@app.post("/api/clicker/clear-logs", response_model=GenericResponse)
 async def api_clicker_clear_logs(request: Request):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -655,7 +706,7 @@ async def api_clicker_clear_logs(request: Request):
     return {"ok": True}
 
 
-@app.get("/api/clicker/screenshots")
+@app.get("/api/clicker/screenshots", response_model=list[ScreenshotResponse])
 async def api_clicker_screenshots(request: Request):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -694,7 +745,7 @@ async def ai_os_page(request: Request):
     )
 
 
-@app.get("/api/ai-os")
+@app.get("/api/ai-os", response_model=dict[str, Any])
 async def api_ai_os(request: Request):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -705,7 +756,7 @@ async def api_ai_os(request: Request):
 # Authenticated write endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/command")
+@app.post("/command", response_model=CommandResponse)
 async def command(request: Request, body: CommandRequest):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -721,9 +772,19 @@ async def command(request: Request, body: CommandRequest):
         return {"response": response_text}
 
     try:
-        result = _controller.process(text, trace_id=trace_id)
-        if asyncio.iscoroutine(result):
-            result = await result
+        loop = getattr(_controller, "_runtime_loop", None)
+        if loop is not None and loop is not asyncio.get_running_loop():
+            # Delegate to the controller's main event loop to avoid cross-loop
+            # asyncio.Lock violations (e.g., _state_lock in process()).
+            future = asyncio.run_coroutine_threadsafe(
+                _controller.process(text, trace_id=trace_id),
+                loop
+            )
+            result = await asyncio.wrap_future(future)
+        else:
+            result = _controller.process(text, trace_id=trace_id)
+            if asyncio.iscoroutine(result):
+                result = await result
         response_text = str(result)
     except Exception:
         logger.exception("command endpoint: process failed for input=%r", text)
@@ -733,7 +794,7 @@ async def command(request: Request, body: CommandRequest):
     return {"response": response_text}
 
 
-@app.post("/goals/add")
+@app.post("/goals/add", response_model=GenericResponse)
 async def goals_add(request: Request, body: GoalAddRequest):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -759,7 +820,7 @@ async def goals_add(request: Request, body: GoalAddRequest):
         return {"error": "Failed to add goal — see server logs for details."}
 
 
-@app.post("/goals/complete/{goal_id}")
+@app.post("/goals/complete/{goal_id}", response_model=GenericResponse)
 async def goals_complete(goal_id: str, request: Request):
     if not await _is_authorized(request):
         return _unauthorized()
@@ -797,9 +858,24 @@ async def api_search(request: Request, body: SearchRequest):
         return _unauthorized()
     
     from core.tools.fast_search_tool import run_fast_search
+    from core.tools.path_utils import _assert_safe_path, ALLOWED_DIRECTORIES, _PROJECT_ROOT
     try:
+        if body.path == "all":
+            # Pass all allowed read directories
+            path_to_search = [
+                str(d) for d in ALLOWED_DIRECTORIES + [
+                    (_PROJECT_ROOT / "config").resolve(),
+                    (_PROJECT_ROOT / "data").resolve(),
+                    (_PROJECT_ROOT / "logs").resolve(),
+                    (_PROJECT_ROOT / "core").resolve(),
+                ]
+            ]
+        else:
+            _assert_safe_path(body.path, write_op=False)
+            path_to_search = [body.path]
+
         results = await run_fast_search(
-            path=body.path,
+            path=path_to_search,
             query=body.query,
             content=body.content,
             threads=body.threads,
@@ -807,6 +883,8 @@ async def api_search(request: Request, body: SearchRequest):
             no_skip=body.no_skip
         )
         return results
+    except (ValueError, PermissionError) as e:
+        return JSONResponse(status_code=403, content={"error": f"Invalid search path: {e}"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -824,7 +902,7 @@ async def api_convert(
     import tempfile
     import shutil
     
-    suffix = Path(file.filename).suffix
+    suffix = Path(file.filename or "").suffix
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_src:
         shutil.copyfileobj(file.file, tmp_src)
         tmp_src_path = tmp_src.name
@@ -832,7 +910,7 @@ async def api_convert(
     target_format_clean = target_format.strip().lower()
     try:
         output_path = perform_conversion(tmp_src_path, target_format_clean)
-        base_name = Path(file.filename).stem
+        base_name = Path(file.filename or "").stem
         out_filename = f"{base_name}.{target_format_clean.lstrip('.')}"
         
         from starlette.background import BackgroundTasks
@@ -861,13 +939,24 @@ async def api_view_file(request: Request, path: str):
         return RedirectResponse(url="/login", status_code=303)
         
     try:
-        file_path = Path(path).resolve()
-        # Ensure target file is inside PROJECT_ROOT (prevent traversal)
-        file_path.relative_to(PROJECT_ROOT)
-    except (ValueError, RuntimeError):
+        from core.tools.path_utils import _assert_safe_path, ALLOWED_DIRECTORIES
+        file_path = _assert_safe_path(path, write_op=False)
+        
+        # Dashboard-specific restriction: only allow workspace and outputs
+        resolved_str = str(file_path).lower() if os.name == "nt" else str(file_path)
+        is_allowed = False
+        for allowed in ALLOWED_DIRECTORIES:
+            allowed_str = str(allowed).lower() if os.name == "nt" else str(allowed)
+            if resolved_str == allowed_str or resolved_str.startswith(allowed_str + os.sep) or resolved_str.startswith(allowed_str + "/"):
+                is_allowed = True
+                break
+        
+        if not is_allowed:
+            raise PermissionError("Dashboard can only view files in workspace and outputs directories.")
+    except (ValueError, RuntimeError, PermissionError):
         return JSONResponse(
             status_code=403,
-            content={"error": "Access denied. Paths must be inside project root."}
+            content={"error": "Access denied. Paths must be inside allowed directories."}
         )
         
     if not file_path.exists() or not file_path.is_file():

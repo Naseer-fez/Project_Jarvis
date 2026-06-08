@@ -1,21 +1,86 @@
 {% extends "base.html" %}
 
+{% block page_title %}Command Center{% endblock %}
+
 {% block content %}
-  <section>
-    <div id="state-badge" class="state-badge state-{{ state.state }}">{{ state.state }}</div>
-    <div class="last-input-line">Last input: <span id="last-input">{{ state.last_input or "..." }}</span></div>
-    <div id="last-response" class="response-panel">{{ state.last_response }}</div>
 
-    <form id="command-form" class="command-row">
-      <input id="command-input" class="cmd-input" type="text" placeholder="Enter command..." autocomplete="off">
-      <button class="btn" type="submit">Send</button>
-      <span id="cmd-spinner" class="spinner hidden" aria-hidden="true"></span>
-    </form>
+<!-- ── State Orb ── -->
+<div class="state-orb-container state-{{ state.state }}" id="state-orb-container">
+  <div class="state-orb">
+    <div class="state-orb-ring-outer"></div>
+    <div class="state-orb-ring"></div>
+    <div class="state-orb-core"></div>
+  </div>
+  <div class="state-label" id="state-label">{{ state.state }}</div>
+</div>
 
-    <div id="session-info" class="info-bar">
-      Session {{ state.session_id or "n/a" }} | Model {{ state.model }} | Uptime 0.0s |
-      Memory {{ state.memory_count }} | Active goals {{ state.active_goals }} |
-      Ollama {% if state.ollama_online %}●{% else %}○{% endif %}
+<!-- ── Stats Grid ── -->
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-label">SESSION</div>
+    <div class="stat-value mono" id="stat-session">{{ state.session_id or 'n/a' }}</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">MODEL</div>
+    <div class="stat-value mono" id="stat-model">{{ state.model }}</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">MEMORIES</div>
+    <div class="stat-value accent mono" id="stat-memory">{{ state.memory_count }}</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">ACTIVE GOALS</div>
+    <div class="stat-value violet mono" id="stat-goals">{{ state.active_goals }}</div>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">OLLAMA</div>
+    <div class="stat-value mono {% if state.ollama_online %}text-success{% else %}text-danger{% endif %}" id="stat-ollama">
+      {{ 'Online' if state.ollama_online else 'Offline' }}
     </div>
-  </section>
+  </div>
+
+  <div class="stat-card">
+    <div class="stat-label">UPTIME</div>
+    <div class="stat-value mono" id="stat-uptime">0.0s</div>
+  </div>
+</div>
+
+<!-- ── Command Input ── -->
+<div class="command-section">
+  <form id="command-form" class="command-form">
+    <div class="command-input-wrap">
+      <input id="command-input" class="command-input" type="text"
+             placeholder="Enter command..." autocomplete="off">
+      <span class="command-kbd">Ctrl+K</span>
+    </div>
+    <button id="cmd-send-btn" class="command-send-btn" type="submit">
+      Send <span id="cmd-spinner" class="spinner spinner-sm hidden"></span>
+    </button>
+  </form>
+</div>
+
+<!-- ── Last Input ── -->
+<p class="text-muted mt-sm" style="font-size:.85rem;">
+  Last input: <span id="last-input">{{ state.last_input or '...' }}</span>
+</p>
+
+<!-- ── Response Panel ── -->
+<div id="last-response" class="response-panel">{{ state.last_response }}</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  /* Focus command input on Ctrl+K */
+  document.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      document.getElementById('command-input').focus();
+    }
+  });
+</script>
 {% endblock %}

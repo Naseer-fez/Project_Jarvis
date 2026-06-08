@@ -1,85 +1,115 @@
 {% extends "base.html" %}
 
+{% block page_title %}Goals{% endblock %}
+
 {% block content %}
-  <h1>Active Goals</h1>
+<div class="page-header">
+  <h1 class="page-title">Goal Manager</h1>
+  <p class="page-subtitle">Track and manage your objectives</p>
+</div>
 
-  {% if message %}
-    <p class="placeholder">{{ message }}</p>
-  {% endif %}
+{% if message %}
+<div class="empty-state">
+  <div class="empty-state-icon">🎯</div>
+  <div class="empty-state-text">{{ message }}</div>
+</div>
+{% endif %}
 
-  {% if goals %}
-    <table>
-      <thead>
-        <tr>
-          <th>Priority</th>
-          <th>Description</th>
-          <th>Created</th>
-          <th>Status</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for goal in goals %}
-          <tr>
-            <td>{{ goal.priority }}</td>
-            <td>{{ goal.description }}</td>
-            <td>{{ goal.created }}</td>
-            <td>{{ goal.status }}</td>
-            <td><button class="btn-sm complete-goal" data-goal-id="{{ goal.goal_id }}">Complete</button></td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% endif %}
+{% if goals %}
+<div class="grid-panels">
+  {% for goal in goals %}
+  <div class="goal-card">
+    <div class="goal-card-header">
+      <span class="badge priority-{{ goal.priority }}">P{{ goal.priority }}</span>
+      <span class="badge {% if goal.status == 'active' %}badge-accent{% elif goal.status == 'completed' %}badge-success{% else %}badge-neutral{% endif %}">{{ goal.status }}</span>
+    </div>
+    <div class="goal-card-desc">{{ goal.description }}</div>
+    <div class="goal-card-footer">
+      <span class="goal-card-time">{{ goal.created }}</span>
+      <button class="btn btn-sm btn-success complete-goal" data-goal-id="{{ goal.goal_id }}">✓ Complete</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
-  <h2>Add Goal</h2>
-  <form id="add-goal-form" class="command-row">
-    <input id="goal-description" class="cmd-input" type="text" placeholder="Goal description..." required>
-    <select id="goal-priority" class="cmd-input" style="max-width: 160px;">
-      <option value="1">Priority 1</option>
-      <option value="2">Priority 2</option>
-      <option value="3">Priority 3</option>
-      <option value="4">Priority 4</option>
-    </select>
-    <button class="btn" type="submit">Add Goal</button>
+<div class="card mt-lg">
+  <h3 class="mb-md">Add New Goal</h3>
+  <form id="add-goal-form">
+    <div class="form-row mb-md">
+      <div class="form-group flex-2">
+        <label class="form-label">Description</label>
+        <input type="text" id="goal-description" class="form-input" placeholder="What do you want to achieve?" required>
+      </div>
+      <div class="form-group flex-1">
+        <label class="form-label">Priority</label>
+        <select id="goal-priority" class="form-select">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+          <option value="9">9</option>
+          <option value="10">10</option>
+        </select>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-accent">Add Goal</button>
   </form>
-  <p id="goals-status" class="placeholder"></p>
+  <p id="goals-status" class="text-muted mt-sm"></p>
+</div>
 {% endblock %}
 
 {% block scripts %}
-  <script>
-    (() => {
-      const headers = { "Content-Type": "application/json", "X-Dashboard-Token": "jarvis" };
-      const statusEl = document.getElementById("goals-status");
-      const addForm = document.getElementById("add-goal-form");
+<script>
+  document.getElementById('add-goal-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const description = document.getElementById('goal-description').value;
+    const priority = parseInt(document.getElementById('goal-priority').value, 10);
+    const status = document.getElementById('goals-status');
 
-      if (addForm) {
-        addForm.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          const description = (document.getElementById("goal-description").value || "").trim();
-          const priority = parseInt(document.getElementById("goal-priority").value, 10) || 1;
-          if (!description) return;
-
-          const res = await fetch("/goals/add", {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ description, priority })
-          });
-          const data = await res.json();
-          statusEl.textContent = data.ok ? "Goal added." : (data.error || "Failed to add goal.");
-          if (data.ok) window.location.reload();
-        });
-      }
-
-      document.querySelectorAll(".complete-goal").forEach((btn) => {
-        btn.addEventListener("click", async () => {
-          const goalId = btn.getAttribute("data-goal-id");
-          const res = await fetch(`/goals/complete/${goalId}`, { method: "POST", headers });
-          const data = await res.json();
-          statusEl.textContent = data.ok ? "Goal completed." : (data.error || "Failed to complete goal.");
-          if (data.ok) window.location.reload();
-        });
+    try {
+      const res = await fetch('/goals/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description, priority })
       });
-    })();
-  </script>
+
+      if (res.ok) {
+        location.reload();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        status.textContent = data.message || 'Failed to add goal.';
+      }
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+    }
+  });
+
+  document.querySelectorAll('.complete-goal').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const goalId = btn.dataset.goalId;
+      const status = document.getElementById('goals-status');
+
+      try {
+        const res = await fetch(`/goals/complete/${goalId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (res.ok) {
+          location.reload();
+        } else {
+          const data = await res.json().catch(() => ({}));
+          status.textContent = data.message || 'Failed to complete goal.';
+        }
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+      }
+    });
+  });
+</script>
 {% endblock %}

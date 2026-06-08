@@ -27,7 +27,7 @@ class HardwareDevice:
         loop = asyncio.get_running_loop()
         try:
             result = await loop.run_in_executor(None, self.controller.send, full_command)
-            return result
+            return str(result)
         except Exception as e:
             logger.error("Failed to send command to %s: %s", self.name, e, exc_info=True)
             raise

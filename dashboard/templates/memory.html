@@ -1,34 +1,38 @@
 {% extends "base.html" %}
 
+{% block page_title %}Memory{% endblock %}
+
 {% block content %}
-  <h1>Memory Browser</h1>
-  <form method="get" action="/memory" class="command-row">
-    <input class="cmd-input" type="text" name="q" value="{{ q }}" placeholder="Search memory content...">
-    <button class="btn" type="submit">Search</button>
-  </form>
+<div class="page-header">
+  <h1 class="page-title">Memory Browser</h1>
+  <p class="page-subtitle">Search across preferences, episodes, and conversations</p>
+</div>
 
-  {% if message %}
-    <p class="placeholder">{{ message }}</p>
-  {% endif %}
+<form method="get" action="/memory" class="flex gap-md mb-lg">
+  <input type="text" name="q" value="{{ q }}" placeholder="Search memory content..." class="form-input flex-1">
+  <button type="submit" class="btn btn-accent">Search</button>
+</form>
 
-  {% if memories %}
-    <table>
-      <thead>
-        <tr>
-          <th>Timestamp</th>
-          <th>Category</th>
-          <th>Content</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in memories %}
-          <tr>
-            <td>{{ row.timestamp }}</td>
-            <td>{{ row.category }}</td>
-            <td>{{ row.content[:180] }}{% if row.content|length > 180 %}...{% endif %}</td>
-          </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  {% endif %}
+{% if message %}
+<div class="empty-state">
+  <div class="empty-state-icon">🧠</div>
+  <div class="empty-state-text">{{ message }}</div>
+</div>
+{% endif %}
+
+{% if memories %}
+<span class="badge badge-accent mb-md">{{ memories|length }} results</span>
+
+<div class="grid-panels">
+  {% for row in memories %}
+  <div class="memory-card">
+    <div class="memory-card-header">
+      <span class="badge {% if row.category == 'preference' %}badge-violet{% elif row.category == 'conversation' %}badge-accent{% elif row.category == 'episode' %}badge-success{% else %}badge-neutral{% endif %}">{{ row.category }}</span>
+      <span class="memory-card-time">{{ row.timestamp }}</span>
+    </div>
+    <div class="memory-card-content">{{ row.content[:200] }}{% if row.content|length > 200 %}...{% endif %}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 {% endblock %}

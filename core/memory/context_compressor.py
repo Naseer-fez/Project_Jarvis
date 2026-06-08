@@ -159,7 +159,7 @@ class ContextCompressor:
                 temperature=0.0,
                 task_type="context_summarization",
             )
-            return summary.strip()
+            return str(summary).strip()
         except Exception as exc:
             logger.debug("Failed to summarize context with LLM: %s", exc)
             return ""

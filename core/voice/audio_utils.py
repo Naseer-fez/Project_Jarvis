@@ -4,6 +4,7 @@ import platform
 import subprocess
 
 import numpy as np
+from typing import Any
 
 
 def ffmpeg_read(bpayload: bytes, sampling_rate: int) -> np.ndarray:
@@ -178,7 +179,7 @@ def ffmpeg_microphone_live(
         is a whole chunk, or a partial temporary result to be later replaced by another larger chunk.
     """
     if stream_chunk_s is not None:
-        chunk_s = stream_chunk_s
+        chunk_s = float(stream_chunk_s)
     else:
         chunk_s = chunk_length_s
 
@@ -190,6 +191,7 @@ def ffmpeg_microphone_live(
         ffmpeg_additional_args=[] if ffmpeg_additional_args is None else ffmpeg_additional_args,
     )
 
+    dtype: Any = None
     if format_for_conversion == "s16le":
         dtype = np.int16
         size_of_sample = 2
@@ -203,10 +205,12 @@ def ffmpeg_microphone_live(
         stride_length_s = chunk_length_s / 6
     chunk_len = int(round(sampling_rate * chunk_length_s)) * size_of_sample
     if isinstance(stride_length_s, (int, float)):
-        stride_length_s = [stride_length_s, stride_length_s]
+        stride_tuple = (float(stride_length_s), float(stride_length_s))
+    else:
+        stride_tuple = (float(stride_length_s[0]), float(stride_length_s[1]))
 
-    stride_left = int(round(sampling_rate * stride_length_s[0])) * size_of_sample
-    stride_right = int(round(sampling_rate * stride_length_s[1])) * size_of_sample
+    stride_left = int(round(sampling_rate * stride_tuple[0])) * size_of_sample
+    stride_right = int(round(sampling_rate * stride_tuple[1])) * size_of_sample
     audio_time = datetime.datetime.now()
     delta = datetime.timedelta(seconds=chunk_s)
     for item in chunk_bytes_iter(microphone, chunk_len, stride=(stride_left, stride_right), stream=True):
@@ -267,6 +271,8 @@ def _ffmpeg_stream(ffmpeg_command, buflen: int):
     try:
         with subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, bufsize=bufsize) as ffmpeg_process:
             while True:
+                if ffmpeg_process.stdout is None:
+                    break
                 raw = ffmpeg_process.stdout.read(buflen)
                 if raw == b"":
                     break

@@ -13,6 +13,16 @@ def isolated_project_root(tmp_path, monkeypatch):
     """Provides an isolated PROJECT_ROOT to prevent global mutation."""
     project_root = tmp_path / "jarvis_project"
     project_root.mkdir()
+    
+    # Also monkeypatch core.tools.path_utils for _assert_safe_path
+    import core.tools.path_utils as path_utils
+    monkeypatch.setattr(path_utils, "_PROJECT_ROOT", project_root)
+    monkeypatch.setattr(path_utils, "_SANDBOX_ROOT", project_root)
+    monkeypatch.setattr(path_utils, "ALLOWED_DIRECTORIES", [
+        (project_root / "workspace").resolve(),
+        (project_root / "outputs").resolve(),
+    ])
+    
     monkeypatch.setattr(server, "PROJECT_ROOT", project_root)
     return project_root
 
@@ -55,10 +65,12 @@ def test_authorized_view_file_success(test_auth_db, mock_dashboard_controller, i
 
     client.cookies.set("jarvis_session", valid_session)
 
-    # Let's create a test file inside the isolated project root
-    test_file_path = isolated_project_root / "test_temp_doc.txt"
+    # Let's create a test file inside the allowed workspace directory
+    workspace_dir = isolated_project_root / "workspace"
+    workspace_dir.mkdir(exist_ok=True)
+    test_file_path = workspace_dir / "test_temp_doc.txt"
     test_file_path.write_text("Hello Jarvis secure area", encoding="utf-8")
-
+    
     response = client.get(f"/api/view-file?path={test_file_path}")
     assert response.status_code == 200
     assert response.text == "Hello Jarvis secure area"

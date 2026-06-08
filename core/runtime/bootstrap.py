@@ -123,9 +123,15 @@ def load_config(config_path: str) -> configparser.ConfigParser:
     Raises SystemExit(CONFIG_ERROR) if the file is missing in production.
     """
     from core.config import load_config as _load_config
-    config = _load_config(config_path)
-    _bootstrap.debug("Config loaded from %s", config_path)
-    return config
+    try:
+        config = _load_config(config_path)
+        _bootstrap.debug("Config loaded from %s", config_path)
+        return config
+    except SystemExit:
+        raise
+    except Exception as e:
+        _bootstrap.critical("Failed to load configuration from %s: %s", config_path, e)
+        sys.exit(ExitCode.CONFIG_ERROR)
 
 
 def apply_cli_overrides(
@@ -154,6 +160,10 @@ def apply_cli_overrides(
     if dashboard_port is not None:
         _ensure_section(config, "dashboard")
         config["dashboard"]["port"] = str(int(dashboard_port))
+
+    if getattr(args, "headless", False):
+        _ensure_section(config, "autonomy")
+        config["autonomy"]["level"] = "4"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -271,11 +281,11 @@ class _ShutdownCoordinator:
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             try:
-                self._loop.add_signal_handler(sig, self.request_shutdown, sig.name)
+                self._loop.add_signal_handler(sig, self.request_shutdown, getattr(sig, "name", str(sig)))
             except (NotImplementedError, RuntimeError, ValueError) as exc:
                 _bootstrap.warning(
                     "Unable to install shutdown handler for %s: %s",
-                    sig.name,
+                    getattr(sig, "name", str(sig)),
                     exc,
                 )
 
@@ -363,16 +373,22 @@ def _prepare_runtime_paths(config: configparser.ConfigParser) -> None:
         raw_value = config.get(section, key, fallback="").strip()
         if not raw_value:
             continue
-        path = _resolve_path(raw_value)
-        target = path.parent if is_file else path
-        target.mkdir(parents=True, exist_ok=True)
+        try:
+            path = _resolve_path(raw_value)
+            target = path.parent if is_file else path
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _bootstrap.warning("Failed to create path for [%s] %s: %s", section, key, e)
 
     raw_safe_dirs = config.get("execution", "safe_directories", fallback="")
     for raw_dir in raw_safe_dirs.split(","):
         value = raw_dir.strip()
         if not value:
             continue
-        _resolve_path(value).mkdir(parents=True, exist_ok=True)
+        try:
+            _resolve_path(value).mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            _bootstrap.warning("Failed to create safe directory %s: %s", value, e)
 
 
 def _resolve_voice_enabled(
@@ -516,11 +532,11 @@ def _print_config_snapshot(
 
 def _build_model_inventory(
     config: configparser.ConfigParser,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, Any]:
     from core.llm.model_router import ModelRouter
 
     router = ModelRouter(config=config)
-    inventory: dict[str, dict[str, Any]] = {}
+    inventory: dict[str, Any] = {}
 
     for task_type in (
         "intent_classification",
@@ -589,9 +605,12 @@ def _load_logger_module():
     if logger_mod is not None:
         return logger_mod
 
-    from core.logging import logger as logger_mod
-
-    return logger_mod
+    try:
+        from core.logging import logger as logger_mod
+        return logger_mod
+    except Exception as e:
+        _bootstrap.error("Failed to load logger module: %s", e)
+        return None
 
 
 def _load_controller_class():
@@ -599,9 +618,12 @@ def _load_controller_class():
     if controller_mod is not None:
         return controller_mod.JarvisControllerV2
 
-    from core.controller_v2 import JarvisControllerV2
-
-    return JarvisControllerV2
+    try:
+        from core.controller_v2 import JarvisControllerV2
+        return JarvisControllerV2
+    except Exception as e:
+        _bootstrap.critical("Failed to load JarvisControllerV2: %s", e)
+        sys.exit(ExitCode.STARTUP_ERROR)
 
 
 def _load_integrations(
@@ -638,17 +660,27 @@ def _load_integrations(
 
 
 def _run_startup_health_check(controller: Any | None, *, verbose: bool) -> Any:
-    from core.introspection.health import HealthReport, run_startup_health_check
+    from core.introspection.health import HealthReport, HealthCheck, HealthStatus, run_startup_health_check
 
-    if verbose:
-        return run_startup_health_check(controller)
+    try:
+        if verbose:
+            return run_startup_health_check(controller)
 
-    sink = io.StringIO()
-    with contextlib.redirect_stdout(sink):
-        report = run_startup_health_check(controller)
-    if report is None:
-        return HealthReport()
-    return report
+        sink = io.StringIO()
+        with contextlib.redirect_stdout(sink):
+            report = run_startup_health_check(controller)
+        if report is None:
+            return HealthReport()
+        return report
+    except Exception as exc:
+        _bootstrap.error("Startup health check failed: %s", exc, exc_info=True)
+        return HealthReport(checks=[
+            HealthCheck(
+                name="startup_health_check_execution",
+                status=HealthStatus.FAIL,
+                message=f"Exception during check: {exc}",
+            )
+        ])
 
 
 async def _cancel_task(task: asyncio.Task[Any]) -> None:

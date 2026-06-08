@@ -4,6 +4,10 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Enforce UTF-8 globally to prevent mixed UTF-16LE / cp1252 corruption in logs and artifacts
+$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8
+$env:PYTHONIOENCODING = "utf-8"
+
 Write-Host "=============================================" -ForegroundColor Cyan
 Write-Host "       JARVIS LOCAL ASSISTANT SETUP          " -ForegroundColor Cyan
 Write-Host "=============================================" -ForegroundColor Cyan
@@ -111,8 +115,8 @@ if ($EnvContent -notmatch "JARVIS_ADMIN_USER=") {
     Add-Content -Path $EnvFile -Value "`nJARVIS_ADMIN_USER=`"$AdminUser`"`nJARVIS_ADMIN_PASSWORD=`"$AdminPassword`""
     Write-Host "Generated administrative access credentials in .env:" -ForegroundColor Green
     Write-Host "  Username: $AdminUser" -ForegroundColor Cyan
-    Write-Host "  Password: $AdminPassword" -ForegroundColor Cyan
-    Write-Host "Keep these credentials safe! You will need them to log in to the dashboard." -ForegroundColor Yellow
+    Write-Host "  Password: [SECURELY SAVED IN .env]" -ForegroundColor Cyan
+    Write-Host "Check your .env file for the password. Keep it safe!" -ForegroundColor Yellow
 }
 
 # 3. JARVIS_DASHBOARD_TOKEN (for API backward-compatibility)
@@ -147,6 +151,6 @@ Write-Host "  powershell -ExecutionPolicy Bypass .\Start.ps1 --gui" -ForegroundC
 if ($null -ne $AdminPassword) {
     Write-Host "Initial Dashboard Login Credentials:" -ForegroundColor Yellow
     Write-Host "  Username: $AdminUser" -ForegroundColor Cyan
-    Write-Host "  Password: $AdminPassword" -ForegroundColor Cyan
+    Write-Host "  Password: [SECURELY SAVED IN .env]" -ForegroundColor Cyan
 }
 Write-Host "=============================================" -ForegroundColor Cyan

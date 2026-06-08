@@ -56,7 +56,7 @@ class VisionTool:
     def _call_llava(self, image_path: str, prompt: str) -> str:
         """Call the LLaVA model. Override in tests."""
         try:
-            import requests  # type: ignore[import]
+            import requests
             import base64
 
             with open(image_path, "rb") as f:

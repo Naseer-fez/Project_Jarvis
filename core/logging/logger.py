@@ -12,6 +12,19 @@ import re
 import threading
 from pathlib import Path
 from typing import Any
+import contextvars
+
+_trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("trace_id", default=None)
+_task_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("task_id", default=None)
+
+def set_trace_ids(trace_id: str | None, task_id: str | None) -> tuple[contextvars.Token[str | None], contextvars.Token[str | None]]:
+    """Set correlation IDs for the current async context."""
+    return _trace_id_var.set(trace_id), _task_id_var.set(task_id)
+
+def reset_trace_ids(trace_token: contextvars.Token[str | None], task_token: contextvars.Token[str | None]) -> None:
+    """Restore correlation IDs for the current async context."""
+    _trace_id_var.reset(trace_token)
+    _task_id_var.reset(task_token)
 
 # Globals for non-blocking logging
 _log_queue: queue.Queue = queue.Queue(10000)
@@ -215,10 +228,10 @@ class JSONFormatter(logging.Formatter):
             elif isinstance(record.args, tuple):
                 record.args = tuple(redact_sensitive_data(arg) for arg in record.args)
 
-            trace_id = getattr(record, "trace_id", None)
-            task_id = getattr(record, "task_id", None)
+            trace_id = getattr(record, "trace_id", None) or _trace_id_var.get()
+            task_id = getattr(record, "task_id", None) or _task_id_var.get()
             if not trace_id and not task_id:
-                return redact_sensitive_data(super().format(record))
+                return str(redact_sensitive_data(super().format(record)))
 
             import datetime
 
@@ -239,7 +252,7 @@ class JSONFormatter(logging.Formatter):
             }
             envelope["metadata"] = redact_sensitive_data(envelope["metadata"])
 
-            if "message" not in envelope["metadata"]:
+            if isinstance(envelope["metadata"], dict) and "message" not in envelope["metadata"]:
                 envelope["metadata"]["message"] = record.getMessage()
 
             if record.exc_text:
@@ -270,7 +283,7 @@ class FlushingQueueListener(logging.handlers.QueueListener):
             exc_info=None,
         )
         dummy_record._flush_event = event
-        self.queue.put(dummy_record)
+        self.queue.put(dummy_record)  # type: ignore[attr-defined]
         event.wait(timeout=2.0)
 
 
@@ -463,4 +476,4 @@ def flush() -> None:
         _log_listener.flush()
 
 
-__all__ = ["AuditLog", "_audit", "audit", "get", "get_logger", "setup", "verify_audit", "flush"]
+__all__ = ["AuditLog", "_audit", "audit", "get", "get_logger", "setup", "verify_audit", "flush", "set_trace_ids", "reset_trace_ids"]

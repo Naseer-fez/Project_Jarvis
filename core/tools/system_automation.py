@@ -60,7 +60,7 @@ SHELL_TIMEOUT = 10   # seconds
 def list_directory(path: str) -> ToolResult:
     """List contents of a directory."""
     try:
-        from core.tools.builtin_tools import _assert_safe_path
+        from core.tools.path_utils import _assert_safe_path
         safe_path = _assert_safe_path(path, write_op=False)
         p = Path(safe_path)
         if not p.exists():
@@ -86,7 +86,7 @@ def list_directory(path: str) -> ToolResult:
 def read_file(path: str, max_bytes: int = 32_768) -> ToolResult:
     """Read a text file (capped at max_bytes to protect context window)."""
     try:
-        from core.tools.builtin_tools import _assert_safe_path
+        from core.tools.path_utils import _assert_safe_path
         safe_path = _assert_safe_path(path, write_op=False)
         p = Path(safe_path)
         if not p.is_file():
@@ -107,7 +107,7 @@ def read_file(path: str, max_bytes: int = 32_768) -> ToolResult:
 def write_file(path: str, content: str, overwrite: bool = False) -> ToolResult:
     """Write text content to a file. HIGH RISK – requires confirmation."""
     try:
-        from core.tools.builtin_tools import _assert_safe_path
+        from core.tools.path_utils import _assert_safe_path
         safe_path = _assert_safe_path(path, write_op=True)
         p = Path(safe_path)
         if p.exists() and not overwrite:
@@ -124,7 +124,7 @@ def write_file(path: str, content: str, overwrite: bool = False) -> ToolResult:
 def delete_file(path: str) -> ToolResult:
     """Delete a file. VERY HIGH RISK – requires confirmation."""
     try:
-        from core.tools.builtin_tools import _assert_safe_path
+        from core.tools.path_utils import _assert_safe_path
         safe_path = _assert_safe_path(path, write_op=True)
         p = Path(safe_path)
         if not p.exists():
@@ -157,7 +157,7 @@ def launch_application(
     if actual_target:
         if "/" in actual_target or "\\" in actual_target or ":" in actual_target or ".." in actual_target:
             try:
-                from core.tools.builtin_tools import _assert_safe_path
+                from core.tools.path_utils import _assert_safe_path
                 _assert_safe_path(actual_target, write_op=False)
             except Exception as e:
                 return ToolResult(False, error=f"Target path escapes sandbox: {e}")
@@ -168,7 +168,7 @@ def launch_application(
                 if arg.lower().startswith(("http://", "https://")):
                     continue
                 try:
-                    from core.tools.builtin_tools import _assert_safe_path
+                    from core.tools.path_utils import _assert_safe_path
                     _assert_safe_path(arg, write_op=False)
                 except Exception as e:
                     return ToolResult(False, error=f"Argument path escapes sandbox: {e}")
@@ -179,7 +179,7 @@ def launch_application(
             if args:
                 subprocess.Popen([actual_target, *args], shell=False)
                 return ToolResult(True, output=f"Launched: {actual_target} {' '.join(args)}")
-            os.startfile(actual_target)  # type: ignore[attr-defined]
+            os.startfile(actual_target)
             return ToolResult(True, output=f"Opened: {actual_target}")
         else:
             cmd = ["xdg-open", actual_target] if not args else [actual_target, *args]
@@ -200,7 +200,7 @@ async def execute_shell(command: str, working_dir: str | None = None) -> ToolRes
     import shlex
     try:
         if working_dir:
-            from core.tools.builtin_tools import _assert_safe_path
+            from core.tools.path_utils import _assert_safe_path
             try:
                 _assert_safe_path(working_dir, write_op=False)
             except Exception as exc:

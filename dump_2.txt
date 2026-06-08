@@ -1,0 +1,1918 @@
+=== core/memory/context_compressor.py ===
+"""
+Context compression and optional low-latency focus titling for Jarvis memory.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import re
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_MAX_TOKENS = 400
+DEFAULT_THRESHOLD = 0.30
+MAX_PREF_ITEMS = 6
+MAX_EPISODE_ITEMS = 3
+MAX_CONVO_ITEMS = 2
+MAX_VALUE_LEN = 60
+MAX_EPISODE_LEN = 100
+MAX_CONVO_LEN = 120
+TITLE_TIMEOUT_S = 4.0
+TITLE_SYSTEM = (
+    "You create short memory context titles for a local AI assistant. "
+    "Return only a 3-7 word title. No quotes, no bullets, no punctuation-heavy output."
+)
+
+
+class ContextCompressor:
+    """Compress recalled memory into a compact block for LLM injection."""
+
+    def __init__(
+        self,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+        threshold: float = DEFAULT_THRESHOLD,
+        llm: Any | None = None,
+        enable_llm_title: bool = False,
+    ) -> None:
+        self.max_tokens = max_tokens
+        self.threshold = threshold
+        self.llm = llm
+        self.enable_llm_title = bool(enable_llm_title)
+
+    async def compress(
+        self,
+        query: str,
+        recall_results: dict,
+        include_scores: bool = False,
+    ) -> str:
+        """Build a compact text block from structured recall results with aging and deduplication."""
+        import hashlib
+        import math
+        from datetime import datetime
+
+        # 1. Gather and deduplicate all items
+        all_items = []
+        seen_hashes = set()
+        
+        for category, items in recall_results.items():
+            for item in items:
+                item_copy = dict(item)
+                item_copy["_category"] = category
+                text = self._get_item_text(item_copy)
+                h = hashlib.md5(text.encode("utf-8")).hexdigest()
+                if h not in seen_hashes:
+                    seen_hashes.add(h)
+                    all_items.append(item_copy)
+
+        # 2. Apply temporal memory aging (decay similarity scores by e^(-0.05 * t))
+        decayed_items = []
+        for item in all_items:
+            score = float(item.get("score", 1.0))
+            ts = item.get("timestamp", "")
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+                    now = datetime.now(dt.tzinfo)
+                    age_days = max(0.0, (now - dt).total_seconds() / (24 * 3600))
+                    decay = math.exp(-0.05 * age_days)
+                    score *= decay
+                except Exception:
+                    pass
+            item["score"] = score
+            decayed_items.append(item)
+
+        # 3. Sort by decayed score and keep top 5
+        decayed_items.sort(key=lambda x: x.get("score", 0.0), reverse=True)
+        top_5 = decayed_items[:5]
+
+        if not top_5:
+            return ""
+
+        # 4. Check if combined text length exceeds limit, and summarize
+        combined_text = "\n".join([self._get_item_text(item) for item in top_5])
+        if self.llm and self._estimate_tokens(combined_text) > self.max_tokens:
+            summary = await self._summarize_context(top_5)
+            if summary:
+                return f"--- Memory Context ---\nMemory Summary: {summary}\n--- End Memory ---"
+
+        # 5. Format the top 5 high-score entries under categories as fallback
+        prefs = [item for item in top_5 if item["_category"] == "preferences"]
+        episodes = [item for item in top_5 if item["_category"] == "episodes"]
+        convos = [item for item in top_5 if item["_category"] == "conversations"]
+
+        lines: list[str] = []
+        token_budget = self.max_tokens
+
+        pref_lines, tokens_used = self._compress_preferences(prefs, include_scores)
+        if pref_lines:
+            lines.append("Preferences: " + " | ".join(pref_lines))
+            token_budget -= tokens_used
+
+        if token_budget > 50:
+            episode_lines, tokens_used = self._compress_episodes(episodes, include_scores)
+            if episode_lines:
+                lines.append("Past events: " + "; ".join(episode_lines))
+                token_budget -= tokens_used
+
+        if token_budget > 50:
+            convo_lines, _ = self._compress_conversations(convos, include_scores)
+            if convo_lines:
+                lines.append("Relevant past: " + "; ".join(convo_lines))
+
+        if not lines:
+            return ""
+
+        title = await self._generate_focus_title(query, lines)
+        if title:
+            lines.insert(0, f"Focus: {title}")
+
+        return "--- Memory Context ---\n" + "\n".join(lines) + "\n--- End Memory ---"
+
+    def _get_item_text(self, item: dict) -> str:
+        if "key" in item and "value" in item and item["key"]:
+            return f"Preference: {item['key']}={item['value']}"
+        elif "event" in item:
+            return f"Event: {item['event']}"
+        elif "user_input" in item:
+            return f"Conversation: User: {item['user_input']} -> Assistant: {item['assistant_response']}"
+        return str(item.get("document", ""))
+
+    async def _summarize_context(self, top_memories: list[dict]) -> str:
+        if not self.llm or not top_memories:
+            return ""
+        
+        memory_strings = [self._get_item_text(item) for item in top_memories]
+        context_text = "\n".join(memory_strings)
+        prompt = (
+            "You are a helpful context summarizer for a personal AI assistant.\n"
+            "Summarize the following retrieved memories into a short, cohesive summary (less than 150 words) "
+            "that highlights key facts, preferences, and relevant history:\n\n"
+            f"{context_text}\n\n"
+            "Summary:"
+        )
+        try:
+            summary = await self.llm.complete(
+                prompt,
+                system="Summarize the assistant's memory context accurately.",
+                temperature=0.0,
+                task_type="context_summarization",
+            )
+            return summary.strip()
+        except Exception as exc:
+            logger.debug("Failed to summarize context with LLM: %s", exc)
+            return ""
+
+    def _compress_preferences(
+        self,
+        prefs: list[dict],
+        include_scores: bool,
+    ) -> tuple[list[str], int]:
+        filtered = [item for item in prefs if item.get("score", 0) >= self.threshold]
+        filtered = self._deduplicate(filtered, key="key")[:MAX_PREF_ITEMS]
+        lines: list[str] = []
+
+        for item in filtered:
+            key = self._clean(item.get("key", ""))
+            value = self._truncate(self._clean(item.get("value", "")), MAX_VALUE_LEN)
+            entry = f"{key}={value}"
+            if include_scores:
+                entry += f"[{item.get('score', 0):.2f}]"
+            lines.append(entry)
+
+        return lines, self._estimate_tokens(" | ".join(lines))
+
+    def _compress_episodes(
+        self,
+        episodes: list[dict],
+        include_scores: bool,
+    ) -> tuple[list[str], int]:
+        filtered = [item for item in episodes if item.get("score", 0) >= self.threshold]
+        filtered = self._deduplicate(filtered, key="event")[:MAX_EPISODE_ITEMS]
+        lines: list[str] = []
+
+        for item in filtered:
+            event = self._truncate(self._clean(item.get("event", "")), MAX_EPISODE_LEN)
+            timestamp = (item.get("timestamp") or "")[:10]
+            entry = f"{event}" + (f" ({timestamp})" if timestamp else "")
+            if include_scores:
+                entry += f"[{item.get('score', 0):.2f}]"
+            lines.append(entry)
+
+        return lines, self._estimate_tokens("; ".join(lines))
+
+    def _compress_conversations(
+        self,
+        convos: list[dict],
+        include_scores: bool,
+    ) -> tuple[list[str], int]:
+        filtered = [item for item in convos if item.get("score", 0) >= self.threshold]
+        filtered = filtered[:MAX_CONVO_ITEMS]
+        lines: list[str] = []
+
+        for item in filtered:
+            user = self._truncate(self._clean(item.get("user_input", "")), MAX_CONVO_LEN)
+            assistant = self._truncate(
+                self._clean(item.get("assistant_response", "")),
+                MAX_CONVO_LEN,
+            )
+            entry = f'"{user}" -> "{assistant}"'
+            if include_scores:
+                entry += f"[{item.get('score', 0):.2f}]"
+            lines.append(entry)
+
+        return lines, self._estimate_tokens("; ".join(lines))
+
+    async def _generate_focus_title(self, query: str, lines: list[str]) -> str:
+        """Generate a short semantic title using the quick-task LLM route."""
+        if not self.enable_llm_title or self.llm is None or not lines:
+            return ""
+
+        prompt = (
+            f"User query: {self._clean(query)}\n"
+            f"Memory context:\n{chr(10).join(lines[:3])}\n\n"
+            "Return the best short title for this memory context."
+        )
+
+        try:
+            raw = await asyncio.wait_for(
+                self.llm.complete(
+                    prompt,
+                    system=TITLE_SYSTEM,
+                    temperature=0.0,
+                    task_type="context_title_generation",
+                ),
+                timeout=TITLE_TIMEOUT_S
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Context title generation failed: %s", exc)
+            return ""
+
+        title = self._clean(raw.splitlines()[0] if raw else "")
+        title = title.strip("\"'` .")
+        if not title:
+            return ""
+        return self._truncate(title, 48)
+
+    @staticmethod
+    def _clean(text: str) -> str:
+        return re.sub(r"\s+", " ", str(text)).strip()
+
+    @staticmethod
+    def _truncate(text: str, max_len: int) -> str:
+        return text if len(text) <= max_len else text[: max_len - 3] + "..."
+
+    @staticmethod
+    def _estimate_tokens(text: str) -> int:
+        return max(1, int(len(text) * 0.75))
+
+    @staticmethod
+    def _deduplicate(items: list[dict], key: str) -> list[dict]:
+        seen: set[str] = set()
+        result: list[dict] = []
+        for item in items:
+            value = str(item.get(key, ""))
+            if value in seen:
+                continue
+            seen.add(value)
+            result.append(item)
+        return result
+
+    def explain(self, query: str, recall_results: dict) -> str:
+        """Return a human-readable explanation of what would be included."""
+        lines = [f"ContextCompressor.explain(query={query[:60]!r})\n"]
+        for category, items in recall_results.items():
+            lines.append(f"  [{str(category).upper()}] - {len(items)} results:")
+            for item in items:
+                lines.append(f"    INCLUDED | score={item.get('score', 0):.3f}")
+        return "\n".join(lines)
+
+=== core/hardware/device_registry.py ===
+"""
+core/hardware/device_registry.py
+--------------------------------
+Registry of hardware devices, supporting dynamic loading and integration with SerialController.
+"""
+
+from __future__ import annotations
+import logging
+import asyncio
+from typing import Dict, List, Any
+from core.hardware.serial_controller import SerialController
+
+logger = logging.getLogger(__name__)
+
+class HardwareDevice:
+    def __init__(self, name: str, controller: SerialController) -> None:
+        self.name = name
+        self.controller = controller
+
+    async def async_send_command(self, command: str, value: str = "") -> str:
+        """Send command to device asynchronously using a thread pool."""
+        if not self.controller.enabled:
+            raise NotImplementedError(f"Hardware serial control is disabled for {self.name}.")
+        
+        full_command = f"{command} {value}".strip()
+        # Offload the blocking serial send to a thread pool
+        loop = asyncio.get_running_loop()
+        try:
+            result = await loop.run_in_executor(None, self.controller.send, full_command)
+            return result
+        except Exception as e:
+            logger.error("Failed to send command to %s: %s", self.name, e, exc_info=True)
+            raise
+
+    async def firmware_ping(self) -> bool:
+        """Ping the device firmware."""
+        try:
+            res = await self.async_send_command("PING")
+            return "PONG" in res or "OK" in res or res != ""
+        except Exception:
+            return False
+
+
+class DeviceRegistry:
+    def __init__(self) -> None:
+        self._devices: Dict[str, HardwareDevice] = {}
+        self._load_from_config()
+
+    def _load_from_config(self) -> None:
+        try:
+            controller = SerialController()
+            # If enabled, register it
+            if controller.enabled:
+                self.register_device("main_arduino", controller)
+        except Exception as e:
+            logger.error("Failed to load hardware devices from config: %s", e, exc_info=True)
+
+    def register_device(self, name: str, controller: SerialController) -> None:
+        self._devices[name] = HardwareDevice(name, controller)
+
+    def get_device(self, name: str) -> HardwareDevice:
+        if name not in self._devices:
+            logger.warning("Device '%s' not registered. Creating a default disabled device.", name)
+            controller = SerialController()  # Disabled by default
+            self._devices[name] = HardwareDevice(name, controller)
+        return self._devices[name]
+
+    def list_devices(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "name": name,
+                "connected": device.controller.is_connected,
+                "enabled": device.controller.enabled,
+            }
+            for name, device in self._devices.items()
+        ]
+
+=== core/introspection/health.py ===
+"""Startup and lightweight runtime health checks."""
+
+from __future__ import annotations
+
+import importlib.util
+import os
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from urllib.request import urlopen
+
+from core.ops.production import is_production, validate_production_config
+from core.runtime.paths import _resolve_path
+
+
+class HealthStatus(str, Enum):
+    OK = "ok"
+    WARN = "warn"
+    FAIL = "fail"
+
+
+@dataclass(frozen=True)
+class HealthCheck:
+    name: str
+    status: HealthStatus
+    message: str
+
+
+@dataclass
+class HealthReport:
+    checks: list[HealthCheck] = field(default_factory=list)
+
+    @property
+    def has_failures(self) -> bool:
+        return any(check.status == HealthStatus.FAIL for check in self.checks)
+
+    @property
+    def is_healthy(self) -> bool:
+        return not self.has_failures
+
+    @property
+    def ollama_reachable(self) -> bool:
+        check = next((item for item in self.checks if item.name == "ollama"), None)
+        return bool(check and check.status == HealthStatus.OK)
+
+    def summary(self) -> str:
+        return "\n".join(
+            f"{check.name}: {check.status.value.upper()} - {check.message}"
+            for check in self.checks
+        )
+
+
+def _config_get(config, section: str, option: str, fallback: str = "") -> str:
+    try:
+        return str(config.get(section, option, fallback=fallback))
+    except Exception:
+        return fallback
+
+
+def _config_get_bool(
+    config,
+    section: str,
+    option: str,
+    fallback: bool = False,
+) -> bool:
+    try:
+        return bool(config.getboolean(section, option, fallback=fallback))
+    except Exception:
+        return fallback
+
+
+def _module_available(import_name: str) -> bool:
+    return importlib.util.find_spec(import_name) is not None
+
+
+def _path_ready(path: Path, *, expect_file: bool) -> tuple[HealthStatus, str]:
+    if not str(path):
+        return HealthStatus.FAIL, "not configured"
+    resolved_path = _resolve_path(path)
+    target = resolved_path.parent if expect_file else resolved_path
+    try:
+        exists = target.exists()
+        writable = os.access(target if exists else target.parent, os.W_OK)
+    except OSError as exc:
+        return HealthStatus.FAIL, f"{resolved_path} ({exc})"
+
+    if exists and writable:
+        return HealthStatus.OK, str(resolved_path)
+    if exists:
+        return HealthStatus.WARN, f"{resolved_path} (exists but may not be writable)"
+    return HealthStatus.WARN, f"{resolved_path} (path will be created at runtime)"
+
+
+def _collect_config_checks(config) -> list[HealthCheck]:
+    checks: list[HealthCheck] = []
+
+    environment = _config_get(
+        config,
+        "general",
+        "environment",
+        os.environ.get("JARVIS_ENV", "development"),
+    )
+    checks.append(
+        HealthCheck(
+            name="runtime_environment",
+            status=HealthStatus.OK,
+            message=environment or "development",
+        )
+    )
+
+    sqlite_path = _config_get(config, "memory", "sqlite_file", "")
+    if sqlite_path:
+        sqlite_status, sqlite_message = _path_ready(Path(sqlite_path), expect_file=True)
+    else:
+        sqlite_status, sqlite_message = HealthStatus.FAIL, "memory.sqlite_file is not configured"
+    checks.append(
+        HealthCheck(
+            name="memory_sqlite_config",
+            status=sqlite_status,
+            message=sqlite_message,
+        )
+    )
+
+    app_log_path = _config_get(config, "logging", "app_file", "")
+    if app_log_path:
+        app_status, app_message = _path_ready(Path(app_log_path), expect_file=True)
+    else:
+        app_status, app_message = HealthStatus.WARN, "logging.app_file is not configured"
+    checks.append(
+        HealthCheck(
+            name="logging_app_file",
+            status=app_status,
+            message=app_message,
+        )
+    )
+
+    audit_path = _config_get(config, "logging", "audit_file", "")
+    if audit_path:
+        audit_status, audit_message = _path_ready(Path(audit_path), expect_file=True)
+    else:
+        audit_status, audit_message = HealthStatus.WARN, "logging.audit_file is not configured"
+    checks.append(
+        HealthCheck(
+            name="logging_audit_file",
+            status=audit_status,
+            message=audit_message,
+        )
+    )
+
+    raw_safe_dirs = _config_get(config, "execution", "safe_directories", "")
+    safe_dirs = [Path(item.strip()) for item in raw_safe_dirs.split(",") if item.strip()]
+    if not safe_dirs:
+        checks.append(
+            HealthCheck(
+                name="execution_safe_directories",
+                status=HealthStatus.WARN,
+                message="No execution.safe_directories configured",
+            )
+        )
+    else:
+        ready = []
+        pending = []
+        for path in safe_dirs:
+            status, _ = _path_ready(path, expect_file=False)
+            if status == HealthStatus.OK:
+                ready.append(str(path))
+            else:
+                pending.append(str(path))
+        if pending:
+            message = f"ready={len(ready)} pending={len(pending)}"
+            status = HealthStatus.WARN
+        else:
+            message = ", ".join(str(path) for path in safe_dirs)
+            status = HealthStatus.OK
+        checks.append(
+            HealthCheck(
+                name="execution_safe_directories",
+                status=status,
+                message=message,
+            )
+        )
+
+    if _config_get_bool(config, "automation", "enabled", True):
+        drop_root = _config_get(config, "automation", "drop_root", "workspace/jarvis_dropbox")
+        drop_status, drop_message = _path_ready(Path(drop_root), expect_file=False)
+        checks.append(
+            HealthCheck(
+                name="automation_drop_root",
+                status=drop_status,
+                message=drop_message,
+            )
+        )
+
+        watch_recordings = _config_get_bool(config, "automation", "watch_recordings", True)
+        if watch_recordings:
+            has_cv2 = _module_available("cv2")
+            checks.append(
+                HealthCheck(
+                    name="automation_video_ocr_dependency",
+                    status=HealthStatus.OK if has_cv2 else HealthStatus.WARN,
+                    message="opencv available" if has_cv2 else "opencv (cv2) not installed; video OCR will be limited",
+                )
+            )
+
+        uses_ocr = _config_get_bool(config, "automation", "watch_screenshots", True) or _config_get_bool(
+            config,
+            "automation",
+            "live_screen_enabled",
+            True,
+        )
+        if uses_ocr:
+            def _check_tesseract() -> tuple[HealthStatus, str]:
+                if not _module_available("pytesseract"):
+                    return HealthStatus.WARN, "pytesseract not installed; screenshot OCR will be limited"
+
+                import sys
+                import subprocess
+
+                # Configure Tesseract path dynamically
+                if getattr(sys, "frozen", False):
+                    base_dir = getattr(sys, "_MEIPASS", "")
+                    tesseract_dir = os.path.join(base_dir, "bin", "tesseract")
+                    cmd = os.path.join(tesseract_dir, "tesseract.exe")
+                else:
+                    cmd = os.environ.get("TESSERACT_CMD")
+                    if not cmd:
+                        project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                        local_bundled = os.path.join(project_root, "bin", "tesseract", "tesseract.exe")
+                        if os.path.exists(local_bundled):
+                            cmd = local_bundled
+                        else:
+                            cmd = "tesseract"
+
+                try:
+                    res = subprocess.run([cmd, "--version"], capture_output=True, text=True, timeout=5)
+                    if res.returncode == 0:
+                        version_line = res.stdout.splitlines()[0] if res.stdout else "unknown version"
+                        return HealthStatus.OK, f"pytesseract available, tesseract executable responsive: {version_line}"
+                    else:
+                        return HealthStatus.FAIL, f"tesseract --version failed with return code {res.returncode}"
+                except Exception as exc:
+                    return HealthStatus.FAIL, f"tesseract executable not found or not executable at '{cmd}': {exc}"
+
+            tess_status, tess_msg = _check_tesseract()
+            checks.append(
+                HealthCheck(
+                    name="automation_ocr_dependency",
+                    status=tess_status,
+                    message=tess_msg,
+                )
+            )
+
+    control_file = _config_get(config, "dashboard", "control_file", "")
+    if control_file:
+        control_status, control_message = _path_ready(Path(control_file), expect_file=True)
+        checks.append(
+            HealthCheck(
+                name="dashboard_control_file",
+                status=control_status,
+                message=control_message,
+            )
+        )
+
+    if _config_get_bool(config, "voice", "enabled", False):
+        required_voice_modules = [
+            "sounddevice",
+            "speech_recognition",
+            "pvporcupine",
+            "pvrecorder",
+        ]
+        missing = [
+            module_name for module_name in required_voice_modules if not _module_available(module_name)
+        ]
+        checks.append(
+            HealthCheck(
+                name="voice_dependencies",
+                status=HealthStatus.FAIL if missing else HealthStatus.OK,
+                message="missing: " + ", ".join(missing) if missing else "voice dependencies available",
+            )
+        )
+
+    if _config_get_bool(config, "execution", "allow_gui_automation", False):
+        required_desktop_modules = [
+            "pyautogui",
+            "pygetwindow",
+            "pytesseract",
+            "PIL",
+        ]
+        missing = [
+            module_name for module_name in required_desktop_modules if not _module_available(module_name)
+        ]
+        checks.append(
+            HealthCheck(
+                name="desktop_dependencies",
+                status=HealthStatus.FAIL if missing else HealthStatus.OK,
+                message="missing: " + ", ".join(missing) if missing else "desktop dependencies available",
+            )
+        )
+
+    if _config_get_bool(config, "execution", "allow_web_search", True) and _config_get_bool(
+        config,
+        "web_search",
+        "enabled",
+        True,
+    ):
+        ready_providers: list[str] = []
+        issues: list[str] = []
+        tavily_api_key = (
+            os.environ.get("TAVILY_API_KEY")
+            or _config_get(config, "web_search", "tavily_api_key", "")
+        ).strip()
+
+        if _module_available("ddgs"):
+            ready_providers.append("ddgs")
+        else:
+            issues.append("ddgs package missing")
+
+        if tavily_api_key:
+            if _module_available("requests"):
+                ready_providers.append("tavily")
+            else:
+                issues.append("requests package missing for Tavily")
+
+        if ready_providers:
+            checks.append(
+                HealthCheck(
+                    name="web_search_dependencies",
+                    status=HealthStatus.OK,
+                    message="ready providers: " + ", ".join(ready_providers),
+                )
+            )
+        else:
+            checks.append(
+                HealthCheck(
+                    name="web_search_dependencies",
+                    status=HealthStatus.WARN,
+                    message="no web-search provider ready" + (
+                        f" ({'; '.join(issues)})" if issues else ""
+                    ),
+                )
+            )
+
+    production_check = validate_production_config(config)
+    if production_check.errors:
+        checks.append(
+            HealthCheck(
+                name="production_guardrails",
+                status=HealthStatus.FAIL,
+                message="; ".join(production_check.errors),
+            )
+        )
+    elif production_check.warnings:
+        checks.append(
+            HealthCheck(
+                name="production_guardrails",
+                status=HealthStatus.WARN,
+                message="; ".join(production_check.warnings),
+            )
+        )
+    else:
+        message = (
+            "production guardrails passed"
+            if is_production(config)
+            else "not running in production mode"
+        )
+        checks.append(
+            HealthCheck(
+                name="production_guardrails",
+                status=HealthStatus.OK,
+                message=message,
+            )
+        )
+
+    return checks
+
+
+def _ollama_check(base_url: str) -> HealthCheck:
+    reachable = False
+    try:
+        with urlopen(f"{base_url}/api/tags", timeout=5):
+            reachable = True
+    except Exception:
+        reachable = False
+    return HealthCheck(
+        name="ollama",
+        status=HealthStatus.OK if reachable else HealthStatus.WARN,
+        message=f"{base_url} reachable={reachable}",
+    )
+
+
+def run_startup_health_check(controller, verbose: bool = False) -> HealthReport:
+    del verbose
+    checks: list[HealthCheck] = []
+
+    config = getattr(controller, "config", None)
+    if config is not None:
+        checks.extend(_collect_config_checks(config))
+
+    raw_db_path = getattr(getattr(controller, "memory", None), "db_path", "")
+    db_path = _resolve_path(raw_db_path) if str(raw_db_path) else None
+    exists = bool(db_path and db_path.exists())
+    checks.append(
+        HealthCheck(
+            name="memory_sqlite",
+            status=HealthStatus.OK if exists else HealthStatus.FAIL,
+            message=str(db_path) if db_path is not None else "controller memory path missing",
+        )
+    )
+
+    # Preflight Import dependency validation
+    try:
+        from core.runtime.import_validator import StartupValidator
+        proj_root = Path(__file__).resolve().parents[2]
+        validator = StartupValidator(proj_root)
+        preflight = validator.run_preflight_checks()
+        if preflight["status"] == "GREEN":
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.OK,
+                    message="all critical submodules loaded successfully",
+                )
+            )
+        else:
+            failed_names = [f["module"] for f in preflight["failed"]]
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.FAIL,
+                    message=f"failed modules: {', '.join(failed_names)}",
+                )
+            )
+    except Exception as exc:
+        checks.append(
+            HealthCheck(
+                name="import_dependency_health",
+                status=HealthStatus.WARN,
+                message=f"failed to run import preflight validation: {exc}",
+            )
+        )
+
+    base_url = getattr(getattr(controller, "llm", None), "base_url", "http://localhost:11434")
+    checks.append(_ollama_check(str(base_url)))
+    return HealthReport(checks=checks)
+
+
+def run_lightweight_health_check(config) -> HealthReport:
+    checks = _collect_config_checks(config)
+
+    # Lightweight import dependency validation
+    try:
+        from core.runtime.import_validator import StartupValidator
+        proj_root = Path(__file__).resolve().parents[2]
+        validator = StartupValidator(proj_root)
+        preflight = validator.run_preflight_checks()
+        if preflight["status"] == "GREEN":
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.OK,
+                    message="all critical submodules loaded successfully",
+                )
+            )
+        else:
+            failed_names = [f["module"] for f in preflight["failed"]]
+            checks.append(
+                HealthCheck(
+                    name="import_dependency_health",
+                    status=HealthStatus.FAIL,
+                    message=f"failed modules: {', '.join(failed_names)}",
+                )
+            )
+    except Exception as exc:
+        checks.append(
+            HealthCheck(
+                name="import_dependency_health",
+                status=HealthStatus.WARN,
+                message=f"failed to run import preflight validation: {exc}",
+            )
+        )
+
+    base_url = _config_get(config, "ollama", "base_url", "http://localhost:11434")
+    checks.append(_ollama_check(base_url))
+    return HealthReport(checks=checks)
+
+=== core/tools/vision.py ===
+"""
+core/tools/vision.py — Vision (image analysis) tool.
+
+Wraps Ollama's LLaVA model for image understanding.
+Tests can patch _call_llava() to inject fake responses.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp"}
+
+
+class VisionTool:
+    """Analyze images using LLaVA or a test stub."""
+
+    def __init__(self, config: Any) -> None:
+        self._config = config
+        self._model = self._get("vision_model", "llava")
+        self._base_url = self._get("base_url", "http://localhost:11434")
+
+    def _get(self, key: str, default: str) -> str:
+        for section in ("ollama", "vision"):
+            try:
+                return str(self._config.get(section, key, fallback=default))
+            except Exception:  # noqa: BLE001
+                pass
+        return default
+
+    def analyze(self, image_path: str, prompt: str = "Describe this image.") -> str:
+        """
+        Analyze *image_path* using LLaVA and return a text description.
+
+        Raises:
+            FileNotFoundError: if the image file does not exist.
+            ValueError: if the file extension is not a supported image format.
+        """
+        path = Path(image_path)
+
+        if not path.exists():
+            raise FileNotFoundError(f"Image not found: {image_path}")
+
+        if path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+            raise ValueError(
+                f"Unsupported image format: {path.suffix!r}. "
+                f"Supported: {sorted(_SUPPORTED_EXTENSIONS)}"
+            )
+
+        return self._call_llava(str(path), prompt)
+
+    def _call_llava(self, image_path: str, prompt: str) -> str:
+        """Call the LLaVA model. Override in tests."""
+        try:
+            import requests  # type: ignore[import]
+            import base64
+
+            with open(image_path, "rb") as f:
+                img_b64 = base64.b64encode(f.read()).decode()
+
+            with requests.post(
+                f"{self._base_url}/api/generate",
+                json={
+                    "model": self._model,
+                    "prompt": prompt,
+                    "images": [img_b64],
+                    "stream": False,
+                },
+                timeout=30,
+            ) as resp:
+                resp.raise_for_status()
+                return str(resp.json().get("response", ""))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("LLaVA call failed: %s", exc)
+            return f"[Vision unavailable: {exc}]"
+
+
+__all__ = ["VisionTool"]
+
+=== core/voice/stt.py ===
+"""Speech-to-text for voice mode.
+
+Provides `STT` class with the API expected by V2 acceptance tests:
+  - STT._ready (bool attribute)
+  - STT.is_ready (property)
+  - STT.capture_and_transcribe() -> str | None
+  - STT._is_speech(pcm_bytes, frame_length) -> bool
+  - STT._vad (porcupine VAD or None)
+  - STT._sample_rate (int)
+  - TranscriptResult dataclass
+
+Also provides `SpeechToText` (async variant) for the new async controller path.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import struct
+from dataclasses import dataclass
+from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+try:
+    import numpy as np  # type: ignore[import]
+except ImportError:
+    np = None  # type: ignore[assignment]
+
+try:
+    import sounddevice as sd  # type: ignore[import]
+except ImportError:
+    sd = None  # type: ignore[assignment]
+
+try:
+    from faster_whisper import WhisperModel  # type: ignore[import]
+except ImportError:
+    WhisperModel = None  # type: ignore[assignment]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TranscriptResult dataclass
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class TranscriptResult:
+    """Structured output from speech recognition."""
+    text: str
+    audio_hash: str = ""
+    duration_s: float = 0.0
+    language: str = "en"
+    confidence: float = 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STT class — synchronous + attribute-based API (V2 acceptance tests)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ENERGY_THRESHOLD = 500  # RMS amplitude above which audio is considered speech
+
+
+class STT:
+    """
+    Synchronous STT wrapper with graceful degradation.
+
+    Attributes exposed for tests:
+      _ready         — True once the backend model is loaded
+      _vad           — VAD object or None when using energy-based detection
+      _sample_rate   — audio sample rate in Hz
+    """
+
+    _VAD_ENERGY_THRESHOLD = _ENERGY_THRESHOLD
+
+    def __init__(self, config: Any = None) -> None:
+        self._config = config
+        self._ready: bool = False
+        self._vad = None
+        self._sample_rate: int = 16_000
+        self._model = None
+
+        if config is not None:
+            self._init(config)
+
+    def _init(self, config: Any) -> None:
+        """Attempt to load the whisper model. Sets _ready on success."""
+        try:
+            srate_raw = config.get("voice", "audio_sample_rate", fallback="16000")
+            self._sample_rate = int(srate_raw)
+        except Exception:  # noqa: BLE001
+            self._sample_rate = 16_000
+
+        if WhisperModel is not None:
+            try:
+                model_name = config.get("voice", "stt_model", fallback="base.en")
+                compute_type = config.get("voice", "stt_compute_type", fallback="int8")
+                self._model = WhisperModel(model_name, device="cpu", compute_type=compute_type)
+                self._ready = True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Whisper model load failed: %s", exc)
+
+    @property
+    def is_ready(self) -> bool:
+        return self._ready
+
+    # ── VAD ───────────────────────────────────────────────────────────────
+
+    def _is_speech(self, pcm_bytes: bytes, frame_length: int) -> bool:
+        """
+        Return True if the PCM frame contains speech.
+
+        When self._vad is None (no external VAD), uses simple energy-based
+        detection: compute RMS of 16-bit signed samples.
+        """
+        if self._vad is not None:
+            try:
+                return bool(self._vad.is_speech(pcm_bytes, self._sample_rate))
+            except Exception:  # noqa: BLE001
+                pass
+
+        # Energy-based VAD fallback
+        try:
+            num_samples = len(pcm_bytes) // 2
+            if num_samples == 0:
+                return False
+            samples = struct.unpack(f"{num_samples}h", pcm_bytes[: num_samples * 2])
+            rms = (sum(s * s for s in samples) / num_samples) ** 0.5
+            return rms > self._VAD_ENERGY_THRESHOLD
+        except Exception:  # noqa: BLE001
+            return False
+
+    # ── Capture ───────────────────────────────────────────────────────────
+
+    def capture_and_transcribe(self) -> Optional[str]:
+        """
+        Record audio and return the transcribed text (or None if not ready).
+        Falls back to None when no audio device is available.
+        """
+        if not self._ready:
+            return None
+
+        if sd is None or np is None:
+            return None
+
+        try:
+            duration = 5
+            recording = sd.rec(
+                int(duration * self._sample_rate),
+                samplerate=self._sample_rate,
+                channels=1,
+                dtype="float32",
+            )
+            sd.wait()
+            audio = recording.flatten()
+
+            if self._model is None:
+                return None
+
+            segments, _ = self._model.transcribe(audio, language="en")
+            text = " ".join(s.text.strip() for s in segments if s.text).strip()
+            return text or None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("STT capture_and_transcribe failed: %s", exc)
+            return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SpeechToText — async variant for the async controller path
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SpeechToText:
+    """Async STT wrapper with graceful fallback behavior."""
+
+    def __init__(self, config: Any) -> None:
+        self._config = config
+        self.model_name = self._get("stt_model", "base")
+        self.language = self._get("stt_language", "en")
+        self.sample_rate = int(self._get("audio_sample_rate", "16000"))
+        self.max_duration_s = float(self._get("stt_max_duration_s", "8"))
+
+        self._backend = self._choose_backend()
+        self._model = None
+
+    def _get(self, key: str, default: str) -> str:
+        try:
+            return str(self._config.get("voice", key, fallback=default))
+        except Exception:  # noqa: BLE001
+            return default
+
+    def _choose_backend(self) -> str:
+        # Initial parsing of priority list
+        try:
+            engines_raw = self._config.get("voice", "stt_engine", fallback="whisper, google, input")
+            engines = [e.strip().lower() for e in engines_raw.split(",")]
+        except Exception:
+            engines = ["whisper", "google", "input"]
+
+        for engine in engines:
+            if engine in {"whisper", "faster-whisper"} and WhisperModel is not None and np is not None and sd is not None:
+                return "faster-whisper"
+            if engine in {"google"} and sd is not None:
+                try:
+                    import speech_recognition as sr
+                    _ = sr.Recognizer()  # Use it to avoid F401
+                    return "google"
+                except ImportError:
+                    logger.debug("SpeechRecognition not installed. Google STT fallback disabled.")
+            if engine in {"input", "cli"}:
+                return "input"
+
+        return "input"
+
+    async def transcribe(self) -> str:
+        if self._backend == "input":
+            return await self._read_from_input()
+        if self._backend == "google":
+            loop = asyncio.get_running_loop()
+            text = await loop.run_in_executor(None, self._record_and_transcribe_google)
+            return text.strip() or await self._read_from_input()
+
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(None, self._record_and_transcribe)
+        return text.strip() or await self._read_from_input()
+
+    async def _read_from_input(self) -> str:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: input("You (voice fallback): ").strip())
+
+    def _record_and_transcribe(self) -> str:
+        try:
+            if WhisperModel is None or np is None or sd is None:
+                return ""
+            if self._model is None:
+                self._model = WhisperModel(self.model_name, device="cpu", compute_type="int8")
+            frames = int(self.max_duration_s * self.sample_rate)
+            recording = sd.rec(frames, samplerate=self.sample_rate, channels=1, dtype="float32")
+            sd.wait()
+            segments, _ = self._model.transcribe(recording.flatten(), language=self.language)
+            return " ".join(s.text.strip() for s in segments if s.text).strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("STT whisper failed: %s", exc)
+            return ""
+
+    def _record_and_transcribe_google(self) -> str:
+        try:
+            import speech_recognition as sr
+            
+            r = sr.Recognizer()
+            with sr.Microphone(sample_rate=self.sample_rate) as source:
+                logger.info("Listening (Google STT)...")
+                # Adjust for ambient noise briefly
+                r.adjust_for_ambient_noise(source, duration=0.5)
+                audio = r.listen(source, timeout=self.max_duration_s, phrase_time_limit=self.max_duration_s)
+                
+            return str(r.recognize_google(audio, language=self.language))
+        except sr.WaitTimeoutError:
+            return ""
+        except Exception as exc:
+            logger.warning("STT google failed: %s", exc)
+            return ""
+
+
+__all__ = ["STT", "SpeechToText", "TranscriptResult"]
+
+=== core/voice/audio_utils.py ===
+# Copyright 2023 The HuggingFace Team. All rights reserved.
+import datetime
+import platform
+import subprocess
+
+import numpy as np
+
+
+def ffmpeg_read(bpayload: bytes, sampling_rate: int) -> np.ndarray:
+    """
+    Helper function to read an audio file through ffmpeg.
+    """
+    ar = f"{sampling_rate}"
+    ac = "1"
+    format_for_conversion = "f32le"
+    ffmpeg_command = [
+        "ffmpeg",
+        "-i",
+        "pipe:0",
+        "-ac",
+        ac,
+        "-ar",
+        ar,
+        "-f",
+        format_for_conversion,
+        "-hide_banner",
+        "-loglevel",
+        "quiet",
+        "pipe:1",
+    ]
+
+    try:
+        with subprocess.Popen(ffmpeg_command, stdin=subprocess.PIPE, stdout=subprocess.PIPE) as ffmpeg_process:
+            output_stream = ffmpeg_process.communicate(bpayload)
+    except FileNotFoundError as error:
+        raise ValueError("ffmpeg was not found but is required to load audio files from filename") from error
+    out_bytes = output_stream[0]
+    audio = np.frombuffer(out_bytes, np.float32)
+    if audio.shape[0] == 0:
+        raise ValueError(
+            "Soundfile is either not in the correct format or is malformed. Ensure that the soundfile has "
+            "a valid audio file extension (e.g. wav, flac or mp3) and is not corrupted. If reading from a remote "
+            "URL, ensure that the URL is the full address to **download** the audio file."
+        )
+    return audio
+
+
+def ffmpeg_microphone(
+    sampling_rate: int,
+    chunk_length_s: float,
+    format_for_conversion: str = "f32le",
+    ffmpeg_input_device: str | None = None,
+    ffmpeg_additional_args: list[str] | None = None,
+):
+    """
+    Helper function to read audio from a microphone using ffmpeg. The default input device will be used unless another
+    input device is specified using the `ffmpeg_input_device` argument. Uses 'alsa' on Linux, 'avfoundation' on MacOS and
+    'dshow' on Windows.
+
+    Arguments:
+        sampling_rate (`int`):
+            The sampling_rate to use when reading the data from the microphone. Try using the model's sampling_rate to
+            avoid resampling later.
+        chunk_length_s (`float` or `int`):
+            The length of the maximum chunk of audio to be sent returned.
+        format_for_conversion (`str`, defaults to `f32le`):
+            The name of the format of the audio samples to be returned by ffmpeg. The standard is `f32le`, `s16le`
+            could also be used.
+        ffmpeg_input_device (`str`, *optional*):
+            The identifier of the input device to be used by ffmpeg (i.e. ffmpeg's '-i' argument). If unset,
+            the default input device will be used. See `https://www.ffmpeg.org/ffmpeg-devices.html#Input-Devices`
+            for how to specify and list input devices.
+        ffmpeg_additional_args (`list[str]`, *optional*):
+            Additional arguments to pass to ffmpeg, can include arguments like -nostdin for running as a background
+            process. For example, to pass -nostdin to the ffmpeg process, pass in ["-nostdin"]. If passing in flags
+            with multiple arguments, use the following convention (eg ["flag", "arg1", "arg2]).
+
+    Returns:
+        A generator yielding audio chunks of `chunk_length_s` seconds as `bytes` objects of length
+        `int(round(sampling_rate * chunk_length_s)) * size_of_sample`.
+    """
+    ar = f"{sampling_rate}"
+    ac = "1"
+    if format_for_conversion == "s16le":
+        size_of_sample = 2
+    elif format_for_conversion == "f32le":
+        size_of_sample = 4
+    else:
+        raise ValueError(f"Unhandled format `{format_for_conversion}`. Please use `s16le` or `f32le`")
+
+    system = platform.system()
+
+    if system == "Linux":
+        format_ = "alsa"
+        input_ = ffmpeg_input_device or "default"
+    elif system == "Darwin":
+        format_ = "avfoundation"
+        input_ = ffmpeg_input_device or ":default"
+    elif system == "Windows":
+        format_ = "dshow"
+        input_ = ffmpeg_input_device or _get_microphone_name()
+
+    ffmpeg_additional_args = [] if ffmpeg_additional_args is None else ffmpeg_additional_args
+
+    ffmpeg_command = [
+        "ffmpeg",
+        "-f",
+        format_,
+        "-i",
+        input_,
+        "-ac",
+        ac,
+        "-ar",
+        ar,
+        "-f",
+        format_for_conversion,
+        "-fflags",
+        "nobuffer",
+        "-hide_banner",
+        "-loglevel",
+        "quiet",
+        "pipe:1",
+    ]
+
+    ffmpeg_command.extend(ffmpeg_additional_args)
+
+    chunk_len = int(round(sampling_rate * chunk_length_s)) * size_of_sample
+    iterator = _ffmpeg_stream(ffmpeg_command, chunk_len)
+    yield from iterator
+
+
+def ffmpeg_microphone_live(
+    sampling_rate: int,
+    chunk_length_s: float,
+    stream_chunk_s: int | None = None,
+    stride_length_s: tuple[float, float] | float | None = None,
+    format_for_conversion: str = "f32le",
+    ffmpeg_input_device: str | None = None,
+    ffmpeg_additional_args: list[str] | None = None,
+):
+    """
+    Helper function to read audio from a microphone using ffmpeg. This will output `partial` overlapping chunks starting
+    from `stream_chunk_s` (if it is defined) until `chunk_length_s` is reached. It will make use of striding to avoid
+    errors on the "sides" of the various chunks. The default input device will be used unless another input device is
+    specified using the `ffmpeg_input_device` argument. Uses 'alsa' on Linux, 'avfoundation' on MacOS and 'dshow' on Windows.
+
+    Arguments:
+        sampling_rate (`int`):
+            The sampling_rate to use when reading the data from the microphone. Try using the model's sampling_rate to
+            avoid resampling later.
+        chunk_length_s (`float` or `int`):
+            The length of the maximum chunk of audio to be sent returned. This includes the eventual striding.
+        stream_chunk_s (`float` or `int`):
+            The length of the minimal temporary audio to be returned.
+        stride_length_s (`float` or `int` or `(float, float)`, *optional*):
+            The length of the striding to be used. Stride is used to provide context to a model on the (left, right) of
+            an audio sample but without using that part to actually make the prediction. Setting this does not change
+            the length of the chunk.
+        format_for_conversion (`str`, *optional*, defaults to `f32le`):
+            The name of the format of the audio samples to be returned by ffmpeg. The standard is `f32le`, `s16le`
+            could also be used.
+        ffmpeg_input_device (`str`, *optional*):
+            The identifier of the input device to be used by ffmpeg (i.e. ffmpeg's '-i' argument). If unset,
+            the default input device will be used. See `https://www.ffmpeg.org/ffmpeg-devices.html#Input-Devices`
+            for how to specify and list input devices.
+        ffmpeg_additional_args (`list[str]`, *optional*):
+            Additional arguments to pass to ffmpeg, can include arguments like -nostdin for running as a background
+            process. For example, to pass -nostdin to the ffmpeg process, pass in ["-nostdin"]. If passing in flags
+            with multiple arguments, use the following convention (eg ["flag", "arg1", "arg2]).
+
+    Return:
+        A generator yielding dictionaries of the following form
+
+        `{"sampling_rate": int, "raw": np.ndarray, "partial" bool}` With optionally a `"stride" (int, int)` key if
+        `stride_length_s` is defined.
+
+        `stride` and `raw` are all expressed in `samples`, and `partial` is a boolean saying if the current yield item
+        is a whole chunk, or a partial temporary result to be later replaced by another larger chunk.
+    """
+    if stream_chunk_s is not None:
+        chunk_s = stream_chunk_s
+    else:
+        chunk_s = chunk_length_s
+
+    microphone = ffmpeg_microphone(
+        sampling_rate,
+        chunk_s,
+        format_for_conversion=format_for_conversion,
+        ffmpeg_input_device=ffmpeg_input_device,
+        ffmpeg_additional_args=[] if ffmpeg_additional_args is None else ffmpeg_additional_args,
+    )
+
+    if format_for_conversion == "s16le":
+        dtype = np.int16
+        size_of_sample = 2
+    elif format_for_conversion == "f32le":
+        dtype = np.float32
+        size_of_sample = 4
+    else:
+        raise ValueError(f"Unhandled format `{format_for_conversion}`. Please use `s16le` or `f32le`")
+
+    if stride_length_s is None:
+        stride_length_s = chunk_length_s / 6
+    chunk_len = int(round(sampling_rate * chunk_length_s)) * size_of_sample
+    if isinstance(stride_length_s, (int, float)):
+        stride_length_s = [stride_length_s, stride_length_s]
+
+    stride_left = int(round(sampling_rate * stride_length_s[0])) * size_of_sample
+    stride_right = int(round(sampling_rate * stride_length_s[1])) * size_of_sample
+    audio_time = datetime.datetime.now()
+    delta = datetime.timedelta(seconds=chunk_s)
+    for item in chunk_bytes_iter(microphone, chunk_len, stride=(stride_left, stride_right), stream=True):
+        # Put everything back in numpy scale
+        item["raw"] = np.frombuffer(item["raw"], dtype=dtype)
+        item["stride"] = (
+            item["stride"][0] // size_of_sample,
+            item["stride"][1] // size_of_sample,
+        )
+        item["sampling_rate"] = sampling_rate
+        audio_time += delta
+        if datetime.datetime.now() > audio_time + 10 * delta:
+            # We're late !! SKIP
+            continue
+        yield item
+
+
+def chunk_bytes_iter(iterator, chunk_len: int, stride: tuple[int, int], stream: bool = False):
+    """
+    Reads raw bytes from an iterator and does chunks of length `chunk_len`. Optionally adds `stride` to each chunks to
+    get overlaps. `stream` is used to return partial results even if a full `chunk_len` is not yet available.
+    """
+    acc = b""
+    stride_left, stride_right = stride
+    if stride_left + stride_right >= chunk_len:
+        raise ValueError(
+            f"Stride needs to be strictly smaller than chunk_len: ({stride_left}, {stride_right}) vs {chunk_len}"
+        )
+    _stride_left = 0
+    for raw in iterator:
+        acc += raw
+        if stream and len(acc) < chunk_len:
+            stride = (_stride_left, 0)
+            yield {"raw": acc[:chunk_len], "stride": stride, "partial": True}
+        else:
+            while len(acc) >= chunk_len:
+                # We are flushing the accumulator
+                stride = (_stride_left, stride_right)
+                item = {"raw": acc[:chunk_len], "stride": stride}
+                if stream:
+                    item["partial"] = False
+                yield item
+                _stride_left = stride_left
+                acc = acc[chunk_len - stride_left - stride_right :]
+    # Last chunk
+    if len(acc) > stride_left:
+        item = {"raw": acc, "stride": (_stride_left, 0)}
+        if stream:
+            item["partial"] = False
+        yield item
+
+
+def _ffmpeg_stream(ffmpeg_command, buflen: int):
+    """
+    Internal function to create the generator of data through ffmpeg
+    """
+    bufsize = 2**24  # 16Mo
+    try:
+        with subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, bufsize=bufsize) as ffmpeg_process:
+            while True:
+                raw = ffmpeg_process.stdout.read(buflen)
+                if raw == b"":
+                    break
+                yield raw
+    except FileNotFoundError as error:
+        raise ValueError("ffmpeg was not found but is required to stream audio files from filename") from error
+
+
+def _get_microphone_name():
+    """
+    Retrieve the microphone name in Windows .
+    """
+    command = ["ffmpeg", "-list_devices", "true", "-f", "dshow", "-i", ""]
+
+    try:
+        ffmpeg_devices = subprocess.run(command, text=True, stderr=subprocess.PIPE, encoding="utf-8")
+        microphone_lines = [line for line in ffmpeg_devices.stderr.splitlines() if "(audio)" in line]
+
+        if microphone_lines:
+            microphone_name = microphone_lines[0].split('"')[1]
+            print(f"Using microphone: {microphone_name}")
+            return f"audio={microphone_name}"
+    except FileNotFoundError:
+        print("ffmpeg was not found. Please install it or make sure it is in your system PATH.")
+
+    return "default"
+
+
+=== core/memory/sqlite_pool.py ===
+"""SQLite connection pool for Project Jarvis."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import aiosqlite
+
+
+class SQLitePool:
+    """A simple async-safe connection pool for SQLite."""
+
+    def __init__(self, db_path: str, pool_size: int = 3):
+        self.db_path = db_path
+        self.pool_size = pool_size
+        self._pool: asyncio.Queue | None = None
+        self._all_conns: set = set()
+        self._in_use_conns: set = set()
+        self._closed = False
+        self._close_waiter: asyncio.Event | None = None
+        self._lock = asyncio.Lock()
+
+    async def _init_pool(self):
+        if self._pool is not None:
+            return
+        pool = asyncio.Queue(maxsize=self.pool_size)
+        conns = []
+        try:
+            for _ in range(self.pool_size):
+                conn = await aiosqlite.connect(self.db_path, timeout=30.0)
+                conn.row_factory = aiosqlite.Row
+                # Configure Write-Ahead Logging (WAL) and performance/concurrency defaults
+                await conn.execute("PRAGMA journal_mode=WAL;")
+                await conn.execute("PRAGMA synchronous=NORMAL;")
+                conns.append(conn)
+                await pool.put(conn)
+        except Exception:
+            # Roll back/close all opened connections on initialization failure to prevent resource leak
+            for conn in conns:
+                try:
+                    await conn.close()
+                except Exception:
+                    pass
+            raise
+        else:
+            self._pool = pool
+            self._all_conns = set(conns)
+            self._closed = False
+
+    @staticmethod
+    async def _rollback_quietly(conn) -> None:
+        try:
+            await conn.rollback()
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _close_connection(conn) -> None:
+        try:
+            await conn.close()
+        except Exception:
+            pass
+
+    @contextlib.asynccontextmanager
+    async def acquire(self):
+        """Acquire a connection from the pool, committing on success or rolling back on error."""
+        if self._closed:
+            raise RuntimeError("Database pool is closed")
+
+        async with self._lock:
+            if self._pool is None:
+                await self._init_pool()
+
+        pool = self._pool
+        if pool is None or self._closed:
+            raise RuntimeError("Database pool is closed")
+
+        try:
+            conn = await pool.get()
+        except RuntimeError as e:
+            raise RuntimeError("Database pool is closed") from e
+
+        async with self._lock:
+            if self._closed or self._pool is None or conn not in self._all_conns:
+                self._all_conns.discard(conn)
+                should_close = True
+            else:
+                self._in_use_conns.add(conn)
+                should_close = False
+
+        # Double check if pool was closed while waiting.
+        if should_close:
+            await self._close_connection(conn)
+            raise RuntimeError("Database pool was closed during acquire")
+
+        try:
+            yield conn
+            await conn.commit()
+        except asyncio.CancelledError:
+            await self._rollback_quietly(conn)
+            raise
+        except Exception:
+            await self._rollback_quietly(conn)
+            raise
+        finally:
+            should_close = False
+            close_waiter = None
+            async with self._lock:
+                self._in_use_conns.discard(conn)
+                if not self._closed and self._pool is not None and conn in self._all_conns:
+                    self._pool.put_nowait(conn)
+                else:
+                    self._all_conns.discard(conn)
+                    should_close = True
+
+                if self._closed and not self._in_use_conns and not self._all_conns:
+                    close_waiter = self._close_waiter
+                    self._close_waiter = None
+
+            if should_close:
+                await self._close_connection(conn)
+
+            if close_waiter is not None and not close_waiter.is_set():
+                close_waiter.set()
+
+    async def close(self):
+        """Close all connections in the pool."""
+        drained_conns = []
+        close_waiter = None
+        async with self._lock:
+            self._closed = True
+            pool = self._pool
+            if pool is None:
+                return
+
+            # Wake up any tasks currently blocked on get()
+            if hasattr(pool, "_getters"):
+                for getter in pool._getters:
+                    if not getter.done():
+                        getter.set_exception(RuntimeError("Database pool is closed"))
+
+            # Drain idle connections from the queue and close them outside the lock.
+            while not pool.empty():
+                try:
+                    conn = pool.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                else:
+                    drained_conns.append(conn)
+                    self._all_conns.discard(conn)
+
+            self._pool = None
+
+            if self._in_use_conns and self._all_conns:
+                close_waiter = self._close_waiter or asyncio.Event()
+                self._close_waiter = close_waiter
+            else:
+                self._all_conns.clear()
+                self._close_waiter = None
+
+        for conn in drained_conns:
+            await self._close_connection(conn)
+
+        if close_waiter is not None:
+            await close_waiter.wait()
+
+=== core/executor/engine.py ===
+"""
+core/executor/engine.py
+───────────────────────
+Asynchronous DAG execution engine with LIFO rollback, retry semantics, and timeouts.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import inspect
+import logging
+from typing import Any, Callable, Dict, Set
+
+from core.context.context import TaskExecutionContext
+from core.executor.dag import PlanDAG
+
+logger = logging.getLogger("Jarvis.Executor.Engine")
+
+
+class DAGExecutor:
+    """Executes planned task steps concurrently conforming to dependency constraints."""
+
+    def __init__(self, tool_router: Any, risk_evaluator: Any = None, autonomy_governor: Any = None):
+        self.router = tool_router
+        self.risk = risk_evaluator
+        self.gov = autonomy_governor
+
+    async def execute(self, plan: Dict[str, Any], context: TaskExecutionContext) -> Dict[str, Any]:
+        rollbacks: Dict[str, Callable[[], Any]] = {}
+
+        def register_rollback(step_id: str, step_def: Dict[str, Any]):
+            rollback_def = step_def.get("rollback")
+            if rollback_def:
+                rb_action = rollback_def.get("action")
+                rb_params = rollback_def.get("params", {})
+                async def rollback_callback():
+                    logger.info("Rolling back step %s via %s", step_id, rb_action, extra={"metadata": {"step_id": step_id, "action": rb_action}})
+                    sig_rb = inspect.signature(self.router.execute)
+                    if "context" in sig_rb.parameters:
+                        await self.router.execute(rb_action, rb_params, context=context)
+                    else:
+                        await self.router.execute(rb_action, rb_params)
+                rollbacks[step_id] = rollback_callback
+
+        steps = plan.get("steps", [])
+        if not steps:
+            return {"status": "success", "message": "No steps to execute."}
+
+        # Helper to publish events
+        def publish_event(event_type: str, data: Any):
+            eb = getattr(context, "event_bus", None)
+            if eb:
+                eb.publish(event_type, data)
+
+        publish_event("task_started", {"trace_id": context.trace_id, "task_id": context.task_id, "plan": plan})
+
+        dag = PlanDAG(steps)
+        try:
+            topo_order = dag.topological_sort()
+        except Exception as e:
+            logger.error("Topological sort failed: %s", e, extra={"metadata": {"error": str(e)}})
+            publish_event("task_finished", {"trace_id": context.trace_id, "task_id": context.task_id, "status": "failed", "error": str(e)})
+            return {"status": "failure", "error": str(e)}
+
+        # Track execution states of steps
+        step_states = {step_id: "pending" for step_id in dag.step_map}
+        
+        # Load or initialize step_results in context.variables for replay capability
+        if "_step_results" not in context.variables:
+            context.variables["_step_results"] = {}
+        step_results = context.variables["_step_results"]
+        
+        completed_steps: Set[str] = set()
+        
+        # In replay mode, check if step is already completed
+        replay_active = context.get("_replay_active", False)
+        if replay_active:
+            for sid, res in step_results.items():
+                if isinstance(res, dict) and res.get("success", True) is not False:
+                    step_states[sid] = "success"
+                    completed_steps.add(sid)
+                    logger.info("Replay: loaded step %s status as completed from snapshot", sid, extra={"metadata": {"step_id": sid}})
+                    if sid in dag.step_map:
+                        register_rollback(sid, dag.step_map[sid])
+
+        cond = asyncio.Condition()
+        # Build incoming dependency tracking dictionary
+        dependencies: Dict[str, Set[str]] = {step_id: set() for step_id in dag.step_map}
+        for step_id, step in dag.step_map.items():
+            depends_on = step.get("depends_on", [])
+            if isinstance(depends_on, str):
+                depends_on = [depends_on]
+            for dep in depends_on:
+                dep_str = str(dep)
+                if dep_str in dag.step_map:
+                    dependencies[step_id].add(dep_str)
+
+        async def run_step(step_id: str) -> Dict[str, Any]:
+            step = dag.step_map[step_id]
+            action = step.get("action") or step.get("tool")
+            params = step.get("params", {})
+            retry_count = int(step.get("retry_count", 0))
+
+            # Replay mocking check
+            if replay_active and step_id in step_results:
+                prior_res = step_results[step_id]
+                if isinstance(prior_res, dict) and prior_res.get("success", True) is not False:
+                    logger.info("Replay: mocking execution of step %s with prior successful result", step_id, extra={"metadata": {"step_id": step_id}})
+                    return prior_res
+
+            if self.gov and action:
+                allowed, reason = self.gov.can_execute(action)
+                if not allowed:
+                    raise RuntimeError(f"Autonomy Governor blocked '{action}': {reason}")
+
+            backoff = 1.0
+            for attempt in range(retry_count + 1):
+                try:
+                    logger.info(
+                        "Step %s: executing '%s' (attempt %d)", step_id, action, attempt + 1,
+                        extra={"metadata": {"step_id": step_id, "action": action, "attempt": attempt + 1}}
+                    )
+                    # Snapshot at start of step
+                    await context.save_snapshot(step_id=step_id, metadata={"status": "running", "action": action, "attempt": attempt + 1})
+                    publish_event("step_executing", {"trace_id": context.trace_id, "task_id": context.task_id, "step_id": step_id, "action": action})
+
+                    sig = inspect.signature(self.router.execute)
+                    if "context" in sig.parameters:
+                        observation = await self.router.execute(action, params, context=context)
+                    else:
+                        observation = await self.router.execute(action, params)
+
+                    if observation.execution_status == "success":
+                        logger.info("Step %s succeeded.", step_id, extra={"metadata": {"step_id": step_id}})
+                        res_dict = observation.to_dict()
+
+                        # Snapshot at end of step (success)
+                        await context.save_snapshot(step_id=step_id, metadata={"status": "success", "action": action})
+                        publish_event("step_completed", {"trace_id": context.trace_id, "task_id": context.task_id, "step_id": step_id, "status": "success", "result": res_dict})
+
+                        # Set up step rollback callback if defined in step schema
+                        register_rollback(step_id, step)
+
+                        return res_dict
+                    else:
+                        raise RuntimeError(observation.error_message or "Tool execution failed")
+                except Exception as exc:
+                    if attempt < retry_count:
+                        logger.warning(
+                            "Step %s failed: %s. Retrying in %ss...", step_id, exc, backoff,
+                            extra={"metadata": {"step_id": step_id, "error": str(exc), "retry_backoff": backoff}}
+                        )
+                        await asyncio.sleep(backoff)
+                        backoff *= 2.0
+                    else:
+                        # Snapshot at end of step (failure)
+                        await context.save_snapshot(step_id=step_id, metadata={"status": "failed", "action": action, "error": str(exc)})
+                        publish_event("step_completed", {"trace_id": context.trace_id, "task_id": context.task_id, "step_id": step_id, "status": "failed", "error": str(exc)})
+                        raise exc
+
+        running_tasks: set[asyncio.Task] = set()
+
+        async def run_step_task(sid: str) -> None:
+            try:
+                res = await run_step(sid)
+                async with cond:
+                    step_states[sid] = "success"
+                    step_results[sid] = res
+                    completed_steps.add(sid)
+            except asyncio.CancelledError:
+                async with cond:
+                    step_states[sid] = "cancelled"
+                    step_results[sid] = {"success": False, "error": "Cancelled"}
+                    logger.info("Step %s cancelled.", sid, extra={"metadata": {"step_id": sid}})
+                raise
+            except Exception as e:
+                async with cond:
+                    step_states[sid] = "failed"
+                    step_results[sid] = {"success": False, "error": str(e)}
+                    logger.error("Step %s permanently failed: %s", sid, e, extra={"metadata": {"step_id": sid, "error": str(e)}})
+            except BaseException as e:
+                async with cond:
+                    step_states[sid] = "failed"
+                    step_results[sid] = {"success": False, "error": f"BaseException: {type(e).__name__}"}
+                    logger.error("Step %s aborted due to critical error: %s", sid, e, extra={"metadata": {"step_id": sid, "error": str(e)}})
+                raise
+            finally:
+                async with cond:
+                    cond.notify_all()
+
+        async def scheduler_loop():
+            while True:
+                ready_to_run = []
+                async with cond:
+                    if len(completed_steps) == len(dag.step_map):
+                        break
+
+                    # Halt everything if any step failed
+                    if any(state == "failed" for state in step_states.values()):
+                        break
+
+                    for step_id in dag.step_map:
+                        if step_states[step_id] == "pending":
+                            deps = dependencies[step_id]
+                            if deps.issubset(completed_steps):
+                                step_states[step_id] = "running"
+                                ready_to_run.append(step_id)
+
+                    if not ready_to_run:
+                        if any(state == "running" for state in step_states.values()):
+                            await cond.wait()
+                            continue
+                        else:
+                            break
+
+                for sid in ready_to_run:
+                    task = asyncio.create_task(run_step_task(sid))
+                    running_tasks.add(task)
+                    task.add_done_callback(running_tasks.discard)
+
+        try:
+            await scheduler_loop()
+        finally:
+            if running_tasks:
+                # Cancel remaining tasks before waiting to prevent infinite hangs on failure
+                tasks_to_await = list(running_tasks)
+                for t in tasks_to_await:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks_to_await, return_exceptions=True)
+
+        failed_steps = [sid for sid, state in step_states.items() if state == "failed"]
+        if failed_steps:
+            logger.error(
+                "DAG execution halted at failed steps %s. Rolling back in reverse topological order...", failed_steps,
+                extra={"metadata": {"failed_steps": failed_steps}}
+            )
+            for sid in reversed(topo_order):
+                if sid in rollbacks:
+                    try:
+                        await rollbacks[sid]()
+                    except Exception as e:
+                        logger.error("Rollback callback failure for step %s: %s", sid, e, extra={"metadata": {"step_id": sid, "error": str(e)}})
+            
+            publish_event("task_finished", {"trace_id": context.trace_id, "task_id": context.task_id, "status": "failed", "failed_steps": failed_steps})
+            return {"status": "failure", "failed_steps": failed_steps, "results": step_results}
+
+        publish_event("task_finished", {"trace_id": context.trace_id, "task_id": context.task_id, "status": "success"})
+        return {"status": "success", "results": step_results}

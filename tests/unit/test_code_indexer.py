@@ -44,3 +44,34 @@ async def test_store_code_file_indexes_plain_file_content(tmp_path):
     event_text = memory.store_episode.await_args.args[0]
     assert event_text.startswith("file:plain.py\n")
     assert "print(x)" in event_text
+
+
+def test_extract_code_chunks_functions_and_classes():
+    content = """
+class MyClass:
+    def method(self):
+        pass
+
+def my_func():
+    return 1
+
+async def my_async_func():
+    pass
+"""
+    chunks = extract_code_chunks("module.py", content)
+    
+    assert len(chunks) == 4
+    
+    class_chunk = next(c for c in chunks if c["metadata"]["type"] == "ClassDef")
+    assert class_chunk["chunk_id"] == "module.py::MyClass"
+    assert "class MyClass" in class_chunk["chunk"]
+    assert "def method(self):" in class_chunk["chunk"]
+    
+    func_chunk = next(c for c in chunks if c["metadata"]["type"] == "FunctionDef")
+    assert func_chunk["chunk_id"] == "module.py::my_func"
+    assert "def my_func():" in func_chunk["chunk"]
+    
+    async_func_chunk = next(c for c in chunks if c["metadata"]["type"] == "AsyncFunctionDef")
+    assert async_func_chunk["chunk_id"] == "module.py::my_async_func"
+    assert "async def my_async_func():" in async_func_chunk["chunk"]
+

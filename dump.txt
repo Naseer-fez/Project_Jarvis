@@ -1,0 +1,1333 @@
+=== core/memory/code_indexer.py ===
+import ast
+from typing import Any
+
+
+def _fallback_file_chunk(
+    file_path: str,
+    content: str,
+    *,
+    chunk_type: str,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload = (content or "").strip() or f"file:{file_path}"
+    metadata: dict[str, Any] = {"file": str(file_path), "type": chunk_type}
+    if error:
+        metadata["error"] = error
+    return {
+        "chunk_id": f"file:{file_path}",
+        "chunk": payload,
+        "metadata": metadata,
+    }
+
+
+def extract_code_chunks(file_path: str, content: str) -> list[dict[str, Any]]:
+    """
+    Parse Python code and extract class/function chunks for semantic retrieval.
+    """
+    chunks: list[dict[str, Any]] = []
+    
+    try:
+        tree = ast.parse(content)
+    except SyntaxError as exc:
+        # If there's a syntax error, we just return the whole file as a single chunk
+        return [
+            _fallback_file_chunk(
+                file_path,
+                content,
+                chunk_type="FileSyntaxError",
+                error=str(exc),
+            )
+        ]
+
+    lines = content.splitlines()
+
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+
+        start = max(0, getattr(node, "lineno", 1) - 1)
+        end_lineno = getattr(node, "end_lineno", None) or getattr(node, "lineno", 1)
+        end = min(len(lines), max(start + 1, end_lineno))
+        chunk = "\n".join(lines[start:end]).strip()
+        if not chunk:
+            continue
+
+        chunk_id = f"{file_path}::{getattr(node, 'name', 'anonymous')}"
+        metadata = {
+            "file": str(file_path),
+            "name": getattr(node, "name", ""),
+            "type": type(node).__name__,
+            "lines": f"{start + 1}-{end}",
+        }
+        chunks.append({
+            "chunk_id": chunk_id,
+            "chunk": chunk,
+            "metadata": metadata
+        })
+
+    if not chunks:
+        # If no functions or classes found, return the file as a single chunk
+        chunks.append(
+            _fallback_file_chunk(file_path, content, chunk_type="File")
+        )
+
+    return chunks
+
+=== core/hardware/serial_controller.py ===
+"""Minimal serial controller with a disabled-by-default safety posture."""
+
+from __future__ import annotations
+
+
+class SerialController:
+    def __init__(
+        self,
+        config=None,
+        port: str | None = None,
+        baud_rate: int | None = None,
+        timeout: float = 1.0,
+    ) -> None:
+        self.config = config
+        self.timeout = timeout
+        self._serial = None
+        self.enabled = False
+        self.default_port = port
+        self.baud_rate = int(baud_rate or 115200)
+
+        if config is not None:
+            try:
+                self.enabled = config.getboolean("hardware", "enabled", fallback=False)
+            except Exception:
+                self.enabled = False
+            try:
+                self.default_port = self.default_port or config.get(
+                    "hardware",
+                    "default_port",
+                    fallback=None,
+                )
+            except Exception:
+                pass
+            try:
+                self.baud_rate = int(
+                    config.get("hardware", "baud_rate", fallback=str(self.baud_rate))
+                )
+            except Exception:
+                pass
+
+        if self.enabled and self.default_port:
+            self.connect(self.default_port)
+
+    @property
+    def is_connected(self) -> bool:
+        return bool(self._serial is not None and getattr(self._serial, "is_open", False))
+
+    def connect(self, port: str | None = None):
+        if not self.enabled:
+            raise NotImplementedError("Hardware serial control is disabled by config.")
+
+        target_port = port or self.default_port
+        if not target_port:
+            raise ValueError("No serial port configured.")
+
+        import serial
+
+        self._serial = serial.Serial(
+            target_port,
+            baudrate=self.baud_rate,
+            timeout=self.timeout,
+        )
+        self.default_port = target_port
+        return self
+
+    def send(self, command: str):
+        if not self.enabled:
+            raise NotImplementedError("Hardware serial control is disabled by config.")
+        if not self.is_connected:
+            raise RuntimeError("Serial controller is not connected.")
+
+        payload = f"{command}\n".encode("utf-8")
+        self._serial.write(payload)
+        if hasattr(self._serial, "flush"):
+            self._serial.flush()
+        if hasattr(self._serial, "readline"):
+            return self._serial.readline().decode("utf-8", errors="replace").strip()
+        return "OK"
+
+    def close(self) -> None:
+        if self._serial is not None and hasattr(self._serial, "close"):
+            self._serial.close()
+
+
+__all__ = ["SerialController"]
+
+=== core/runtime/container.py ===
+"""
+Dependency Injection (DI) Service Container for Project Jarvis.
+Provides clean decoupling of services and allows dynamic overrides/registrations.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable, Dict, Tuple, Type, Union
+
+logger = logging.getLogger("Jarvis.Container")
+
+
+class ServiceContainer:
+    """
+    Lightweight, thread-safe Dependency Injection (DI) Container.
+    Enables components to be decoupled and custom subclasses/mock implementations
+    to be dynamically registered and resolved.
+    """
+
+    def __init__(self) -> None:
+        self._providers: Dict[str, Tuple[Union[Type, Callable], bool]] = {}
+        self._instances: Dict[str, Any] = {}
+
+    def register(self, name: str, factory_or_class: Union[Type, Callable], is_singleton: bool = True) -> None:
+        """Register a class or a factory function for a service."""
+        key = name.strip().lower()
+        self._providers[key] = (factory_or_class, is_singleton)
+        logger.debug("Registered service '%s' (singleton=%s)", key, is_singleton)
+        # Invalidate any cached instance if re-registered
+        if key in self._instances:
+            del self._instances[key]
+
+    def register_instance(self, name: str, instance: Any) -> None:
+        """Register a pre-constructed instance of a service."""
+        key = name.strip().lower()
+        self._instances[key] = instance
+        logger.debug("Registered instance for service '%s'", key)
+
+    def has(self, name: str) -> bool:
+        """Check if a service is registered in the container."""
+        key = name.strip().lower()
+        return key in self._instances or key in self._providers
+
+    def resolve(self, name: str, **kwargs) -> Any:
+        """
+        Resolve a service instance. If registered as a singleton, the cached instance
+        is returned; otherwise, a fresh instance is constructed. Any keyword arguments
+        passed will be forwarded to the factory/constructor.
+        """
+        key = name.strip().lower()
+        if key in self._instances:
+            return self._instances[key]
+
+        if key not in self._providers:
+            raise ValueError(f"Service '{name}' is not registered in the container.")
+
+        factory_or_class, is_singleton = self._providers[key]
+
+        try:
+            import inspect
+            if isinstance(factory_or_class, type):
+                try:
+                    sig = inspect.signature(factory_or_class.__init__)
+                    has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                    if has_var_keyword:
+                        valid_kwargs = kwargs
+                    else:
+                        valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+                except Exception:
+                    valid_kwargs = kwargs
+                instance = factory_or_class(**valid_kwargs)
+            elif callable(factory_or_class):
+                try:
+                    sig = inspect.signature(factory_or_class)
+                    has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+                    if has_var_keyword:
+                        valid_kwargs = kwargs
+                    else:
+                        valid_kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+                except Exception:
+                    valid_kwargs = {}
+                instance = factory_or_class(**valid_kwargs)
+            else:
+                instance = factory_or_class
+        except Exception as e:
+            logger.exception("Failed to resolve service '%s'", name)
+            raise RuntimeError(f"Failed to instantiate service '{name}': {e}") from e
+
+        if is_singleton:
+            self._instances[key] = instance
+
+        return instance
+
+    def reset(self) -> None:
+        """Clears all registered providers and cached instances."""
+        self._providers.clear()
+        self._instances.clear()
+        logger.debug("Container reset.")
+
+=== core/planner/planner.py ===
+"""Asynchronous task planner to generate execution plans."""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+import inspect
+from typing import Any
+
+from core.autonomy.risk_evaluator import RiskLevel, RiskEvaluator
+
+# SYSTEM_TOOL_SCHEMA removed in favor of CapabilityRegistry dynamic discovery
+
+_GUI_TOOL_NAMES = {
+    "click",
+    "double_click",
+    "right_click",
+    "click_text_on_screen",
+    "click_screen_target",
+    "double_click_screen_target",
+    "right_click_screen_target",
+    "move_mouse",
+    "scroll",
+    "drag",
+    "type_text",
+    "press_key",
+    "hotkey",
+    "focus_window",
+    "clipboard_get",
+    "clipboard_set",
+    "clipboard_paste",
+}
+
+
+def _strip_planner_artifacts(raw: str) -> str:
+    cleaned = re.sub(r"<think>.*?</think>", "", raw or "", flags=re.DOTALL).strip()
+    cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\n?", "", cleaned)
+    cleaned = re.sub(r"\n?```$", "", cleaned)
+    return cleaned.strip()
+
+logger = logging.getLogger("Jarvis.Planner")
+
+
+class TaskPlanner:
+    def __init__(self, config=None, llm=None, registry=None) -> None:
+        self.config = config
+        self.risk_evaluator = RiskEvaluator(config)
+        self.llm = llm
+        self.registry = registry
+
+    def _tool_schema(self) -> dict[str, list[dict[str, str]]]:
+        tools = []
+        if self.registry:
+            for name in self.registry.registered_tools():
+                cap = self.registry.get(name)
+                desc = getattr(cap, "description", "") or f"Execute {name}"
+                tools.append({"name": name, "description": desc})
+
+        allow_gui = False
+        try:
+            if self.config:
+                allow_gui = self.config.getboolean(
+                    "execution",
+                    "allow_gui_automation",
+                    fallback=False,
+                )
+        except Exception:
+            allow_gui = False
+
+        if not allow_gui:
+            tools = [tool for tool in tools if tool["name"] not in _GUI_TOOL_NAMES]
+
+        return {"tools": tools}
+
+    async def _call_ollama(self, prompt: str) -> str:
+        if not self.llm or not hasattr(self.llm, "complete"):
+            return ""
+        try:
+            res = self.llm.complete(prompt, task_type="tool_picker")
+            if inspect.isawaitable(res):
+                return await res
+            return str(res)
+        except Exception as exc:
+            logger.error("LLM completion failed: %s", exc)
+            return ""
+
+    async def plan(self, user_input: str, context: str = "") -> dict[str, Any]:
+        text = str(user_input or "").strip()
+        raw = await self._call_ollama(self._build_prompt(text, context))
+
+        if raw:
+            parsed = self._parse_llm_plan(raw)
+            if parsed is not None:
+                return self._enrich_plan(text, parsed)
+            return self._clarification_plan(text)
+
+        return self._enrich_plan(text, self._fallback_plan(text))
+
+    def _build_prompt(self, user_input: str, context: str) -> str:
+        schema_format = {
+            "intent": "user request",
+            "summary": "overall plan summary",
+            "confidence": 0.9,
+            "steps": [
+                {
+                    "id": 1,
+                    "action": "tool_name",
+                    "description": "why we call this tool",
+                    "params": {"param_key": "param_value"}
+                }
+            ],
+            "clarification_needed": False,
+            "clarification_prompt": ""
+        }
+        return (
+            "You are a task planner. Create a step-by-step action plan using the available tools to satisfy the user request.\n"
+            f"User request: {user_input}\n"
+            f"Context: {context}\n"
+            f"Available tools: {json.dumps(self._tool_schema())}\n\n"
+            "You MUST return a valid JSON object matching the following structure:\n"
+            f"{json.dumps(schema_format, indent=2)}\n\n"
+            "Return ONLY the strict JSON object. No explanations, no markdown block, no extra text."
+        )
+
+    def _parse_llm_plan(self, raw: str) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(_strip_planner_artifacts(raw))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _fallback_plan(self, text: str) -> dict[str, Any]:
+        return self._clarification_plan(text)
+
+    def _clarification_plan(self, text: str) -> dict[str, Any]:
+        return {
+            "intent": text,
+            "summary": "Need clarification before taking action.",
+            "confidence": 0.2,
+            "steps": [],
+            "clarification_needed": True,
+            "clarification_prompt": "Please clarify what you want me to do.",
+        }
+
+    def _enrich_plan(self, text: str, plan: dict[str, Any]) -> dict[str, Any]:
+        normalized = {
+            "intent": str(plan.get("intent", text)),
+            "summary": str(plan.get("summary", "")).strip(),
+            "confidence": float(plan.get("confidence", 0.0) or 0.0),
+            "steps": self._normalize_steps(plan.get("steps", [])),
+            "clarification_needed": bool(plan.get("clarification_needed", False)),
+            "clarification_prompt": str(plan.get("clarification_prompt", "") or ""),
+        }
+
+        tools_required = [
+            step["action"] for step in normalized["steps"] if step.get("action")
+        ]
+        risk = self.risk_evaluator.evaluate(tools_required)
+        risk_label = risk.level.label().lower()
+        if risk.level >= RiskLevel.CRITICAL:
+            risk_label = "critical"
+        elif risk.level >= RiskLevel.HIGH:
+            risk_label = "high"
+        elif risk.level >= RiskLevel.MEDIUM:
+            risk_label = "medium"
+        else:
+            risk_label = "low"
+
+        normalized["tools_required"] = tools_required
+        normalized["risk_level"] = risk_label
+        normalized["confirmation_required"] = risk.requires_confirmation
+        return normalized
+
+    def _normalize_steps(self, steps: Any) -> list[dict[str, Any]]:
+        if not isinstance(steps, list):
+            return []
+        normalized = []
+        for idx, step in enumerate(steps, start=1):
+            if not isinstance(step, dict):
+                continue
+            params = step.get("params", {})
+            normalized.append(
+                {
+                    "id": int(step.get("id", idx)),
+                    "action": str(step.get("action", "")).strip(),
+                    "description": str(step.get("description", "")).strip(),
+                    "params": params if isinstance(params, dict) else {},
+                }
+            )
+        return normalized
+
+=== core/logging/logger.py ===
+"""Application logging and append-only audit log support."""
+
+from __future__ import annotations
+
+import atexit
+import hashlib
+import json
+import logging
+import logging.handlers
+import queue
+import re
+import threading
+from pathlib import Path
+from typing import Any
+
+# Globals for non-blocking logging
+_log_queue: queue.Queue = queue.Queue(10000)
+_log_listener: FlushingQueueListener | None = None
+_queue_handler: logging.handlers.QueueHandler | None = None
+_active_handlers: dict[str, logging.Handler] = {}
+
+
+def redact_sensitive_data(val: Any) -> Any:
+    """Recursively redact sensitive patterns (passwords, secrets, tokens) from metadata and strings."""
+    if isinstance(val, dict):
+        new_dict = {}
+        for k, v in val.items():
+            k_lower = str(k).lower()
+            if any(
+                token in k_lower
+                for token in (
+                    "secret",
+                    "token",
+                    "password",
+                    "passwd",
+                    "api_key",
+                    "apikey",
+                    "access_key",
+                    "auth",
+                    "credential",
+                    "private_key",
+                )
+            ):
+                new_dict[k] = "***REDACTED***"
+            else:
+                new_dict[k] = redact_sensitive_data(v)
+        return new_dict
+    elif isinstance(val, list):
+        return [redact_sensitive_data(item) for item in val]
+    elif isinstance(val, tuple):
+        return tuple(redact_sensitive_data(item) for item in val)
+    elif isinstance(val, str):
+        # Redact OpenAI API keys (sk-...)
+        val = re.sub(r"\bsk-[a-zA-Z0-9_-]{20,}\b", "sk-***REDACTED***", val)
+        # Redact JWT tokens
+        val = re.sub(
+            r"\beyJhbGciOi[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\.[a-zA-Z0-9-_]+\b",
+            "eyJ***REDACTED***",
+            val,
+        )
+        # Redact generic password/secret key-value patterns
+        val = re.sub(
+            r"(?i)\b(api_key|password|secret|token|passwd)\b\s*[:=]\s*['\"]?[a-zA-Z0-9_-]{8,}['\"]?",
+            r"\1=***REDACTED***",
+            val,
+        )
+        # Redact Authorization and Bearer tokens
+        val = re.sub(
+            r"(?i)\b(bearer|authorization)\b\s*[:=]?\s*['\"]?[a-zA-Z0-9_\-\.]{15,}['\"]?",
+            r"\1=***REDACTED***",
+            val,
+        )
+        return val
+    return val
+
+
+class AuditLog:
+    def __init__(self, file_path: str) -> None:
+        self.path = Path(file_path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._last_hash = "0" * 64
+        self._lock = threading.Lock()
+        self._queue: queue.Queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._worker_thread: threading.Thread | None = None
+
+        if self.path.exists():
+            try:
+                with self._lock:
+                    with self.path.open("r", encoding="utf-8", newline="\n") as f:
+                        last_line = ""
+                        for line in f:
+                            if line.strip():
+                                last_line = line
+                        if last_line:
+                            last_payload = json.loads(last_line)
+                            if "hash" in last_payload:
+                                self._last_hash = last_payload["hash"]
+            except Exception:
+                pass
+
+        self._start_worker()
+
+    def _start_worker(self) -> None:
+        self._stop_event.clear()
+        self._worker_thread = threading.Thread(
+            target=self._write_worker, daemon=True, name="JarvisAuditWorker"
+        )
+        self._worker_thread.start()
+
+    def _write_worker(self) -> None:
+        while not self._stop_event.is_set() or not self._queue.empty():
+            try:
+                record = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            try:
+                with self._lock:
+                    with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            finally:
+                self._queue.task_done()
+
+    def write(self, event_type: str, payload: dict[str, Any]) -> str:
+        # Redact the audit payload before storing/hashing to prevent credential leaks in audit trail
+        redacted_payload = redact_sensitive_data(payload)
+        with self._lock:
+            body = {
+                "event_type": event_type,
+                "payload": redacted_payload,
+                "prev_hash": self._last_hash,
+            }
+            digest = hashlib.sha256(
+                json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
+            record = body | {"hash": digest}
+            self._last_hash = digest
+            self._queue.put(record)
+            return digest
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._worker_thread is not None:
+            self._worker_thread.join(timeout=2.0)
+            self._worker_thread = None
+
+    def verify(self) -> tuple[bool, int, str]:
+        # Flush queue before verifying to ensure all writes are on disk
+        self._queue.join()
+
+        with self._lock:
+            if not self.path.exists():
+                return True, 0, ""
+
+            previous = "0" * 64
+            count = 0
+            try:
+                with self.path.open("r", encoding="utf-8", newline="\n") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            payload = json.loads(line)
+                        except Exception:
+                            return False, count, "Invalid JSON line in audit log"
+                        expected = hashlib.sha256(
+                            json.dumps(
+                                {
+                                    "event_type": payload.get("event_type"),
+                                    "payload": payload.get("payload"),
+                                    "prev_hash": previous,
+                                },
+                                sort_keys=True,
+                                ensure_ascii=False,
+                            ).encode("utf-8")
+                        ).hexdigest()
+                        if payload.get("hash") != expected:
+                            return False, count, "Hash chain mismatch"
+                        previous = expected
+                        count += 1
+            except Exception as e:
+                return False, count, f"Error reading/parsing audit log: {str(e)}"
+            return True, count, ""
+
+
+_logger = logging.getLogger("Jarvis")
+_audit: AuditLog | None = None
+_MANAGED_STREAM_HANDLER_NAME = "jarvis_stream"
+_MANAGED_FILE_HANDLER_NAME = "jarvis_app_file"
+
+
+class JSONFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        try:
+            import sys
+            # Automatically capture stack trace for errors if not present
+            if record.levelno >= logging.ERROR and not record.exc_info and not record.exc_text:
+                exc_info = sys.exc_info()
+                if exc_info[0] is not None:
+                    record.exc_info = exc_info
+
+            # Pre-compute and redact exc_text so it's safely handled by standard formatters
+            if record.exc_info and not record.exc_text:
+                record.exc_text = self.formatException(record.exc_info)
+            if record.exc_text:
+                record.exc_text = redact_sensitive_data(record.exc_text)
+
+            # Redact message and format arguments on the record before formatting
+            record.msg = redact_sensitive_data(record.msg)
+            if isinstance(record.args, dict):
+                record.args = redact_sensitive_data(record.args)
+            elif isinstance(record.args, tuple):
+                record.args = tuple(redact_sensitive_data(arg) for arg in record.args)
+
+            trace_id = getattr(record, "trace_id", None)
+            task_id = getattr(record, "task_id", None)
+            if not trace_id and not task_id:
+                return redact_sensitive_data(super().format(record))
+
+            import datetime
+
+            timestamp = (
+                datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
+            envelope = {
+                "timestamp": timestamp,
+                "level": record.levelname,
+                "trace_id": trace_id,
+                "task_id": task_id,
+                "component": record.name,
+                "event": getattr(record, "event", "log_message"),
+                "metadata": getattr(record, "metadata", {}) or {},
+            }
+            envelope["metadata"] = redact_sensitive_data(envelope["metadata"])
+
+            if "message" not in envelope["metadata"]:
+                envelope["metadata"]["message"] = record.getMessage()
+
+            if record.exc_text:
+                envelope["stack_trace"] = record.exc_text
+
+            return json.dumps(envelope, ensure_ascii=False, default=str)
+        except Exception as e:
+            return f"LOGGING_ERROR: {str(e)}"
+
+
+class FlushingQueueListener(logging.handlers.QueueListener):
+    def handle(self, record: logging.LogRecord) -> None:
+        flush_event = getattr(record, "_flush_event", None)
+        if flush_event is not None:
+            flush_event.set()
+            return
+        super().handle(record)
+
+    def flush(self) -> None:
+        event = threading.Event()
+        dummy_record = logging.LogRecord(
+            name="flush",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="",
+            args=(),
+            exc_info=None,
+        )
+        dummy_record._flush_event = event
+        self.queue.put(dummy_record)
+        event.wait(timeout=2.0)
+
+
+class JarvisQueueHandler(logging.handlers.QueueHandler):
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        import copy
+        import sys
+        # Capture exc_info in the calling thread before passing it to the background queue
+        if record.levelno >= logging.ERROR and not record.exc_info and not record.exc_text:
+            exc_info = sys.exc_info()
+            if exc_info[0] is not None:
+                record.exc_info = exc_info
+        
+        # Format the exception text in the calling thread because traceback objects
+        # cannot always be safely pickled/copied across boundaries
+        if record.exc_info and not record.exc_text:
+            import traceback
+            record.exc_text = "".join(traceback.format_exception(*record.exc_info))
+            
+        return copy.copy(record)
+
+
+
+def _build_formatter() -> logging.Formatter:
+    return JSONFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+def _find_managed_handler(name: str) -> logging.Handler | None:
+    return _active_handlers.get(name)
+
+
+def _resolve_config_path(path_value: str) -> Path:
+    from core.runtime.paths import _resolve_path
+
+    return _resolve_path(path_value).resolve()
+
+
+def setup(config=None) -> None:
+    global _audit, _log_listener, _queue_handler
+
+    # Reconfigure stdout/stderr encoding to utf-8 if possible to prevent UnicodeEncodeError under Windows console
+    import sys
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None:
+            reconfigure = getattr(stream, "reconfigure", None)
+            if callable(reconfigure):
+                try:
+                    reconfigure(encoding="utf-8", errors="replace")
+                except Exception:
+                    pass
+
+    # Stop existing listener if it exists to cleanly re-configure
+    if _log_listener is not None:
+        _log_listener.stop()
+        _log_listener = None
+
+    level_name = "INFO"
+    audit_file = "logs/audit.jsonl"
+    app_file = "logs/app.log"
+    if config is not None:
+        try:
+            level_name = config.get("logging", "level", fallback=level_name)
+        except Exception:
+            pass
+        try:
+            audit_file = config.get("logging", "audit_file", fallback=audit_file)
+        except Exception:
+            pass
+        try:
+            app_file = config.get("logging", "app_file", fallback=app_file)
+        except Exception:
+            pass
+
+    level = getattr(logging, str(level_name).upper(), logging.INFO)
+
+    root_logger = logging.getLogger()
+    # Reduce spam from third-party libraries by defaulting root logger to WARNING.
+    # The handlers will still process _logger's events at the desired level.
+    root_logger.setLevel(logging.WARNING)
+
+    _logger.setLevel(level)
+    _logger.propagate = True
+
+    # Ensure application modules are captured at the desired level,
+    # avoiding the root logger's WARNING suppression.
+    logging.getLogger("core").setLevel(level)
+    logging.getLogger("dashboard").setLevel(level)
+
+    # Remove any existing handlers from root logger to prevent duplicates
+    for h in list(root_logger.handlers):
+        root_logger.removeHandler(h)
+
+    # Stream Handler Setup
+    stream_handler = _active_handlers.get(_MANAGED_STREAM_HANDLER_NAME)
+    if stream_handler is None:
+        stream_handler = logging.StreamHandler()
+        stream_handler.name = _MANAGED_STREAM_HANDLER_NAME
+        stream_handler.setFormatter(_build_formatter())
+        _active_handlers[_MANAGED_STREAM_HANDLER_NAME] = stream_handler
+    stream_handler.setLevel(level)
+
+    # File Handler Setup
+    desired_app_path = _resolve_config_path(app_file)
+    desired_app_path.parent.mkdir(parents=True, exist_ok=True)
+    desired_audit_path = _resolve_config_path(audit_file)
+    desired_audit_path.parent.mkdir(parents=True, exist_ok=True)
+
+    file_handler = _active_handlers.get(_MANAGED_FILE_HANDLER_NAME)
+    current_app_path = None
+    if isinstance(file_handler, logging.FileHandler):
+        current_app_path = Path(file_handler.baseFilename).resolve()
+
+    if (
+        file_handler is not None
+        and current_app_path is not None
+        and current_app_path != desired_app_path
+    ):
+        file_handler.close()
+        file_handler = None
+
+    if file_handler is None:
+        file_handler = logging.handlers.RotatingFileHandler(desired_app_path, maxBytes=10*1024*1024, backupCount=5, encoding="utf-8")
+        file_handler.name = _MANAGED_FILE_HANDLER_NAME
+        file_handler.setFormatter(_build_formatter())
+        _active_handlers[_MANAGED_FILE_HANDLER_NAME] = file_handler
+    file_handler.setLevel(level)
+
+    import os
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        # Avoid async timing issues in unit tests by logging synchronously
+        root_logger.addHandler(stream_handler)
+        root_logger.addHandler(file_handler)
+    else:
+        # Re-create and attach the QueueHandler for non-blocking logging
+        _queue_handler = JarvisQueueHandler(_log_queue)
+        root_logger.addHandler(_queue_handler)
+
+        # Start the background listener thread to dispatch messages to stdout/file handlers
+        _log_listener = FlushingQueueListener(
+            _log_queue, stream_handler, file_handler, respect_handler_level=True
+        )
+        _log_listener.start()
+
+    # Re-initialize audit logging safely
+    if _audit is not None:
+        _audit.stop()
+    _audit = AuditLog(str(desired_audit_path))
+
+
+@atexit.register
+def cleanup_logging() -> None:
+    global _log_listener, _audit
+    if _log_listener is not None:
+        _log_listener.stop()
+        _log_listener = None
+    if _audit is not None:
+        _audit.stop()
+        _audit = None
+
+
+def get() -> logging.Logger:
+    return _logger
+
+
+def get_logger(name: str | None = None) -> logging.Logger:
+    if not name:
+        return _logger
+    return logging.getLogger(name)
+
+
+def audit(event_type: str, payload: dict[str, Any]) -> str:
+    global _audit
+    if _audit is None:
+        setup()
+    assert _audit is not None
+    return _audit.write(event_type, payload)
+
+
+def verify_audit() -> tuple[bool, int, str]:
+    if _audit is None:
+        setup()
+    assert _audit is not None
+    return _audit.verify()
+
+
+def flush() -> None:
+    global _log_listener
+    if _log_listener is not None:
+        _log_listener.flush()
+
+
+__all__ = ["AuditLog", "_audit", "audit", "get", "get_logger", "setup", "verify_audit", "flush"]
+
+=== core/voice/wake_word.py ===
+"""Wake-word detection with porcupine and continuous-listen fallback.
+
+The WakeWordDetector class supports the V2 acceptance test API:
+  WakeWordDetector(config, loop, on_wake, on_cancel)
+  detector._wake_word     — str
+  detector._cancel_words  — set[str]
+  detector._fire_wake()   — trigger on_wake callback
+  detector._fire_cancel() — trigger on_cancel callback
+  detector.stop()         — halt detection thread
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import threading
+from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
+
+try:
+    import pvporcupine
+except ImportError:
+    pvporcupine = None  # type: ignore[assignment]
+
+try:
+    from pvrecorder import PvRecorder
+except ImportError:
+    PvRecorder = None  # type: ignore[assignment]
+
+
+class WakeWordDetector:
+    """
+    Detects a wake word and fires callbacks; falls back to continuous mode
+    when porcupine is not installed.
+
+    Signature matches V2 acceptance tests:
+      WakeWordDetector(config, loop, on_wake, on_cancel)
+    """
+
+    def __init__(
+        self,
+        config: Any,
+        loop: Optional[asyncio.AbstractEventLoop] = None,
+        on_wake: Optional[Callable[[], None]] = None,
+        on_cancel: Optional[Callable[[], None]] = None,
+    ) -> None:
+        self._config = config
+        self._loop = loop
+        self._on_wake = on_wake
+        self._on_cancel = on_cancel
+
+        self._wake_word: str = self._get("wake_word", "jarvis").strip().lower() or "jarvis"
+
+        cancel_raw = self._get("cancel_words", "cancel,stop")
+        self._cancel_words: set[str] = {
+            w.strip().lower() for w in cancel_raw.split(",") if w.strip()
+        }
+
+        self.access_key = os.environ.get(
+            "PORCUPINE_ACCESS_KEY", self._get("porcupine_access_key", "")
+        ).strip()
+
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+        self._continuous_mode = pvporcupine is None or PvRecorder is None
+
+        if not self.access_key and not self._continuous_mode:
+            logger.warning(
+                "PORCUPINE_ACCESS_KEY not set. Wake word detection disabled. "
+                "Get a free key at: https://console.picovoice.ai/"
+            )
+            self._continuous_mode = True
+
+        if self._continuous_mode:
+            logger.warning("Wake-word backend unavailable; using continuous listen fallback")
+
+    # ── Config helper ─────────────────────────────────────────────────────
+
+    def _get(self, key: str, default: str) -> str:
+        try:
+            return str(self._config.get("voice", key, fallback=default))
+        except Exception:  # noqa: BLE001
+            return default
+
+    # ── Callback helpers (patchable / called in tests) ────────────────────
+
+    def _fire_wake(self) -> None:
+        """Fire the on_wake callback, scheduling it on the event loop if provided."""
+        if self._on_wake is None:
+            return
+        if self._loop is not None and not self._loop.is_closed():
+            try:
+                self._loop.call_soon_threadsafe(self._on_wake)
+                return
+            except RuntimeError:
+                pass
+        # Fallback: call directly
+        self._on_wake()
+
+    def _fire_cancel(self) -> None:
+        """Fire the on_cancel callback."""
+        if self._on_cancel is None:
+            return
+        if self._loop is not None and not self._loop.is_closed():
+            try:
+                self._loop.call_soon_threadsafe(self._on_cancel)
+                return
+            except RuntimeError:
+                pass
+        self._on_cancel()
+
+    # ── Async interface (for controller usage) ────────────────────────────
+
+    async def wait_for_wake(self) -> bool:
+        """Return True when ready for STT capture."""
+        if self._continuous_mode:
+            await asyncio.sleep(0.1)
+            return not self._stop_event.is_set()
+
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._wait_blocking)
+
+    def _wait_blocking(self) -> bool:
+        porcupine = None
+        recorder = None
+        try:
+            kwargs: dict[str, Any] = {"keywords": [self._wake_word]}
+            if self.access_key:
+                kwargs["access_key"] = self.access_key
+            try:
+                porcupine = pvporcupine.create(**kwargs)  # type: ignore[union-attr]
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Wake-word init failed (%s); falling back", exc)
+                self._continuous_mode = True
+                return not self._stop_event.is_set()
+
+            recorder = PvRecorder(device_index=-1, frame_length=porcupine.frame_length)  # type: ignore[union-attr]
+            recorder.start()
+
+            while not self._stop_event.is_set():
+                pcm = recorder.read()
+                if porcupine.process(pcm) >= 0:
+                    return True
+
+            return False
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Wake-word detection failed (%s); switching to continuous", exc)
+            self._continuous_mode = True
+            return not self._stop_event.is_set()
+        finally:
+            for obj in (recorder, porcupine):
+                if obj is not None:
+                    for method in ("stop", "delete"):
+                        try:
+                            getattr(obj, method)()
+                        except Exception:  # noqa: BLE001
+                            pass
+
+    def stop(self) -> None:
+        """Signal detection loop to halt."""
+        self._stop_event.set()
+
+
+__all__ = ["WakeWordDetector"]
+
+=== core/voice/tts.py ===
+"""Text-to-speech with fallback chain: edge-tts -> pyttsx3 -> print-to-stdout.
+
+The TTS class provides the synchronous API expected by the V2 acceptance tests:
+  - TTS(config)
+  - tts.speak(text)          — synchronous
+  - tts.stop()               — interrupt ongoing speech
+  - tts.is_speaking          — bool property
+  - tts._backend             — "edge", "pyttsx3", or "cli"
+  - tts._stop_event          — threading.Event
+  - tts._init_backend(...)   — callable, returns backend name (patchable in tests)
+
+The TextToSpeech class is the async variant kept for backward compat.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import threading
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+try:
+    import pyttsx3  # type: ignore[import]
+except ImportError:
+    pyttsx3 = None  # type: ignore[assignment]
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentences for streaming TTS output."""
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [p for p in parts if p]
+
+
+class TTS:
+    """
+    Synchronous text-to-speech with a three-tier fallback chain.
+
+    Backend priority: edge-tts  →  pyttsx3  →  CLI (print to stdout)
+    All backend errors are caught silently; the next fallback is tried.
+
+    Design decisions:
+      * _init_backend() is a separate method so tests can monkeypatch it.
+      * _stop_event is a threading.Event that halts sentence-by-sentence output.
+      * speak() is blocking (runs in the calling thread) so tests can assert on
+        stdout without races.
+    """
+
+    def __init__(self, config: Any) -> None:
+        self._config = config
+        self._stop_event = threading.Event()
+        self._speaking_lock = threading.Lock()
+        self._is_speaking = False
+
+        self._backend: str = self._init_backend(config)
+
+    # ── Backend selection (patchable) ─────────────────────────────────────
+
+    def _init_backend(self, config: Any) -> str:
+        """Detect the best available backend based on configured priority."""
+        try:
+            engines_raw = config.get("voice", "tts_engine", fallback="edge-tts, pyttsx3, cli")
+            engines = [e.strip().lower() for e in engines_raw.split(",")]
+        except Exception:
+            engines = ["edge-tts", "pyttsx3", "cli"]
+
+        for engine in engines:
+            if engine in {"pyttsx3"} and pyttsx3 is not None:
+                try:
+                    eng = pyttsx3.init()
+                    eng.stop()
+                    return "pyttsx3"
+                except Exception:
+                    pass
+            elif engine in {"edge", "edge-tts"}:
+                # Sync TTS doesn't support edge-tts directly yet, but we allow it in the config list
+                pass
+            elif engine in {"cli", "print"}:
+                return "cli"
+
+        return "cli"
+
+    # ── Properties ────────────────────────────────────────────────────────
+
+    @property
+    def is_speaking(self) -> bool:
+        return self._is_speaking
+
+    # ── Public API ────────────────────────────────────────────────────────
+
+    def speak(self, text: str) -> None:
+        """Speak *text* synchronously, respecting stop_event between sentences."""
+        text = (text or "").strip()
+        if not text:
+            return
+
+        self._stop_event.clear()
+        sentences = _split_sentences(text)
+        if not sentences:
+            sentences = [text]
+
+        with self._speaking_lock:
+            self._is_speaking = True
+            try:
+                for sentence in sentences:
+                    if self._stop_event.is_set():
+                        break
+                    self._speak_sentence(sentence)
+            finally:
+                self._is_speaking = False
+
+    def stop(self) -> None:
+        """Request interruption of ongoing speech."""
+        self._stop_event.set()
+
+    # ── Internal helpers ──────────────────────────────────────────────────
+
+    def _speak_sentence(self, sentence: str) -> None:
+        """Speak a single sentence using the configured backend."""
+        if self._backend == "pyttsx3" and pyttsx3 is not None:
+            try:
+                eng = pyttsx3.init()
+                eng.say(sentence)
+                eng.runAndWait()
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("pyttsx3 speech failed: %s", exc)
+
+        # CLI fallback — always works
+        print(f"Jarvis: {sentence}")
+
+
+# ── Async variant (kept for backward compat with controller_v2) ───────────────
+
+try:
+    import asyncio
+    import os
+    import tempfile
+    from pathlib import Path as _Path
+
+    try:
+        import edge_tts as _edge_tts  # type: ignore[import]
+    except ImportError:
+        _edge_tts = None  # type: ignore[assignment]
+
+    class TextToSpeech:
+        """Async TTS wrapper used by the newer async controller path."""
+
+        def __init__(self, config: Any) -> None:
+            self._config = config
+            self.preferred_engine = self._get("tts_engine", "edge-tts").strip().lower()
+            self.voice_name = self._get("tts_voice", "en-US-GuyNeural")
+            self._pyttsx3_engine = None
+
+            if pyttsx3 is not None:
+                try:
+                    self._pyttsx3_engine = pyttsx3.init()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("pyttsx3 init failed: %s", exc)
+
+        def _get(self, key: str, default: str) -> str:
+            try:
+                return str(self._config.get("voice", key, fallback=default))
+            except Exception:  # noqa: BLE001
+                return default
+
+        async def speak(self, text: str) -> None:  # type: ignore[override]
+            text = (text or "").strip()
+            if not text:
+                return
+            for engine in self._engine_chain():
+                if engine == "edge" and await self._speak_edge(text):
+                    return
+                if engine == "pyttsx3" and await self._speak_pyttsx3(text):
+                    return
+            print(f"Jarvis: {text}")
+
+        def _engine_chain(self) -> list[str]:
+            try:
+                engines_raw = self._config.get("voice", "tts_engine", fallback="edge-tts, pyttsx3, cli")
+                engines = [e.strip().lower() for e in engines_raw.split(",")]
+            except Exception:
+                engines = ["edge", "pyttsx3", "print"]
+
+            chain = []
+            for e in engines:
+                if e in {"edge", "edge-tts"}:
+                    chain.append("edge")
+                elif e in {"pyttsx3", "offline"}:
+                    chain.append("pyttsx3")
+                elif e in {"print", "cli"}:
+                    chain.append("print")
+            
+            if "print" not in chain:
+                chain.append("print")
+            return chain
+
+        async def _speak_edge(self, text: str) -> bool:
+            if _edge_tts is None:
+                return False
+            try:
+                tmp = _Path(tempfile.gettempdir()) / f"jarvis_tts_{abs(hash(text))}.mp3"
+                com = _edge_tts.Communicate(text=text, voice=self.voice_name)
+                await com.save(str(tmp))
+                if os.name == "nt":
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, os.startfile, str(tmp))  # type: ignore[attr-defined]
+                    return True
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("edge-tts failed: %s", exc)
+            return False
+
+        async def _speak_pyttsx3(self, text: str) -> bool:
+            if self._pyttsx3_engine is None:
+                return False
+            def _run() -> bool:
+                try:
+                    self._pyttsx3_engine.say(text)
+                    self._pyttsx3_engine.runAndWait()
+                    return True
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("pyttsx3 speak failed: %s", exc)
+                    return False
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, _run)
+
+except Exception:  # noqa: BLE001
+    # Minimal stub if imports fail
+    class TextToSpeech:  # type: ignore[no-redef]
+        def __init__(self, config: Any) -> None:
+            pass
+        async def speak(self, text: str) -> None:
+            print(f"Jarvis: {text}")
+
+
+__all__ = ["TTS", "TextToSpeech", "_split_sentences"]

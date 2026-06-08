@@ -12,12 +12,12 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Any, cast
 
 try:
-    from ddgs import DDGS
+    from duckduckgo_search import DDGS
 except ImportError:  # pragma: no cover - optional dependency at runtime
-    DDGS = None  # type: ignore[assignment]
+    DDGS = None
 
 try:
     import requests
@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover - optional dependency at runtime
 try:
     from bs4 import BeautifulSoup
 except ImportError:  # pragma: no cover - optional dependency at runtime
-    BeautifulSoup = None  # type: ignore[assignment]
+    BeautifulSoup = None  # type: ignore
 
 logger = logging.getLogger("Jarvis.WebTools")
 
@@ -90,104 +90,85 @@ class SearchSettings:
         """Load settings from config and environment variables."""
         resolved_config = config if config is not None else _load_default_config()
 
-        enabled = _get_bool(
-            os.environ.get("WEB_SEARCH_ENABLED"),
-            _config_get_bool(
-                resolved_config,
-                "web_search",
-                "enabled",
-                fallback=_config_get_bool(
-                    resolved_config,
-                    "execution",
-                    "allow_web_search",
-                    fallback=True,
-                ),
-            ),
+        def _resolve(
+            env_key: str,
+            opt: str,
+            parser_type: str,
+            fallback: Any,
+            section: str = "web_search",
+        ) -> Any:
+            env_val = os.environ.get(env_key)
+            if env_val is not None and env_val.strip():
+                raw = env_val.strip()
+                if parser_type == "bool":
+                    return raw.lower() in {"1", "true", "yes", "on"}
+                elif parser_type == "int":
+                    try:
+                        return int(raw)
+                    except ValueError:
+                        pass
+                elif parser_type == "float":
+                    try:
+                        return float(raw)
+                    except ValueError:
+                        pass
+                else:
+                    return raw
+
+            if resolved_config is not None and resolved_config.has_section(section):
+                if parser_type == "bool":
+                    try:
+                        return resolved_config.getboolean(
+                            section, opt, fallback=fallback
+                        )
+                    except ValueError:
+                        pass
+                elif parser_type == "int":
+                    try:
+                        return resolved_config.getint(section, opt, fallback=fallback)
+                    except ValueError:
+                        pass
+                elif parser_type == "float":
+                    try:
+                        return resolved_config.getfloat(section, opt, fallback=fallback)
+                    except ValueError:
+                        pass
+                else:
+                    return resolved_config.get(section, opt, fallback=fallback)
+
+            return fallback
+
+        fallback_enabled = _resolve(
+            "", "allow_web_search", "bool", True, section="execution"
         )
-        provider = _get_str(
-            os.environ.get("WEB_SEARCH_PROVIDER"),
-            _config_get(resolved_config, "web_search", "provider", fallback="auto"),
-        ).lower()
-        default_max_results = _get_int(
-            os.environ.get("WEB_SEARCH_DEFAULT_MAX_RESULTS"),
-            _config_get_int(
-                resolved_config,
-                "web_search",
-                "default_max_results",
-                fallback=5,
-            ),
+        enabled = _resolve("WEB_SEARCH_ENABLED", "enabled", "bool", fallback_enabled)
+        provider = str(_resolve("WEB_SEARCH_PROVIDER", "provider", "str", "auto")).lower()
+        default_max_results = _resolve(
+            "WEB_SEARCH_DEFAULT_MAX_RESULTS", "default_max_results", "int", 5
         )
-        summarize_results = _get_bool(
-            os.environ.get("WEB_SEARCH_SUMMARIZE_RESULTS"),
-            _config_get_bool(
-                resolved_config,
-                "web_search",
-                "summarize_results",
-                fallback=True,
-            ),
+        summarize_results = _resolve(
+            "WEB_SEARCH_SUMMARIZE_RESULTS", "summarize_results", "bool", True
         )
-        auto_extract_query = _get_bool(
-            os.environ.get("WEB_SEARCH_AUTO_EXTRACT_QUERY"),
-            _config_get_bool(
-                resolved_config,
-                "web_search",
-                "auto_extract_query",
-                fallback=True,
-            ),
+        auto_extract_query = _resolve(
+            "WEB_SEARCH_AUTO_EXTRACT_QUERY", "auto_extract_query", "bool", True
         )
-        provider_timeout_s = _get_float(
-            os.environ.get("WEB_SEARCH_PROVIDER_TIMEOUT_S"),
-            _config_get_float(
-                resolved_config,
-                "web_search",
-                "provider_timeout_s",
-                fallback=8.0,
-            ),
+        provider_timeout_s = _resolve(
+            "WEB_SEARCH_PROVIDER_TIMEOUT_S", "provider_timeout_s", "float", 8.0
         )
-        scrape_timeout_s = _get_float(
-            os.environ.get("WEB_SEARCH_SCRAPE_TIMEOUT_S"),
-            _config_get_float(
-                resolved_config,
-                "web_search",
-                "scrape_timeout_s",
-                fallback=10.0,
-            ),
+        scrape_timeout_s = _resolve(
+            "WEB_SEARCH_SCRAPE_TIMEOUT_S", "scrape_timeout_s", "float", 10.0
         )
-        quick_task_timeout_s = _get_float(
-            os.environ.get("WEB_SEARCH_QUICK_TASK_TIMEOUT_S"),
-            _config_get_float(
-                resolved_config,
-                "web_search",
-                "quick_task_timeout_s",
-                fallback=4.0,
-            ),
+        quick_task_timeout_s = _resolve(
+            "WEB_SEARCH_QUICK_TASK_TIMEOUT_S", "quick_task_timeout_s", "float", 4.0
         )
-        max_scrape_chars = _get_int(
-            os.environ.get("WEB_SEARCH_MAX_SCRAPE_CHARS"),
-            _config_get_int(
-                resolved_config,
-                "web_search",
-                "max_scrape_chars",
-                fallback=8000,
-            ),
+        max_scrape_chars = _resolve(
+            "WEB_SEARCH_MAX_SCRAPE_CHARS", "max_scrape_chars", "int", 8000
         )
-        ddgs_region = _get_str(
-            os.environ.get("WEB_SEARCH_DDGS_REGION"),
-            _config_get(resolved_config, "web_search", "ddgs_region", fallback="wt-wt"),
+        ddgs_region = _resolve("WEB_SEARCH_DDGS_REGION", "ddgs_region", "str", "wt-wt")
+        ddgs_safesearch = _resolve(
+            "WEB_SEARCH_DDGS_SAFESEARCH", "ddgs_safesearch", "str", "moderate"
         )
-        ddgs_safesearch = _get_str(
-            os.environ.get("WEB_SEARCH_DDGS_SAFESEARCH"),
-            _config_get(
-                resolved_config,
-                "web_search",
-                "ddgs_safesearch",
-                fallback="moderate",
-            ),
-        )
-        tavily_api_key = _get_str(
-            os.environ.get("TAVILY_API_KEY"),
-            _config_get(resolved_config, "web_search", "tavily_api_key", fallback=""),
-        )
+        tavily_api_key = _resolve("TAVILY_API_KEY", "tavily_api_key", "str", "")
 
         return cls(
             enabled=enabled,
@@ -201,7 +182,7 @@ class SearchSettings:
             max_scrape_chars=max(500, max_scrape_chars),
             ddgs_region=ddgs_region or "wt-wt",
             ddgs_safesearch=ddgs_safesearch or "moderate",
-            tavily_api_key=tavily_api_key.strip(),
+            tavily_api_key=str(tavily_api_key).strip(),
         )
 
 
@@ -235,13 +216,17 @@ class WebToolService:
         if not raw_query:
             return "Search failed: query is empty."
 
-        result_limit = max(1, min(int(max_results or self.settings.default_max_results), 10))
+        result_limit = max(
+            1, min(int(max_results or self.settings.default_max_results), 10)
+        )
         effective_query = await self._extract_search_query(raw_query)
 
         try:
             results = await self._search(effective_query, result_limit)
         except Exception as exc:  # noqa: BLE001
-            logger.error("Web search failed for %r: %s", effective_query, exc, exc_info=True)
+            logger.error(
+                "Web search failed for %r: %s", effective_query, exc, exc_info=True
+            )
             return f"Search failed: {exc}"
 
         if not results:
@@ -258,7 +243,9 @@ class WebToolService:
     async def web_scrape(self, url: str, max_chars: int = 8000) -> str:
         """Fetch and extract readable text from a web page."""
         if requests is None or BeautifulSoup is None:
-            return "Error: requests and beautifulsoup4 must be installed for web scraping."
+            return (
+                "Error: requests and beautifulsoup4 must be installed for web scraping."
+            )
 
         target_url = str(url or "").strip()
         if not target_url:
@@ -360,7 +347,7 @@ class WebToolService:
         }
         with requests.post(
             "https://api.tavily.com/search",
-            json=payload,
+            json=cast(Any, payload),
             timeout=self.settings.provider_timeout_s,
             headers=DEFAULT_HEADERS,
         ) as response:
@@ -390,7 +377,7 @@ class WebToolService:
         ) as response:
             response.raise_for_status()
             content = response.content
-            
+
         soup = BeautifulSoup(content, "html.parser")
         for element in soup(["script", "style", "nav", "footer", "header", "noscript"]):
             element.decompose()
@@ -533,91 +520,6 @@ def _load_default_config() -> configparser.ConfigParser | None:
     return parser
 
 
-def _config_get(
-    config: configparser.ConfigParser | None,
-    section: str,
-    option: str,
-    *,
-    fallback: str,
-) -> str:
-    if config is None or not config.has_section(section):
-        return fallback
-    return config.get(section, option, fallback=fallback)
-
-
-def _config_get_bool(
-    config: configparser.ConfigParser | None,
-    section: str,
-    option: str,
-    *,
-    fallback: bool,
-) -> bool:
-    if config is None or not config.has_section(section):
-        return fallback
-    try:
-        return config.getboolean(section, option, fallback=fallback)
-    except ValueError:
-        return fallback
-
-
-def _config_get_int(
-    config: configparser.ConfigParser | None,
-    section: str,
-    option: str,
-    *,
-    fallback: int,
-) -> int:
-    if config is None or not config.has_section(section):
-        return fallback
-    try:
-        return config.getint(section, option, fallback=fallback)
-    except ValueError:
-        return fallback
-
-
-def _config_get_float(
-    config: configparser.ConfigParser | None,
-    section: str,
-    option: str,
-    *,
-    fallback: float,
-) -> float:
-    if config is None or not config.has_section(section):
-        return fallback
-    try:
-        return config.getfloat(section, option, fallback=fallback)
-    except ValueError:
-        return fallback
-
-
-def _get_bool(raw: str | None, fallback: bool) -> bool:
-    if raw is None:
-        return fallback
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _get_int(raw: str | None, fallback: int) -> int:
-    if raw is None or not raw.strip():
-        return fallback
-    try:
-        return int(raw)
-    except ValueError:
-        return fallback
-
-
-def _get_float(raw: str | None, fallback: float) -> float:
-    if raw is None or not raw.strip():
-        return fallback
-    try:
-        return float(raw)
-    except ValueError:
-        return fallback
-
-
-def _get_str(raw: str | None, fallback: str) -> str:
-    return raw.strip() if raw is not None and raw.strip() else fallback
-
-
 def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).strip()
 
@@ -630,7 +532,9 @@ def _basic_query_cleanup(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
-    cleaned = re.sub(r"\s+(for me|online|on the web)$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r"\s+(for me|online|on the web)$", "", cleaned, flags=re.IGNORECASE
+    )
     return cleaned.strip(" .?!")
 
 

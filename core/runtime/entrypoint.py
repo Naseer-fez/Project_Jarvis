@@ -325,7 +325,7 @@ async def async_run(
 
         if controller is not None:
             summary_fn = getattr(controller, "session_summary", None)
-            session_summary = {}
+            session_summary: dict[str, Any] = {}
             if callable(summary_fn):
                 try:
                     session_summary = summary_fn() or {}

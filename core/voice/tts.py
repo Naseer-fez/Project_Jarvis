@@ -22,9 +22,9 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 try:
-    import pyttsx3  # type: ignore[import]
+    import pyttsx3
 except ImportError:
-    pyttsx3 = None  # type: ignore[assignment]
+    pyttsx3 = None
 
 
 def _split_sentences(text: str) -> list[str]:
@@ -140,7 +140,7 @@ try:
     from pathlib import Path as _Path
 
     try:
-        import edge_tts as _edge_tts  # type: ignore[import]
+        import edge_tts as _edge_tts
     except ImportError:
         _edge_tts = None  # type: ignore[assignment]
 
@@ -165,7 +165,7 @@ try:
             except Exception:  # noqa: BLE001
                 return default
 
-        async def speak(self, text: str) -> None:  # type: ignore[override]
+        async def speak(self, text: str) -> None:
             text = (text or "").strip()
             if not text:
                 return
@@ -205,19 +205,20 @@ try:
                 await com.save(str(tmp))
                 if os.name == "nt":
                     loop = asyncio.get_running_loop()
-                    await loop.run_in_executor(None, os.startfile, str(tmp))  # type: ignore[attr-defined]
+                    await loop.run_in_executor(None, os.startfile, str(tmp))
                     return True
             except Exception as exc:  # noqa: BLE001
                 logger.warning("edge-tts failed: %s", exc)
             return False
 
         async def _speak_pyttsx3(self, text: str) -> bool:
-            if self._pyttsx3_engine is None:
+            eng = self._pyttsx3_engine
+            if eng is None:
                 return False
             def _run() -> bool:
                 try:
-                    self._pyttsx3_engine.say(text)
-                    self._pyttsx3_engine.runAndWait()
+                    eng.say(text)
+                    eng.runAndWait()
                     return True
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("pyttsx3 speak failed: %s", exc)
@@ -227,11 +228,12 @@ try:
 
 except Exception:  # noqa: BLE001
     # Minimal stub if imports fail
-    class TextToSpeech:  # type: ignore[no-redef]
+    class _TextToSpeechStub:
         def __init__(self, config: Any) -> None:
             pass
         async def speak(self, text: str) -> None:
             print(f"Jarvis: {text}")
+    TextToSpeech = _TextToSpeechStub  # type: ignore
 
 
 __all__ = ["TTS", "TextToSpeech", "_split_sentences"]
