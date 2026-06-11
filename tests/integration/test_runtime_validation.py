@@ -54,6 +54,7 @@ async def test_runtime_agent_loop_execution(mock_dependencies):
     # Simulate risk evaluator passing
     mock_dependencies["risk_evaluator"].evaluate_plan = MagicMock(return_value=type("RiskResult", (), {"level": type("L", (), {"label": lambda: "low"}), "blocking_actions": set(), "confirm_actions": set(), "high_risk_actions": set(), "is_blocked": False, "requires_confirmation": False})())
     mock_dependencies["autonomy_governor"].can_execute = MagicMock(return_value=(True, ""))
+    mock_dependencies["autonomy_governor"].level = 1
     
     sm = StateMachine()
     context = TaskExecutionContext(task_id="test_task", trace_id="trace_1", state_machine=sm)

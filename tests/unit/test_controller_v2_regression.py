@@ -68,8 +68,8 @@ def controller(mock_config, mock_services, mock_settings):
         ctrl.goal_runner.check_due_goals = AsyncMock()
         ctrl.intent_router = AsyncMock()
         ctrl.intent_router.route.return_value = None  # Force LLM dispatch by default
-        ctrl.llm_dispatcher = AsyncMock()
-        ctrl.llm_dispatcher.dispatch.return_value = "LLM Response"
+        ctrl.llm_orchestrator = AsyncMock()
+        ctrl.llm_orchestrator.dispatch.return_value = "LLM Response"
         yield ctrl
 
 @pytest.mark.asyncio
@@ -87,6 +87,7 @@ async def test_controller_initialization(mock_config, mock_services, mock_settin
 
 @pytest.mark.asyncio
 async def test_controller_initialize_method(controller):
+    await controller.startup()
     result = await controller.initialize()
     controller.memory.initialize.assert_awaited_once()
     assert result["session_id"] == controller.session_id
@@ -98,12 +99,12 @@ async def test_process_basic_flow(controller):
     
     assert response == "LLM Response"
     controller.intent_router.route.assert_awaited_once()
-    controller.llm_dispatcher.dispatch.assert_awaited_once()
+    controller.llm_orchestrator.dispatch.assert_awaited_once()
     controller.profile.update_from_conversation.assert_called_once_with("hello jarvis", "LLM Response")
     
     # Check conversation buffer
-    assert len(controller._conversation_buffer) == 1
-    assert "User: hello jarvis\nJarvis: LLM Response" in controller._conversation_buffer[0]
+    assert len(controller.memory_subsystem._conversation_buffer) == 1
+    assert "User: hello jarvis\nJarvis: LLM Response" in controller.memory_subsystem._conversation_buffer[0]
 
 @pytest.mark.asyncio
 async def test_process_intent_routed(controller):
@@ -114,7 +115,7 @@ async def test_process_intent_routed(controller):
     
     assert response == "Routed Response"
     controller.intent_router.route.assert_awaited_once()
-    controller.llm_dispatcher.dispatch.assert_not_called()
+    controller.llm_orchestrator.dispatch.assert_not_called()
     controller.profile.update_from_conversation.assert_called_once_with("what is my goal", "Routed Response")
 
 @pytest.mark.asyncio
@@ -124,17 +125,17 @@ async def test_process_long_input(controller):
     
     # The input text should be truncated to 4000 characters before intent routing and dispatch
     # Since we mocked intent_router.route to return None, it goes to llm_dispatcher.dispatch
-    called_text = controller.llm_dispatcher.dispatch.call_args[0][0]
+    called_text = controller.llm_orchestrator.dispatch.call_args[0][0]
     assert len(called_text) == 4000
 
 @pytest.mark.asyncio
 async def test_process_triggers_synthesis(controller):
     controller.synthesizer.should_run.return_value = True
     
-    with patch.object(controller, "_schedule_synthesis") as mock_schedule:
+    with patch.object(controller.memory_subsystem, "_schedule_synthesis") as mock_schedule:
         await controller.process("trigger synth")
         mock_schedule.assert_called_once()
-        assert len(controller._conversation_buffer) == 0
+        assert len(controller.memory_subsystem._conversation_buffer) == 0
 
 @pytest.mark.asyncio
 async def test_start_and_shutdown(controller):
@@ -201,3 +202,4 @@ async def test_run_cli_exit(controller):
         
         # It should exit gracefully
         mock_loop.run_in_executor.assert_awaited()
+

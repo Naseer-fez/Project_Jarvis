@@ -51,7 +51,7 @@ def test_autonomy_governor_edge_cases():
     gov = AutonomyGovernor(level=1)
 
     # Escalation bounds checks
-    assert not gov.escalate(4)  # Cannot escalate above level 3
+    assert not gov.escalate(5)  # Cannot escalate above level 4
     assert gov.level == AutonomyLevel.SUGGEST_ONLY  # Level unchanged
 
     assert gov.escalate(3)

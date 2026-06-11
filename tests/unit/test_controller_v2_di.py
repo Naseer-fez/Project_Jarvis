@@ -42,6 +42,8 @@ async def test_controller_v2_initialize_flow():
     container.register("memory", MockMemory)
     controller = JarvisControllerV2(container=container)
     
+    await controller.startup()
     res = await controller.initialize()
     assert res["memory_mode"] == "mock"
     assert "session_id" in res
+

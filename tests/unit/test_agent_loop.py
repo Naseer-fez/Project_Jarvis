@@ -26,7 +26,7 @@ def mock_dag_executor():
 def mock_container(mock_dag_executor):
     container = MagicMock()
     container.has.return_value = True
-    container.resolve.side_effect = lambda key, **kwargs: mock_dag_executor if key == "dag_executor" else MagicMock()
+    container.resolve.side_effect = lambda key, **kwargs: mock_dag_executor if key == "dag_executor" else (type("MockGov", (), {"level": 1})() if key == "autonomy_governor" else MagicMock())
     return container
 
 @pytest.fixture
@@ -112,3 +112,4 @@ async def test_agent_loop_happy_path(mock_planner, mock_risk_evaluator, mock_con
     assert trace.stop_reason == "goal_completed"
     assert trace.final_response == "Task completed successfully."
     assert context.state_machine.state == State.IDLE
+

@@ -12,7 +12,7 @@ def mock_container():
     # We will provide a mock DAG Executor that raises errors
     executor = AsyncMock()
     container.has.return_value = True
-    container.resolve.side_effect = lambda key, **kwargs: executor if key == "dag_executor" else MagicMock()
+    container.resolve.side_effect = lambda key, **kwargs: executor if key == "dag_executor" else (type("MockGov", (), {"level": 1})() if key == "autonomy_governor" else MagicMock())
     
     return container, executor
 
@@ -107,3 +107,4 @@ async def test_failure_recovery_malformed_config(mock_container, mock_planner, m
     assert trace.success is False
     assert "Malformed configuration" in trace.final_response
     assert sm.state == State.IDLE
+

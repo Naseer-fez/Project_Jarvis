@@ -65,6 +65,7 @@ async def test_agent_loop_failure_stops_cleanly_without_invalid_transition():
 
     autonomy_governor = MagicMock()
     autonomy_governor.can_execute.return_value = (True, "")
+    autonomy_governor.level = 1
 
     context = TaskExecutionContext(
         task_id="task-failure",
