@@ -142,7 +142,7 @@ try:
     try:
         import edge_tts as _edge_tts
     except ImportError:
-        _edge_tts = None  # type: ignore[assignment]
+        _edge_tts = None
 
     class TextToSpeech:
         """Async TTS wrapper used by the newer async controller path."""

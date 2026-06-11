@@ -20,6 +20,6 @@ class LLMOrchestrator:
     async def dispatch(self, text: str, classification: Dict[str, Any], session_id: str, trace_id: str) -> str:
         self._inflight_llm_calls += 1
         try:
-            return await self.llm_dispatcher.dispatch(text, classification, session_id, trace_id)
+            return str(await self.llm_dispatcher.dispatch(text, classification, session_id, trace_id))
         finally:
             self._inflight_llm_calls -= 1

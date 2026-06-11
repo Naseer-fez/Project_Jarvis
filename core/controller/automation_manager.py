@@ -23,7 +23,7 @@ class AutomationManager:
                 from core.automation.live_automation import LiveAutomationEngine
                 
                 async def _handler(cmd: str) -> str:
-                    return await command_handler(cmd)
+                    return str(await command_handler(cmd))
 
                 dag_executor = None
                 if container is not None and hasattr(container, "has") and container.has("dag_executor"):
