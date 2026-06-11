@@ -8,6 +8,7 @@ import logging
 import uuid
 from typing import Any
 
+from core.base_controller import BaseController
 from core.controller.intents import (
     handle_goal_intent,
     handle_preference_intent,
@@ -20,9 +21,14 @@ from core.llm.defaults import DEFAULT_MODEL
 from core.controller.llm_dispatcher import LLMDispatcher
 from core.controller.goal_runner import GoalRunner
 
+# Import extracted subsystems
+from core.controller.llm_orchestrator import LLMOrchestrator
+from core.controller.memory_subsystem import MemorySubsystem
+from core.controller.automation_manager import AutomationManager
+
 logger = logging.getLogger(__name__)
 
-class JarvisControllerV2:
+class JarvisControllerV2(BaseController):
     def __init__(
         self,
         config: configparser.ConfigParser | None = None,
@@ -35,6 +41,8 @@ class JarvisControllerV2:
         services: Any = None,
         settings: Any = None,
     ) -> None:
+        super().__init__()
+        
         self.config = (
             config
             if isinstance(config, configparser.ConfigParser)
@@ -55,8 +63,6 @@ class JarvisControllerV2:
             "allow_app_launch",
             fallback=True,
         )
-
-        self._inflight_llm_calls = 0
 
         if services is None or settings is None:
             settings, services = build_controller_services(
@@ -88,14 +94,11 @@ class JarvisControllerV2:
         self.desktop_bridge = services.desktop_bridge
         self.container = services.container
 
-        self._conversation_buffer: list[str] = []
         self._runtime_loop: asyncio.AbstractEventLoop | None = None
         self._on_state_update = lambda **_: None
         self.exchanges = 0
         self._state_lock = asyncio.Lock()
         self.voice_loop = None
-        
-        self._synthesis_tasks: set[asyncio.Task] = set()
 
         self._voice_layer = None
         if voice:
@@ -111,26 +114,6 @@ class JarvisControllerV2:
                 logger.warning("Voice unavailable: %s", exc, exc_info=True)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("VoiceLayer init failed: %s", exc, exc_info=True)
-
-        self.live_automation = None
-        if self.config.has_section("automation") and self.config.getboolean("automation", "enabled", fallback=False):
-            try:
-                from core.automation.live_automation import LiveAutomationEngine
-
-                async def command_handler(cmd: str) -> str:
-                    return await self.process(cmd)
-
-                self.live_automation = LiveAutomationEngine(
-                    config=self.config,
-                    memory=self.memory,
-                    llm=self.llm,
-                    command_handler=command_handler,
-                    desktop_observer=services.desktop_observer,
-                    notifier=self.notifier,
-                    dag_executor=self.container.resolve("dag_executor") if self.container and self.container.has("dag_executor") else None,
-                )
-            except Exception as exc:
-                logger.warning("Failed to initialize LiveAutomationEngine: %s", exc, exc_info=True)
 
         # Initialize facades
         self.llm_dispatcher = LLMDispatcher(
@@ -152,19 +135,35 @@ class JarvisControllerV2:
         self.goal_runner.load_goal_state()
         self._goal_check_task: asyncio.Task | None = None
 
+        # Initialize Subsystems
+        self.llm_orchestrator = LLMOrchestrator(self.llm_dispatcher)
+        self.memory_subsystem = MemorySubsystem(self.memory, self.profile, self.synthesizer, self.config)
+        
+        async def cmd_handler(cmd: str) -> str:
+            return await self.process(cmd)
+            
+        self.automation_manager = AutomationManager(
+            config=self.config,
+            memory=self.memory,
+            llm=self.llm,
+            notifier=self.notifier,
+            desktop_observer=self.desktop_observer,
+            container=self.container,
+            command_handler=cmd_handler
+        )
+
+        self.register_subsystem(self.llm_orchestrator)
+        self.register_subsystem(self.memory_subsystem)
+        self.register_subsystem(self.automation_manager)
+
         self.intent_router = IntentRouter()
         self._setup_intent_routes()
 
     async def initialize(self) -> dict[str, Any]:
-        index_path = ""
-        if isinstance(self.config, configparser.ConfigParser):
-            index_path = self.config.get("memory", "index_path", fallback="")
-
-        memory_status = await self.memory.initialize(index_path=index_path)
         return {
             "session_id": self.session_id,
-            "memory_mode": memory_status.get("mode"),
-            "memory_init": memory_status,
+            "memory_mode": getattr(self.memory_subsystem, "memory_status", {}).get("mode"),
+            "memory_init": getattr(self.memory_subsystem, "memory_status", {}),
         }
 
     async def _handle_goal_intent(self, text: str, user_input: str) -> str | None:
@@ -193,12 +192,8 @@ class JarvisControllerV2:
         )
 
     async def _dispatch_llm(self, text: str, trace_id: str) -> str:
-        self._inflight_llm_calls += 1
-        try:
-            classification = getattr(self, "current_classification", {})
-            return await self.llm_dispatcher.dispatch(text, classification, self.session_id, trace_id)
-        finally:
-            self._inflight_llm_calls -= 1
+        classification = getattr(self, "current_classification", {})
+        return await self.llm_orchestrator.dispatch(text, classification, self.session_id, trace_id)
 
     def _looks_like_desktop_control_request(self, lowered: str) -> bool:
         return any(k in lowered for k in ["click", "desktop", "mouse", "keyboard", "screen", "type"])
@@ -242,24 +237,8 @@ class JarvisControllerV2:
             self.current_classification = {"class": "Chat", "complexity": 0.4, "skip_planner": False, "route": "chat"}
 
         async def _respond(response: str) -> str:
-            try:
-                async with self._state_lock:
-                    self.profile.update_from_conversation(user_input, response)
-                    self._conversation_buffer.append(
-                        f"User: {user_input}\nJarvis: {response}"
-                    )
-
-                    if self.synthesizer.should_run(self.profile):
-                        self._schedule_synthesis(self._conversation_buffer[-20:])
-                        self._conversation_buffer.clear()
-                    elif len(self._conversation_buffer) > 50:
-                        self._conversation_buffer = self._conversation_buffer[-50:]
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Profile update/synthesis scheduling failed: %s",
-                    exc,
-                    exc_info=True
-                )
+            async with self._state_lock:
+                self.memory_subsystem.update_profile(user_input, response)
 
             self._dashboard_update(
                 state="IDLE",
@@ -281,17 +260,19 @@ class JarvisControllerV2:
             "exchanges": self.exchanges,
         }
 
-    async def start(self) -> None:
+    async def startup(self) -> None:
         self._runtime_loop = asyncio.get_running_loop()
-        await self.initialize()
+        await super().startup()
         await self.monitor.start()
         if self._goal_check_task is None or self._goal_check_task.done():
             self._goal_check_task = asyncio.create_task(
                 self.goal_runner.check_due_goals(),
                 name="jarvis_goal_due_checker",
             )
-        if self.live_automation is not None:
-            await self.live_automation.start()
+
+    async def start(self) -> None:
+        """Alias for startup() to maintain backward compatibility."""
+        await self.startup()
 
     async def run_cli(self) -> None:
         if self._voice_layer is not None:
@@ -325,8 +306,6 @@ class JarvisControllerV2:
 
     async def shutdown(self) -> None:
         await self.monitor.stop()
-        if self.live_automation is not None:
-            await self.live_automation.stop()
 
         if self._goal_check_task is not None and not self._goal_check_task.done():
             self._goal_check_task.cancel()
@@ -347,54 +326,13 @@ class JarvisControllerV2:
             except Exception:
                 logger.warning("voice_loop stop error", exc_info=True)
 
-        for task in list(self._synthesis_tasks):
-            task.cancel()
-        if self._synthesis_tasks:
-            try:
-                await asyncio.gather(*self._synthesis_tasks, return_exceptions=True)
-            except Exception as e:
-                logger.warning("Error gathering synthesis tasks during shutdown: %s", e, exc_info=True)
-
-        while getattr(self, "_inflight_llm_calls", 0) > 0:
-            await asyncio.sleep(0.1)
-
-        if hasattr(self, "memory") and self.memory is not None:
-            try:
-                await self.memory.close()
-            except Exception:
-                logger.warning("Memory cleanup error during shutdown", exc_info=True)
-
-
-    def _schedule_synthesis(self, conversations: list[str]) -> None:
-        coro = self.synthesizer.synthesize(conversations, self.profile)
-        
-        def _track(task):
-            self._synthesis_tasks.add(task)
-            task.add_done_callback(self._synthesis_tasks.discard)
-
-        try:
-            task = asyncio.create_task(coro)
-            _track(task)
-            return
-        except RuntimeError:
-            pass
-
-        if self._runtime_loop is not None and self._runtime_loop.is_running():
-            def _create_and_track():
-                t = asyncio.create_task(coro)
-                _track(t)
-            self._runtime_loop.call_soon_threadsafe(_create_and_track)
-            return
-
-        coro.close()
-        logger.warning("No running loop available; skipped profile synthesis task.")
+        await super().shutdown()
 
     def _dashboard_update(self, **kwargs: Any) -> None:
         try:
             self._on_state_update(**kwargs)
         except Exception as e:
             logger.warning("Failed to update dashboard state: %s", e, exc_info=True)
-
 
 Controller = JarvisControllerV2
 
