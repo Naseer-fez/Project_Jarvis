@@ -161,6 +161,38 @@ class GoalManager:
         with self._lock:
             self.get_goal(goal_id).cancel(reason)
 
+    def pause_goal(self, goal_id: str) -> None:
+        with self._lock:
+            self.get_goal(goal_id).pause()
+
+    def resume_goal(self, goal_id: str) -> None:
+        with self._lock:
+            self.get_goal(goal_id).resume()
+
+    def update_goal(
+        self,
+        goal_id: str,
+        description: Optional[str] = None,
+        priority: Optional[int] = None,
+        deadline: Optional[datetime] = None,
+        metadata: Optional[dict] = None,
+    ) -> None:
+        with self._lock:
+            goal = self.get_goal(goal_id)
+            if description is not None:
+                goal.description = description
+            if priority is not None:
+                goal.priority = priority
+            if deadline is not None:
+                goal.deadline = deadline
+            if metadata is not None:
+                goal.metadata.update(metadata)
+
+    def remove_goal(self, goal_id: str) -> None:
+        with self._lock:
+            if goal_id in self._goals:
+                del self._goals[goal_id]
+
     # ── Queries ──────────────────────────────────────────────────────────
 
     def next_goal(self) -> Optional[Goal]:
@@ -181,6 +213,14 @@ class GoalManager:
     def all_goals(self) -> list[Goal]:
         with self._lock:
             return list(self._goals.values())
+
+    def get_goals_by_status(self, status: GoalStatus) -> list[Goal]:
+        with self._lock:
+            return [g for g in self._goals.values() if g.status == status]
+
+    def get_subgoals(self, parent_goal_id: str) -> list[Goal]:
+        with self._lock:
+            return [g for g in self._goals.values() if g.parent_goal_id == parent_goal_id]
 
     # ── Persistence ──────────────────────────────────────────────────────
 
