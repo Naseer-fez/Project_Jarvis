@@ -22,7 +22,7 @@ def register_intent_routes(ctx: "JarvisControllerV2") -> None:
 
     async def handle_automation(lowered: str, user_input: str, ctx: "JarvisControllerV2") -> str | None:
         la = getattr(ctx, "live_automation", None)
-        if not la:
+        if la is None:
             return None
         if lowered == "automation status":
             status_info = la.status()

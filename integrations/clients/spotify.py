@@ -152,7 +152,7 @@ class SpotifyIntegration(BaseIntegration):
                 data = await resp.json()
                 if "access_token" not in data:
                     raise RuntimeError(f"Token refresh failed: {data.get('error', 'unknown')}")
-                return data["access_token"]
+                return str(data["access_token"])
 
     # ── Tool implementations ──────────────────────────────────────────────────
 
@@ -163,7 +163,7 @@ class SpotifyIntegration(BaseIntegration):
             return {"success": False, "data": None, "error": "query is required"}
 
         headers = {"Authorization": f"Bearer {token}"}
-        params = {"q": query, "type": "track", "limit": limit}
+        params: dict[str, str | int] = {"q": query, "type": "track", "limit": limit}
 
         async with aiohttp.ClientSession() as session:
             async with session.get(

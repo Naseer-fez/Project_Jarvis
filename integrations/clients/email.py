@@ -78,8 +78,8 @@ class EmailIntegration(BaseIntegration):
             if tool_name == "read_emails":
                 folder = str(args.get("folder", "INBOX") or "INBOX")
                 limit = max(1, int(args.get("limit", 10) or 10))
-                data = await loop.run_in_executor(None, lambda: self._read_emails(folder=folder, limit=limit))
-                return {"success": True, "data": {"emails": data}, "error": None}
+                emails_data = await loop.run_in_executor(None, lambda: self._read_emails(folder=folder, limit=limit))
+                return {"success": True, "data": {"emails": emails_data}, "error": None}
 
             if tool_name == "search_emails":
                 query = str(args.get("query", "")).strip()
@@ -127,7 +127,7 @@ class EmailIntegration(BaseIntegration):
             results: list[dict[str, Any]] = []
             for email_id in reversed(ids):
                 _, fetched = client.fetch(email_id, "(RFC822)")
-                if not fetched or not fetched[0]:
+                if not fetched or not fetched[0] or not isinstance(fetched[0], tuple):
                     continue
                 msg = email_lib.message_from_bytes(fetched[0][1])
                 results.append(

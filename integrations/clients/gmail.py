@@ -137,7 +137,7 @@ class GmailIntegration(BaseIntegration):
                 data = await resp.json()
                 if "access_token" not in data:
                     raise RuntimeError(f"Token refresh failed: {data.get('error', 'unknown')}")
-                return data["access_token"]
+                return str(data["access_token"])
 
     # ── Tool implementations ──────────────────────────────────────────────────
 
@@ -145,7 +145,7 @@ class GmailIntegration(BaseIntegration):
         import aiohttp
 
         headers = {"Authorization": f"Bearer {token}"}
-        params = {"q": "is:unread", "maxResults": min(max_results, 50)}
+        params: dict[str, str | int] = {"q": "is:unread", "maxResults": min(max_results, 50)}
 
         async with aiohttp.ClientSession() as session:
             async with session.get(

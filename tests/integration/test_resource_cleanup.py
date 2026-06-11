@@ -64,7 +64,7 @@ async def test_hybrid_memory_close_cancels_background_index_task(tmp_path):
         await released.wait()
         return {"indexed_files": 0, "indexed_chunks": 0, "skipped_files": 0, "errors": 0}
 
-    memory.index_codebase = slow_index  # type: ignore[method-assign]
+    memory.index_codebase = slow_index  # type: ignore[method-assign,assignment]
 
     result = await memory.initialize(index_path=str(tmp_path))
     assert result["codebase_index"]["status"] == "background_indexing_started"

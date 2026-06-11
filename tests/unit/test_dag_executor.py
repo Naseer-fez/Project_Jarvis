@@ -48,7 +48,7 @@ async def test_topological_sort_success():
         {"id": "step_a", "tool": "test_tool"},
         {"id": "step_b", "tool": "test_tool", "depends_on": ["step_a"]},
     ]
-    dag = PlanDAG(steps)
+    dag = PlanDAG(steps)  # type: ignore[arg-type]
     sorted_nodes = dag.topological_sort()
     assert sorted_nodes == ["step_a", "step_b", "step_c"]
 
@@ -105,7 +105,7 @@ async def test_dag_executor_parallel_execution(mock_context):
         elif action == "tool_c":
             return await execute_c(action, params)
 
-    router.execute = custom_execute
+    router.execute = custom_execute  # type: ignore[method-assign]
     executor = DAGExecutor(tool_router=router)
     
     plan = {"steps": steps}
@@ -131,7 +131,7 @@ async def test_dag_executor_retry_logic(mock_context):
             return MockObservation("failed", error="Temporary issue")
         return MockObservation("success", {"data": "finally success"})
         
-    router.execute = retry_execute
+    router.execute = retry_execute  # type: ignore[method-assign]
     executor = DAGExecutor(tool_router=router)
     
     plan = {"steps": steps}
@@ -270,7 +270,7 @@ async def test_dag_executor_cancellation(mock_context):
     async def cancel_execute(action, params):
         raise asyncio.CancelledError("Simulated task cancellation")
         
-    router.execute = cancel_execute
+    router.execute = cancel_execute  # type: ignore[method-assign]
     executor = DAGExecutor(tool_router=router)
     plan = {"steps": steps}
     
@@ -292,7 +292,7 @@ async def test_dag_executor_base_exception(mock_context):
     async def crash_execute(action, params):
         raise CustomBaseException("Simulated critical error")
         
-    router.execute = crash_execute
+    router.execute = crash_execute  # type: ignore[method-assign]
     executor = DAGExecutor(tool_router=router)
     plan = {"steps": steps}
     
@@ -309,7 +309,7 @@ async def test_dag_executor_concurrency_race(mock_context):
     even when many concurrent tasks finish at the exact same moment.
     """
     steps = [{"id": f"step_{i}", "tool": f"tool_{i}"} for i in range(10)]
-    steps.append({"id": "step_final", "tool": "tool_final", "depends_on": [f"step_{i}" for i in range(10)]})
+    steps.append({"id": "step_final", "tool": "tool_final", "depends_on": [f"step_{i}" for i in range(10)]})  # type: ignore[dict-item]
     
     router = MockToolRouter()
     sync_event = asyncio.Event()
@@ -320,7 +320,7 @@ async def test_dag_executor_concurrency_race(mock_context):
             return MockObservation("success")
         return MockObservation("success")
 
-    router.execute = sync_execute
+    router.execute = sync_execute  # type: ignore[method-assign]
     executor = DAGExecutor(tool_router=router)
     plan = {"steps": steps}
     

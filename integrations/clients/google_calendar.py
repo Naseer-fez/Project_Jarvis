@@ -146,7 +146,7 @@ class GoogleCalendarIntegration(BaseIntegration):
                 data = await resp.json()
                 if "access_token" not in data:
                     raise RuntimeError(f"Token refresh failed: {data.get('error', 'unknown')}")
-                return data["access_token"]
+                return str(data["access_token"])
 
     def _to_rfc3339(self, dt_str: str, tz: str = "UTC") -> str:
         """Parse ISO-8601 string and return RFC3339 with timezone offset."""
@@ -210,7 +210,7 @@ class GoogleCalendarIntegration(BaseIntegration):
 
         url = f"{_CALENDAR_BASE}/calendars/{cal_id}/events"
         headers = {"Authorization": f"Bearer {token}"}
-        params = {
+        params: dict[str, str | int] = {
             "timeMin": time_min,
             "timeMax": time_max,
             "maxResults": max_results,

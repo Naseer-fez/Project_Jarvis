@@ -22,7 +22,7 @@ def mock_missing_module(module_name: str, reloaded_modules: list[str]):
             del sys.modules[mod_name]
             
     # Set the target module to None to trigger ImportError on import
-    sys.modules[module_name] = None
+    sys.modules[module_name] = None  # type: ignore[assignment]
     
     try:
         # Reload/re-import target modules under the mock environment
@@ -57,8 +57,8 @@ async def test_chromadb_missing_fallback():
     orig_chromadb = core.memory.semantic_memory.chromadb
     orig_settings = core.memory.semantic_memory.Settings
 
-    core.memory.semantic_memory.chromadb = None
-    core.memory.semantic_memory.Settings = None
+    core.memory.semantic_memory.chromadb = None  # type: ignore[assignment]
+    core.memory.semantic_memory.Settings = None  # type: ignore[assignment,misc]
 
     try:
         # Test SemanticMemory initialization
@@ -83,7 +83,7 @@ async def test_chromadb_missing_fallback():
                 gc.collect()
     finally:
         core.memory.semantic_memory.chromadb = orig_chromadb
-        core.memory.semantic_memory.Settings = orig_settings
+        core.memory.semantic_memory.Settings = orig_settings  # type: ignore[misc]
 
 
 @pytest.mark.asyncio

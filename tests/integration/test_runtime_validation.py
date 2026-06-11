@@ -45,7 +45,7 @@ async def test_runtime_agent_loop_execution(mock_dependencies):
     agent_loop = AgentLoopEngine(
         llm=mock_dependencies["llm"],
         task_planner=mock_planner,
-        tool_router=MockToolRouter(),
+        tool_router=MockToolRouter(),  # type: ignore[arg-type]
         risk_evaluator=mock_dependencies["risk_evaluator"],
         autonomy_governor=mock_dependencies["autonomy_governor"],
         container=container
@@ -222,6 +222,6 @@ async def test_async_run_cancellation_still_shuts_down_controller(monkeypatch):
     assert await async_run(args, shutdown_cls=FakeShutdownCoordinator) == ExitCode.OK
 
     controller = created["controller"]
-    controller.start.assert_awaited_once()
-    controller.shutdown.assert_awaited_once()
+    controller.start.assert_awaited_once()  # type: ignore[attr-defined]
+    controller.shutdown.assert_awaited_once()  # type: ignore[attr-defined]
     assert shutdown_requests == ["cancelled"]

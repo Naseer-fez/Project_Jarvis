@@ -57,7 +57,7 @@ def run_entrypoint(
     args = parse_args_fn(argv)
 
     try:
-        return asyncio.run(async_entry_fn(args))
+        return asyncio.run(async_entry_fn(args))  # type: ignore[arg-type]
     except KeyboardInterrupt:
         _uprint(interrupted_message, file=sys.stderr)
         return ExitCode.OK

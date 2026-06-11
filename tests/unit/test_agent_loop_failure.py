@@ -77,7 +77,7 @@ async def test_agent_loop_failure_stops_cleanly_without_invalid_transition():
 
     engine = AgentLoopEngine(
         task_planner=planner,
-        tool_router=FailingToolRouter(),
+        tool_router=FailingToolRouter(),  # type: ignore[arg-type]
         risk_evaluator=risk_evaluator,
         autonomy_governor=autonomy_governor,
         llm=MagicMock(),

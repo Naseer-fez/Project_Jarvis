@@ -41,6 +41,7 @@ async def test_store_code_file_indexes_plain_file_content(tmp_path):
 
     assert count == 1
     memory.store_episode.assert_awaited_once()
+    assert memory.store_episode.await_args is not None
     event_text = memory.store_episode.await_args.args[0]
     assert event_text.startswith("file:plain.py\n")
     assert "print(x)" in event_text

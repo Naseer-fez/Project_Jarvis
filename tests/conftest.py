@@ -77,7 +77,7 @@ def wrapped_auth_manager_init(self, db_path, *args, **kwargs):
         db_path = tmp_path / "test_auth.db"
     original_auth_manager_init(self, db_path, *args, **kwargs)
 
-core.security.auth.AuthManager.__init__ = wrapped_auth_manager_init
+core.security.auth.AuthManager.__init__ = wrapped_auth_manager_init  # type: ignore[method-assign]
 
 
 

@@ -337,7 +337,7 @@ class HomeAssistantIntegration(BaseIntegration):
 
     def _format_entity(self, item: dict[str, Any], *, include_attributes: bool = False) -> dict[str, Any]:
         entity_id = str(item.get("entity_id", ""))
-        attributes = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+        attributes = item.get("attributes") or {}
         payload = {
             "entity_id": entity_id,
             "domain": entity_id.split(".", 1)[0] if "." in entity_id else "",

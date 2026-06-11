@@ -55,7 +55,7 @@ def test_validate_startup_settings_rejects_invalid_dashboard_port():
 
     validation = _validate_startup_settings(
         config,
-        args,
+        args,  # type: ignore[arg-type]
         voice_enabled=False,
         dashboard_enabled=True,
         headless=False,

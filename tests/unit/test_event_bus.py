@@ -43,7 +43,7 @@ async def test_event_bus_async_callback_same_loop():
     """Verify async callbacks can be scheduled on the running event loop."""
     bus = EventBus()
     received = []
-    future = asyncio.Future()
+    future: asyncio.Future[bool] = asyncio.Future()
 
     async def on_event_async(data):
         received.append(data)
