@@ -42,7 +42,7 @@ def wait_for_server():
             if r.status_code == 200:
                 print("\nServer is up!", flush=True)
                 return True
-        except:
+        except Exception:
             if i % 5 == 0:
                 print(".", end="", flush=True)
             time.sleep(1)
@@ -94,7 +94,8 @@ def run_tests():
             "error": error
         }
         results.append(result)
-        if response is None: response = ""
+        if response is None:
+            response = ""
         print(f"Prompt: {test_case['prompt']}\nResponse: {response[:200]}{'...' if len(response)>200 else ''}\nLatency: {latency:.2f}s | Error: {error}", flush=True)
         time.sleep(1)
 

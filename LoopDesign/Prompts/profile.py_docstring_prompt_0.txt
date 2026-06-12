@@ -1,0 +1,1 @@
+Compact profile context injected into the LLM system prompt.

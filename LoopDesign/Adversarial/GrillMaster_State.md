@@ -1,0 +1,21 @@
+# GrillMaster Interrogation: State Management Subsystem
+
+## 1. The "Dual-Lock Concurrency" Deadlock Trap
+**The Claim:** The architecture dictates using "a unified `asyncio.Lock` for event-loop bound mutations, but wrap shared state access paths in an OS-level `threading.RLock` to prevent deadlocks when reactive synchronous workers access the state machine simultaneously."
+**The Devastating Reality:** This is a textbook recipe for irreversible deadlocks. Mixing an event-loop `asyncio.Lock` with a synchronous OS thread `RLock` across thread boundaries introduces race conditions where the main event loop blocks waiting for an `RLock` held by a worker thread, while the worker thread awaits a future that requires the event loop to advance. By attempting to prevent deadlocks, this architecture actively guarantees them under high contention. Furthermore, if a thread holds the `RLock` and is suspended or crashes, the entire async application is permanently blocked.
+
+## 2. Unbounded Memory Exhaustion in Idempotency Hashes
+**The Claim:** The subsystem maintains a "deduplication filter using 64-character SHA-256 `seen_fingerprints` to guarantee system idempotency" inside `automation_state.json`.
+**The Devastating Reality:** There is no mentioned eviction policy, TTL, or unbounded growth limit for `seen_fingerprints`. While the state changes have a "rolling 100-event audit trail", the idempotency hashes do not. Over weeks of continuous operation, this JSON file will bloat to gigabytes, causing catastrophic I/O bottlenecks and eventual Out-Of-Memory (OOM) crashes every time the application restarts and attempts to hydrate the state into memory.
+
+## 3. Delusional "Atomic" Persistence & Cross-Process Collisions
+**The Claim:** The implementation uses `.tmp` atomic file swapping. "Writing directly to JSON files invites corruption if the system crashes mid-write."
+**The Devastating Reality:** Atomic `.tmp` file renaming (`os.replace` or equivalent) prevents partial writes but does absolutely *nothing* to prevent race conditions if multiple daemon processes attempt to modify the state simultaneously. The document falsely claims this prevents "split-brain memory", but without OS-level file locks (e.g., `flock` or `fcntl`) or a dedicated SQLite-based state store with WAL, two concurrent processes will read the file, modify it, and rename their `.tmp` over the other's, permanently obliterating state data without throwing an error. Furthermore, atomic file swapping without calling `fsync()` on both the file descriptor and the directory guarantees data loss if a hard power loss occurs immediately after the swap.
+
+## 4. State Transitions & "Fire-and-Forget" Asynchrony
+**The Claim:** "Every valid transition publishes a `state_transition` event to the `EventBus`... ensuring they react in perfect sync without blocking the main event loop."
+**The Devastating Reality:** If the UI and background tasks rely on an asynchronous Event Bus, they are *not* in perfect sync. If the Event Bus experiences backpressure, dropping events, or lagging, the state machine will have already moved into `EXECUTING` while the user's UI still shows `AWAITING_CONFIRMATION` or `RISK_EVALUATION`. The human operator will falsely believe the system is safe, completely unaware that an autonomous destructive action is actively executing. Decoupling critical security boundaries (like Risk Evaluation) from synchronous UI acknowledgement is a catastrophic safety failure.
+
+## 5. The Fragility of `IllegalTransitionError` 
+**The Claim:** The subsystem "rejects invalid transitions via an `IllegalTransitionError`."
+**The Devastating Reality:** What is the fallback when this error is raised during an autonomous loop? If an LLM or background task attempts an invalid transition, throwing a fatal exception will either violently kill the task or trap the system in an unrecoverable `ERROR` state. There is no architectural definition for a "State Recovery Protocol." If the agent is stuck in `EXECUTING` but the task crashes, and the `StateGuard.__aexit__` fails to write the fallback to `ABORTED` (e.g., due to an out-of-space I/O failure), the agent becomes permanently bricked until manually purged by the user.

@@ -1,0 +1,7 @@
+Public interface — all LLM calls in Jarvis enter here.
+
+    Wiring (in order):
+        1. ``ModelRouter.pick_model(task_type)`` → model name
+        2. ``OllamaClient.complete(prompt, model=…)`` → try local first
+        3. ``CloudLLMClient.complete(prompt)`` → fallback if Ollama fails
+    

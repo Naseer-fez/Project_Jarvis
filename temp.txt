@@ -1,0 +1,74 @@
+EVALUATING: core/voice/stt.py')
+
+"""Speech-to-text for voice mode.
+
+Provides `STT` class with the API expected by V2 acceptance tests:
+  - STT._ready (bool attribute)
+  - STT.is_ready (property)
+  - STT.capture_and_transcribe() -> str | None
+  - STT._is_speech(pcm_bytes, frame_length) -> bool
+  - STT._vad (porcupine VAD or None)
+  - STT._sample_rate (int)
+  - TranscriptResult dataclass
+
+Also provides `SpeechToText` (async variant) for the new async controller path.
+"""
+
+# internal import removed: from __future__ import annotations
+
+import asyncio
+import logging
+import struct
+from dataclasses import dataclass
+from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
+
+try:
+    import numpy as np
+except ImportError:
+    np = None  # type: ignore[assignment]
+
+try:
+    import sounddevice as sd
+except ImportError:
+    sd = None
+
+try:
+    from faster_whisper import WhisperModel
+except ImportError:
+    WhisperModel = None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TranscriptResult dataclass
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class TranscriptResult:
+    """Structured output from speech recognition."""
+    text: str
+    audio_hash: str = ""
+    duration_s: float = 0.0
+    language: str = "en"
+    confidence: float = 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STT class — synchronous + attribute-based API (V2 acceptance tests)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ENERGY_THRESHOLD = 500  # RMS amplitude above which audio is considered speech
+
+
+class STT:
+    """
+    Synchronous STT wrapper with graceful degradation.
+
+    Attributes exposed for tests:
+      _ready         — True once the backend model is loaded
+      _vad           — VAD object or None when using energy-based detection
+      _sample_rate   — audio sample rate in Hz
+    """
+
+    _VAD_ENERGY_THRESHOLD = _ENERGY_THRESH

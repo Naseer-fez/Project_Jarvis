@@ -497,7 +497,7 @@ class LiveAutomationEngine:
             await asyncio.sleep(self.poll_interval_seconds * 2)
 
     async def _process_command_file(self, path: Path) -> None:
-        command_text = self._read_text_file(path)
+        command_text = await self._read_text_file(path)
         command_text = self._extract_command(command_text)
         if not command_text:
             raise ValueError("Command file is empty.")
@@ -527,7 +527,7 @@ class LiveAutomationEngine:
         else:
             response = await self.command_handler(command_text) if self.command_handler else "No handler"
         self._stats.commands_executed += 1
-        self._append_log(
+        await self._append_log(
             {
                 "timestamp": _iso_now(),
                 "type": "command",
@@ -546,10 +546,12 @@ class LiveAutomationEngine:
         processed_path = self._relocate(path, self.processed_dir / "commands")
         result_file = processed_path.with_suffix(processed_path.suffix + ".result.txt")
         result_file.parent.mkdir(parents=True, exist_ok=True)
-        result_file.write_text(
-            f"Command: {command_text}\n\nResult:\n{response}\n",
-            encoding="utf-8",
-        )
+        def _write():
+            result_file.write_text(
+                f"Command: {command_text}\n\nResult:\n{response}\n",
+                encoding="utf-8",
+            )
+        await asyncio.to_thread(_write)
 
         if self.notifier is not None:
             notify = getattr(self.notifier, "notify", None)
@@ -563,7 +565,7 @@ class LiveAutomationEngine:
 
         chunks = await self._store_rag_text(source=source, path=path, text=text)
 
-        self._append_log(
+        await self._append_log(
             {
                 "timestamp": _iso_now(),
                 "type": "rag_ingest",
@@ -700,15 +702,23 @@ class LiveAutomationEngine:
         return text
 
     @staticmethod
-    def _read_text_file(path: Path, max_bytes: int = 2_000_000) -> str:
-        data = path.read_bytes()[: max(1, max_bytes)]
+    async def _read_text_file(path: Path, max_bytes: int = 2_000_000) -> str:
+        def _read() -> bytes:
+            return path.read_bytes()[: max(1, max_bytes)]
+        data: bytes = await asyncio.to_thread(_read)
         return data.decode("utf-8", errors="replace")
 
     def _move_to_failed(self, path: Path, *, error: str) -> None:
         destination = self._relocate(path, self.failed_dir)
         error_file = destination.with_suffix(destination.suffix + ".error.txt")
         error_file.parent.mkdir(parents=True, exist_ok=True)
-        error_file.write_text(error + "\n", encoding="utf-8")
+        def _write():
+            error_file.write_text(error + "\n", encoding="utf-8")
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(asyncio.to_thread(_write))
+        except RuntimeError:
+            _write()
 
     def _relocate(self, source: Path, destination_dir: Path) -> Path:
         destination_dir.mkdir(parents=True, exist_ok=True)
@@ -763,10 +773,12 @@ class LiveAutomationEngine:
         ):
             folder.mkdir(parents=True, exist_ok=True)
 
-    def _append_log(self, payload: dict[str, Any]) -> None:
+    async def _append_log(self, payload: dict[str, Any]) -> None:
         self.log_file.parent.mkdir(parents=True, exist_ok=True)
-        with self.log_file.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        def _write():
+            with self.log_file.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        await asyncio.to_thread(_write)
 
     def _load_state(self) -> None:
         if not self.state_file.exists():
@@ -785,7 +797,7 @@ class LiveAutomationEngine:
             logger.debug("Could not load automation state: %s", exc)
 
     def _save_state(self) -> None:
-        try:
+        def _write():
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "saved_at": _iso_now(),
@@ -796,8 +808,11 @@ class LiveAutomationEngine:
                 json.dumps(payload, indent=2, ensure_ascii=True),
                 encoding="utf-8",
             )
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Could not persist automation state: %s", exc)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(asyncio.to_thread(_write))
+        except RuntimeError:
+            _write()
 
     @staticmethod
     def _extract_metadata_value(block: str, key: str) -> str:

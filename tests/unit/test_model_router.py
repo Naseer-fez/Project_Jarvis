@@ -3,7 +3,6 @@ from unittest.mock import MagicMock
 import configparser
 
 from core.llm.model_router import ModelRouter
-from core.llm.model_spec import ModelSpec, ModelRegistry, RoutingDecision
 import os
 
 @pytest.fixture
@@ -86,8 +85,10 @@ def test_telemetry_integration(router):
     telemetry = MagicMock()
     # Mock reliable mistral, unreliable llama3
     def get_rel(m, task):
-        if m == "llama3.2:1b": return 0.1
-        if m == "mistral:7b": return 0.9
+        if m == "llama3.2:1b":
+            return 0.1
+        if m == "mistral:7b":
+            return 0.9
         return 0.5
     telemetry.get_reliability = MagicMock(side_effect=get_rel)
     router.set_telemetry(telemetry)

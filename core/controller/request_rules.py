@@ -123,15 +123,12 @@ LIVE_WEB_REQUEST_MARKERS = (
 )
 
 ACTIVE_WINDOW_PHRASES = (
-    "active app",
-    "active window",
-    "focused window",
-    "foreground window",
-    "foreground app",
     "which app is active",
     "what app is active",
     "what window is active",
     "which window is active",
+    "tell me the active window",
+    "get the active window",
 )
 
 

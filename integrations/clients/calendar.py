@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
+import threading
 from pathlib import Path
 from typing import Any
 
 from integrations.base import BaseIntegration
 
 CALENDAR_PATH = Path("memory/calendar.ics")
+_calendar_lock = threading.Lock()
 
 
 class CalendarIntegration(BaseIntegration):
@@ -18,6 +20,10 @@ class CalendarIntegration(BaseIntegration):
     required_config: list[str] = []
 
     def is_available(self) -> bool:
+        import importlib.util
+        if importlib.util.find_spec("icalendar") is None or importlib.util.find_spec("dateutil") is None:
+            self.unavailable_reason = "icalendar and dateutil are required"
+            return False
         return True
 
     def get_tools(self) -> list[dict[str, Any]]:
@@ -97,12 +103,18 @@ class CalendarIntegration(BaseIntegration):
             "END:VEVENT\n"
         )
 
-        if not CALENDAR_PATH.exists():
-            CALENDAR_PATH.write_text("BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n", encoding="utf-8")
+        with _calendar_lock:
+            if not CALENDAR_PATH.exists():
+                CALENDAR_PATH.parent.mkdir(parents=True, exist_ok=True)
+                CALENDAR_PATH.write_text("BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n", encoding="utf-8")
 
-        content = CALENDAR_PATH.read_text(encoding="utf-8")
-        updated = content.replace("END:VCALENDAR", block + "END:VCALENDAR")
-        CALENDAR_PATH.write_text(updated, encoding="utf-8")
+            content = CALENDAR_PATH.read_text(encoding="utf-8")
+            parts = content.rsplit("END:VCALENDAR", 1)
+            if len(parts) == 2:
+                updated = parts[0] + block + "END:VCALENDAR" + parts[1]
+            else:
+                updated = content + "\n" + block + "END:VCALENDAR\n"
+            CALENDAR_PATH.write_text(updated, encoding="utf-8")
 
         return {"event": title, "date": date, "time": time}
 

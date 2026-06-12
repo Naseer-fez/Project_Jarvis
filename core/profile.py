@@ -8,6 +8,7 @@ import os
 import threading
 from datetime import datetime
 from pathlib import Path
+import asyncio
 
 
 class UserProfileEngine:
@@ -65,13 +66,22 @@ class UserProfileEngine:
         """Atomic write to avoid corruption on interruption."""
         self.PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.PROFILE_PATH.with_suffix(".tmp")
-        with self._lock:
-            try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    json.dump(self._data, f, indent=2, ensure_ascii=False)
-                os.replace(tmp, self.PROFILE_PATH)
-            except Exception as e:  # noqa: BLE001
-                logging.getLogger(__name__).error(f"Profile save failed: {e}")
+        data_copy = dict(self._data)
+        
+        def _write():
+            with self._lock:
+                try:
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        json.dump(data_copy, f, indent=2, ensure_ascii=False)
+                    os.replace(tmp, self.PROFILE_PATH)
+                except Exception as e:  # noqa: BLE001
+                    logging.getLogger(__name__).error(f"Profile save failed: {e}")
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(asyncio.to_thread(_write))
+        except RuntimeError:
+            _write()
 
     def update_from_conversation(self, user_text: str, jarvis_response: str) -> None:
         with self._lock:

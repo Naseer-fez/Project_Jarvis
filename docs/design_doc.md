@@ -21,7 +21,7 @@ Project Jarvis is a modular, private-by-design local AI assistant that orchestra
 
 Below is a premium, high-fidelity system architecture blueprint illustrating how the local AI OS and modular subsystems connect, from local Ollama model routing to hybrid SQLite relational + Chroma vector storage, hands-free voice engine, and physical desktop click/type drivers:
 
-![Jarvis System Architecture Infographic](file:///C:/Users/FEZ%20NASEER/.gemini/antigravity/brain/b174c800-fc53-4e9e-9930-11744ec2b80d/system_architecture_1780132164075.png)
+![Jarvis System Architecture Infographic](./images/system_architecture_1780132164075.png)
 
 ### 2.1 State Machine Lifecycle
 The agent execution follows a strict lifecycle governed by the state machine in `core/state_machine.py`:
@@ -234,28 +234,40 @@ Jarvis/
 │   │   ├── model_router.py  # Dynamic task router utilizing specialized model tiers
 │   │   ├── ollama_client.py # Local HTTP client for fast, private offline computation
 │   │   └── cloud_client.py  # Failover client chain (Gemini -> Groq -> OpenAI -> Anthropic)
+│   ├── logging/             # Logging and telemetry mechanisms
+│   │   └── logger.py        # Centralized logger initialization
 │   ├── memory/              # Relational and vector semantic database pools
 │   │   ├── hybrid_memory.py # Relational + semantic coordinate interface
 │   │   ├── semantic_memory.py # ChromaDB vector vectorization & search
 │   │   ├── sqlite_pool.py   # Thread-safe pooled SQLite database connection context
 │   │   └── embeddings.py    # Codebase structural parser split by classes and functions (AST)
+│   ├── metrics/             # Confidence and performance metrics
+│   │   └── confidence.py    # Confidence scoring models
+│   ├── ops/                 # Production operation and maintenance scripts
+│   │   └── production.py    # Production deployment helpers
+│   ├── planner/             # Core planning algorithms
+│   │   └── planner.py       # Standalone task planner module
 │   ├── plugins/             # Extensible plugin catalog architecture
-│   │   └── manifest.py      # Metadata-first parser ensuring secure scope constraints
+│   ├── proactive/           # Proactive background monitoring
+│   │   ├── background_monitor.py # Background health and event monitor
+│   │   └── notifier.py      # Notification dispatch system
+│   ├── registry/            # Tool and plugin registration layer
+│   │   ├── registry.py      # Centralized registration metadata schemas and decorators
+│   │   └── base.py          # Base plugin classes
 │   ├── runtime/             # System initialization and event bus pipelines
 │   │   ├── bootstrap.py     # Runtime folder generation and pre-flight path validation
 │   │   └── event_bus.py     # Lightweight pub/sub message bus with replay ring-buffer
 │   ├── security/            # Session token keys, password encryption, and auth checks
 │   ├── tools/               # Universal actions database
-│   │   ├── registry.py      # Centralized registration metadata schemas and decorators
 │   │   ├── screen.py        # Screen capture, OCR target location, and vision utilities
 │   │   ├── web_tools.py     # Private duckduckgo search, browser scrapers, and file downloaders
 │   │   └── gui_control.py   # Low-level mouse clicking, keyboard typing, and window positioning
-│   ├── voice/               # Hands-free speech interface pipeline
-│   │   ├── wake_word.py     # Picovoice wake-word listener monitoring audio input
-│   │   ├── stt.py           # Whisper local STT model with cloud transcription backup
-│   │   └── tts.py           # Neural online voice streaming with local pyttsx3 voice backup
-│   └── workflow/            # Declarative multi-step workflows
-│       └── catalog.py       # Schema validation and execution of templated workflow JSONs
+│   ├── types/               # Type hints and common interface definitions
+│   │   └── common.py        # Shared data structures and typings
+│   └── voice/               # Hands-free speech interface pipeline
+│       ├── wake_word.py     # Picovoice wake-word listener monitoring audio input
+│       ├── stt.py           # Whisper local STT model with cloud transcription backup
+│       └── tts.py           # Neural online voice streaming with local pyttsx3 voice backup
 ├── dashboard/               # Frontend Control Web Interface
 │   ├── server.py            # FastAPI application server, auth endpoints, and status APIs
 │   ├── templates/           # Layout HTML views, AI OS inspector, and active dashboard panels
@@ -287,7 +299,7 @@ flowchart TD
     %% Services Initialization
     DBCheck --> Controller[Initialize Controller & core/controller/services.py]
     
-    subgraph Service Pool [Core Services Bootstrapping]
+    subgraph Service_Pool [Core Services Bootstrapping]
         direction TB
         SQLitePool[(SQLite Pools & Connection Verification)]
         Embeddings[AST Codebase structural Indexer registers modules]
@@ -321,7 +333,7 @@ flowchart TD
 ### 8.2 Agentic Request-Response Execution Flow
 Here is the high-fidelity conceptual visual mapping how input commands (voice or web dashboard API) flow through fast intent routing, hybrid AST memory retrieval, JSON task planning step generations, strict risk table assessment (LOW, CONFIRM, HIGH, CRITICAL), desktop click/type action coordinates alignment, reflection, and neural voice synthesis output:
 
-![Jarvis Agent Decision-Making Loop Flow](file:///C:/Users/FEZ%20NASEER/.gemini/antigravity/brain/b174c800-fc53-4e9e-9930-11744ec2b80d/agent_workflow_1780132187403.png)
+![Jarvis Agent Decision-Making Loop Flow](./images/agent_workflow_1780132187403.png)
 
 ---
 
@@ -367,4 +379,4 @@ flowchart TD
 ### 8.4 AI OS Web Dashboard & Telemetry Monitor
 This high-fidelity dashboard user interface layout outlines how developers and administrators inspect running model latency, activate/deactivate plugins, check JSON templates executions, monitor hardware health, and review the live event bus pub/sub streaming in real-time:
 
-![Jarvis AI OS Glassmorphic Dashboard Mockup](file:///C:/Users/FEZ%20NASEER/.gemini/antigravity/brain/b174c800-fc53-4e9e-9930-11744ec2b80d/dashboard_ui_1780132211100.png)
+![Jarvis AI OS Glassmorphic Dashboard Mockup](./images/dashboard_ui_1780132211100.png)

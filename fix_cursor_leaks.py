@@ -19,7 +19,6 @@ def process_file(filepath):
         match = re.search(r'^(\s*)await conn\.(execute|executemany|executescript)\(', line)
         if match:
             indent = match.group(1)
-            method = match.group(2)
             # Find the end of the statement by matching parentheses
             statement_lines = [line]
             open_parens = line.count('(') - line.count(')')

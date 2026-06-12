@@ -1,0 +1,5641 @@
+{
+  "fix_cursor_leaks.py": {
+    "rel_path": "fix_cursor_leaks.py",
+    "imports": [
+      "re"
+    ],
+    "from_imports": []
+  },
+  "main.py": {
+    "rel_path": "main.py",
+    "imports": [
+      "asyncio",
+      "signal",
+      "sys",
+      "traceback",
+      "argparse"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "collections.abc",
+        "level": 0,
+        "names": [
+          "Callable",
+          "Awaitable"
+        ]
+      },
+      {
+        "module": "core.runtime.bootstrap",
+        "level": 0,
+        "names": [
+          "ExitCode",
+          "PROJECT_ROOT",
+          "_ShutdownCoordinator",
+          "_bootstrap",
+          "_uprint",
+          "apply_cli_overrides",
+          "load_config",
+          "parse_args"
+        ]
+      },
+      {
+        "module": "core.runtime.entrypoint",
+        "level": 0,
+        "names": [
+          "async_run"
+        ]
+      }
+    ]
+  },
+  "audit/audit_logger.py": {
+    "rel_path": "audit/audit_logger.py",
+    "imports": [
+      "re",
+      "warnings"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      }
+    ]
+  },
+  "audit/__init__.py": {
+    "rel_path": "audit/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "audit_logger",
+        "level": 1,
+        "names": [
+          "scrub_secrets"
+        ]
+      }
+    ]
+  },
+  "core/base_controller.py": {
+    "rel_path": "core/base_controller.py",
+    "imports": [
+      "abc",
+      "asyncio",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "List"
+        ]
+      }
+    ]
+  },
+  "core/controller_v2.py": {
+    "rel_path": "core/controller_v2.py",
+    "imports": [
+      "asyncio",
+      "configparser",
+      "logging",
+      "uuid"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.base_controller",
+        "level": 0,
+        "names": [
+          "BaseController"
+        ]
+      },
+      {
+        "module": "core.controller.intents",
+        "level": 0,
+        "names": [
+          "handle_goal_intent",
+          "handle_preference_intent"
+        ]
+      },
+      {
+        "module": "core.controller.intent_router",
+        "level": 0,
+        "names": [
+          "IntentRouter"
+        ]
+      },
+      {
+        "module": "core.controller.services",
+        "level": 0,
+        "names": [
+          "build_controller_services"
+        ]
+      },
+      {
+        "module": "core.llm.defaults",
+        "level": 0,
+        "names": [
+          "DEFAULT_MODEL"
+        ]
+      },
+      {
+        "module": "core.controller.llm_dispatcher",
+        "level": 0,
+        "names": [
+          "LLMDispatcher"
+        ]
+      },
+      {
+        "module": "core.controller.goal_runner",
+        "level": 0,
+        "names": [
+          "GoalRunner"
+        ]
+      },
+      {
+        "module": "core.controller.llm_orchestrator",
+        "level": 0,
+        "names": [
+          "LLMOrchestrator"
+        ]
+      },
+      {
+        "module": "core.controller.memory_subsystem",
+        "level": 0,
+        "names": [
+          "MemorySubsystem"
+        ]
+      },
+      {
+        "module": "core.controller.automation_manager",
+        "level": 0,
+        "names": [
+          "AutomationManager"
+        ]
+      },
+      {
+        "module": "core.controller.intent_handlers",
+        "level": 0,
+        "names": [
+          "register_intent_routes"
+        ]
+      },
+      {
+        "module": "core.controller.complexity_scorer",
+        "level": 0,
+        "names": [
+          "classify_request"
+        ]
+      },
+      {
+        "module": "core.voice.voice_layer",
+        "level": 0,
+        "names": [
+          "VoiceLayer"
+        ]
+      }
+    ]
+  },
+  "core/permission_matrix.py": {
+    "rel_path": "core/permission_matrix.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      }
+    ]
+  },
+  "core/profile.py": {
+    "rel_path": "core/profile.py",
+    "imports": [
+      "json",
+      "logging",
+      "os",
+      "threading",
+      "asyncio"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "core/state_machine.py": {
+    "rel_path": "core/state_machine.py",
+    "imports": [
+      "inspect",
+      "logging",
+      "threading",
+      "asyncio",
+      "asyncio"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Callable",
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/synthesis.py": {
+    "rel_path": "core/synthesis.py",
+    "imports": [
+      "inspect",
+      "json",
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/temp_analyze.py": {
+    "rel_path": "core/temp_analyze.py",
+    "imports": [
+      "os",
+      "ast",
+      "re"
+    ],
+    "from_imports": []
+  },
+  "core/__init__.py": {
+    "rel_path": "core/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/agent/agent_loop.py": {
+    "rel_path": "core/agent/agent_loop.py",
+    "imports": [
+      "asyncio",
+      "inspect",
+      "logging",
+      "re",
+      "time",
+      "httpx",
+      "sys",
+      "traceback"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Optional"
+        ]
+      },
+      {
+        "module": "core.state_machine",
+        "level": 0,
+        "names": [
+          "State",
+          "StateMachine"
+        ]
+      },
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      },
+      {
+        "module": "core.autonomy.autonomy_governor",
+        "level": 0,
+        "names": [
+          "AutonomyGovernor"
+        ]
+      },
+      {
+        "module": "core.autonomy.risk_evaluator",
+        "level": 0,
+        "names": [
+          "RiskEvaluator"
+        ]
+      },
+      {
+        "module": "core.planner.planner",
+        "level": 0,
+        "names": [
+          "TaskPlanner"
+        ]
+      },
+      {
+        "module": "core.metrics.confidence",
+        "level": 0,
+        "names": [
+          "ConfidenceModel"
+        ]
+      },
+      {
+        "module": "core.registry.registry",
+        "level": 0,
+        "names": [
+          "ToolObservation",
+          "CapabilityRegistry"
+        ]
+      },
+      {
+        "module": "core.autonomy.autonomy_governor",
+        "level": 0,
+        "names": [
+          "AutonomyLevel"
+        ]
+      },
+      {
+        "module": "core.autonomy.autonomy_governor",
+        "level": 0,
+        "names": [
+          "AutonomyLevel"
+        ]
+      }
+    ]
+  },
+  "core/agent/__init__.py": {
+    "rel_path": "core/agent/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/agentic/goal_manager.py": {
+    "rel_path": "core/agentic/goal_manager.py",
+    "imports": [
+      "warnings"
+    ],
+    "from_imports": [
+      {
+        "module": "core.autonomy.goal_manager",
+        "level": 0,
+        "names": [
+          "*"
+        ]
+      }
+    ]
+  },
+  "core/agentic/__init__.py": {
+    "rel_path": "core/agentic/__init__.py",
+    "imports": [
+      "warnings"
+    ],
+    "from_imports": []
+  },
+  "core/automation/live_automation.py": {
+    "rel_path": "core/automation/live_automation.py",
+    "imports": [
+      "asyncio",
+      "contextlib",
+      "hashlib",
+      "json",
+      "logging",
+      "re",
+      "shutil",
+      "time"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "asdict",
+          "dataclass"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime",
+          "timezone"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Awaitable",
+          "Callable"
+        ]
+      },
+      {
+        "module": "core.automation.scan_pipeline",
+        "level": 0,
+        "names": [
+          "ScanBatch",
+          "ScanPipeline"
+        ]
+      },
+      {
+        "module": "core.automation.scan_rules",
+        "level": 0,
+        "names": [
+          "ScanRoute",
+          "build_scan_routes"
+        ]
+      },
+      {
+        "module": "core.runtime.paths",
+        "level": 0,
+        "names": [
+          "_resolve_path"
+        ]
+      },
+      {
+        "module": "core.automation.payload_extractor",
+        "level": 0,
+        "names": [
+          "PayloadExtractor"
+        ]
+      },
+      {
+        "module": "core.automation.rag_ingester",
+        "level": 0,
+        "names": [
+          "RagIngester"
+        ]
+      },
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      }
+    ]
+  },
+  "core/automation/payload_extractor.py": {
+    "rel_path": "core/automation/payload_extractor.py",
+    "imports": [
+      "re",
+      "pytesseract",
+      "cv2",
+      "pytesseract"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "PIL",
+        "level": 0,
+        "names": [
+          "Image"
+        ]
+      },
+      {
+        "module": "PIL",
+        "level": 0,
+        "names": [
+          "Image"
+        ]
+      }
+    ]
+  },
+  "core/automation/rag_ingester.py": {
+    "rel_path": "core/automation/rag_ingester.py",
+    "imports": [
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/automation/scan_pipeline.py": {
+    "rel_path": "core/automation/scan_pipeline.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Awaitable",
+          "Callable"
+        ]
+      }
+    ]
+  },
+  "core/automation/scan_rules.py": {
+    "rel_path": "core/automation/scan_rules.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Literal"
+        ]
+      }
+    ]
+  },
+  "core/automation/__init__.py": {
+    "rel_path": "core/automation/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.automation.live_automation",
+        "level": 0,
+        "names": [
+          "LiveAutomationEngine"
+        ]
+      }
+    ]
+  },
+  "core/autonomy/autonomy_governor.py": {
+    "rel_path": "core/autonomy/autonomy_governor.py",
+    "imports": [
+      "logging",
+      "threading"
+    ],
+    "from_imports": [
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "IntEnum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/autonomy/goal_manager.py": {
+    "rel_path": "core/autonomy/goal_manager.py",
+    "imports": [
+      "threading",
+      "uuid"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime",
+          "timezone"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Optional"
+        ]
+      }
+    ]
+  },
+  "core/autonomy/risk_evaluator.py": {
+    "rel_path": "core/autonomy/risk_evaluator.py",
+    "imports": [
+      "threading"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "IntEnum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Sequence",
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/autonomy/scheduler.py": {
+    "rel_path": "core/autonomy/scheduler.py",
+    "imports": [
+      "threading",
+      "uuid"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime",
+          "timedelta",
+          "timezone"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Optional"
+        ]
+      }
+    ]
+  },
+  "core/autonomy/__init__.py": {
+    "rel_path": "core/autonomy/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/capability/base.py": {
+    "rel_path": "core/capability/base.py",
+    "imports": [
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Optional"
+        ]
+      },
+      {
+        "module": "core.autonomy.risk_evaluator",
+        "level": 0,
+        "names": [
+          "RiskLevel"
+        ]
+      },
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      }
+    ]
+  },
+  "core/capability/__init__.py": {
+    "rel_path": "core/capability/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/config/defaults.py": {
+    "rel_path": "core/config/defaults.py",
+    "imports": [
+      "os"
+    ],
+    "from_imports": []
+  },
+  "core/config/__init__.py": {
+    "rel_path": "core/config/__init__.py",
+    "imports": [
+      "configparser",
+      "os",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "core.runtime.paths",
+        "level": 0,
+        "names": [
+          "_resolve_path"
+        ]
+      }
+    ]
+  },
+  "core/context/context.py": {
+    "rel_path": "core/context/context.py",
+    "imports": [
+      "logging",
+      "uuid",
+      "json",
+      "asyncio",
+      "asyncio"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "contextvars",
+        "level": 0,
+        "names": [
+          "Token"
+        ]
+      },
+      {
+        "module": "core.state_machine",
+        "level": 0,
+        "names": [
+          "StateMachine",
+          "State"
+        ]
+      },
+      {
+        "module": "core.logging.logger",
+        "level": 0,
+        "names": [
+          "set_trace_ids",
+          "reset_trace_ids"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "core/context/__init__.py": {
+    "rel_path": "core/context/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      }
+    ]
+  },
+  "core/controller/automation_manager.py": {
+    "rel_path": "core/controller/automation_manager.py",
+    "imports": [
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable"
+        ]
+      },
+      {
+        "module": "core.automation.live_automation",
+        "level": 0,
+        "names": [
+          "LiveAutomationEngine"
+        ]
+      }
+    ]
+  },
+  "core/controller/complexity_scorer.py": {
+    "rel_path": "core/controller/complexity_scorer.py",
+    "imports": [
+      "re",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/controller/goal_runner.py": {
+    "rel_path": "core/controller/goal_runner.py",
+    "imports": [
+      "asyncio",
+      "json",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime",
+          "timezone"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Callable"
+        ]
+      }
+    ]
+  },
+  "core/controller/intents.py": {
+    "rel_path": "core/controller/intents.py",
+    "imports": [
+      "logging",
+      "re",
+      "parsedatetime",
+      "time"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      }
+    ]
+  },
+  "core/controller/intent_handlers.py": {
+    "rel_path": "core/controller/intent_handlers.py",
+    "imports": [
+      "uuid",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "TYPE_CHECKING"
+        ]
+      },
+      {
+        "module": "core.controller.request_rules",
+        "level": 0,
+        "names": [
+          "is_active_window_request",
+          "is_explicit_web_search"
+        ]
+      },
+      {
+        "module": "core.desktop.shortcuts",
+        "level": 0,
+        "names": [
+          "handle_desktop_command",
+          "plan_desktop_command"
+        ]
+      },
+      {
+        "module": "core.controller.web_search",
+        "level": 0,
+        "names": [
+          "handle_web_search"
+        ]
+      },
+      {
+        "module": "core.controller_v2",
+        "level": 0,
+        "names": [
+          "JarvisControllerV2"
+        ]
+      }
+    ]
+  },
+  "core/controller/intent_router.py": {
+    "rel_path": "core/controller/intent_router.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Awaitable",
+          "Callable"
+        ]
+      }
+    ]
+  },
+  "core/controller/llm_dispatcher.py": {
+    "rel_path": "core/controller/llm_dispatcher.py",
+    "imports": [
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.controller.request_rules",
+        "level": 0,
+        "names": [
+          "is_preference_relevant"
+        ]
+      }
+    ]
+  },
+  "core/controller/llm_orchestrator.py": {
+    "rel_path": "core/controller/llm_orchestrator.py",
+    "imports": [
+      "asyncio",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Dict"
+        ]
+      }
+    ]
+  },
+  "core/controller/memory_subsystem.py": {
+    "rel_path": "core/controller/memory_subsystem.py",
+    "imports": [
+      "asyncio",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "List"
+        ]
+      }
+    ]
+  },
+  "core/controller/request_rules.py": {
+    "rel_path": "core/controller/request_rules.py",
+    "imports": [
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      }
+    ]
+  },
+  "core/controller/services.py": {
+    "rel_path": "core/controller/services.py",
+    "imports": [
+      "configparser",
+      "inspect",
+      "logging",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.agent.agent_loop",
+        "level": 0,
+        "names": [
+          "AgentLoopEngine"
+        ]
+      },
+      {
+        "module": "core.state_machine",
+        "level": 0,
+        "names": [
+          "StateMachine"
+        ]
+      },
+      {
+        "module": "core.autonomy.scheduler",
+        "level": 0,
+        "names": [
+          "Scheduler"
+        ]
+      },
+      {
+        "module": "core.autonomy.autonomy_governor",
+        "level": 0,
+        "names": [
+          "AutonomyGovernor"
+        ]
+      },
+      {
+        "module": "core.autonomy.goal_manager",
+        "level": 0,
+        "names": [
+          "GoalManager"
+        ]
+      },
+      {
+        "module": "core.autonomy.risk_evaluator",
+        "level": 0,
+        "names": [
+          "RiskEvaluator"
+        ]
+      },
+      {
+        "module": "core.desktop.actions",
+        "level": 0,
+        "names": [
+          "DesktopActionExecutor"
+        ]
+      },
+      {
+        "module": "core.desktop.observation",
+        "level": 0,
+        "names": [
+          "DesktopObserver"
+        ]
+      },
+      {
+        "module": "core.llm.client",
+        "level": 0,
+        "names": [
+          "LLMClientV2"
+        ]
+      },
+      {
+        "module": "core.llm.model_router",
+        "level": 0,
+        "names": [
+          "ModelRouter"
+        ]
+      },
+      {
+        "module": "core.llm.telemetry",
+        "level": 0,
+        "names": [
+          "RoutingTelemetry"
+        ]
+      },
+      {
+        "module": "core.planner.planner",
+        "level": 0,
+        "names": [
+          "TaskPlanner"
+        ]
+      },
+      {
+        "module": "core.llm.defaults",
+        "level": 0,
+        "names": [
+          "DEFAULT_MODEL"
+        ]
+      },
+      {
+        "module": "core.memory.hybrid_memory",
+        "level": 0,
+        "names": [
+          "HybridMemory"
+        ]
+      },
+      {
+        "module": "core.profile",
+        "level": 0,
+        "names": [
+          "UserProfileEngine"
+        ]
+      },
+      {
+        "module": "core.proactive.background_monitor",
+        "level": 0,
+        "names": [
+          "BackgroundMonitor"
+        ]
+      },
+      {
+        "module": "core.proactive.notifier",
+        "level": 0,
+        "names": [
+          "NotificationManager"
+        ]
+      },
+      {
+        "module": "core.synthesis",
+        "level": 0,
+        "names": [
+          "ProfileSynthesizer"
+        ]
+      },
+      {
+        "module": "core.runtime.paths",
+        "level": 0,
+        "names": [
+          "_resolve_path"
+        ]
+      },
+      {
+        "module": "core.tools.builtin_tools",
+        "level": 0,
+        "names": [
+          "register_all_tools"
+        ]
+      },
+      {
+        "module": "core.registry.registry",
+        "level": 0,
+        "names": [
+          "CapabilityRegistry"
+        ]
+      },
+      {
+        "module": "core.runtime.event_bus",
+        "level": 0,
+        "names": [
+          "EventBus"
+        ]
+      },
+      {
+        "module": "core.config",
+        "level": 0,
+        "names": [
+          "JarvisConfig"
+        ]
+      },
+      {
+        "module": "core.runtime.container",
+        "level": 0,
+        "names": [
+          "ServiceContainer"
+        ]
+      },
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      },
+      {
+        "module": "core.executor.engine",
+        "level": 0,
+        "names": [
+          "DAGExecutor"
+        ]
+      },
+      {
+        "module": "core.tools.builtin_tools",
+        "level": 0,
+        "names": [
+          "logger"
+        ]
+      },
+      {
+        "module": "core.tools.builtin_tools",
+        "level": 0,
+        "names": [
+          "logger"
+        ]
+      }
+    ]
+  },
+  "core/controller/web_search.py": {
+    "rel_path": "core/controller/web_search.py",
+    "imports": [
+      "logging",
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.controller.request_rules",
+        "level": 0,
+        "names": [
+          "is_explicit_web_search",
+          "should_force_web_search"
+        ]
+      },
+      {
+        "module": "core.tools.web_tools",
+        "level": 0,
+        "names": [
+          "web_search"
+        ]
+      },
+      {
+        "module": "core.tools.web_tools",
+        "level": 0,
+        "names": [
+          "_basic_query_cleanup"
+        ]
+      },
+      {
+        "module": "core.controller.request_rules",
+        "level": 0,
+        "names": [
+          "is_preference_relevant"
+        ]
+      }
+    ]
+  },
+  "core/controller/__init__.py": {
+    "rel_path": "core/controller/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/desktop/actions.py": {
+    "rel_path": "core/desktop/actions.py",
+    "imports": [
+      "inspect",
+      "time"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable"
+        ]
+      },
+      {
+        "module": "core.autonomy.risk_evaluator",
+        "level": 0,
+        "names": [
+          "RiskEvaluator",
+          "RiskLevel",
+          "RiskResult"
+        ]
+      },
+      {
+        "module": "core.desktop.contracts",
+        "level": 0,
+        "names": [
+          "DesktopAction",
+          "DesktopActionResult",
+          "DesktopActionStatus",
+          "DesktopActionType",
+          "DesktopRiskTier"
+        ]
+      },
+      {
+        "module": "core.tools.system_automation",
+        "level": 0,
+        "names": [
+          "async_launch_application"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "click"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "double_click"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "right_click"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "click_text_on_screen"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "click_screen_target"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "double_click_screen_target"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "right_click_screen_target"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "type_text"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "press_key"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "hotkey"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "move_mouse"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "scroll"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "drag"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "focus_window"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "clipboard_get"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "clipboard_set"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "clipboard_paste"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "cast"
+        ]
+      },
+      {
+        "module": "core.logging.logger",
+        "level": 0,
+        "names": [
+          "audit"
+        ]
+      }
+    ]
+  },
+  "core/desktop/contracts.py": {
+    "rel_path": "core/desktop/contracts.py",
+    "imports": [
+      "time",
+      "uuid"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/desktop/mission.py": {
+    "rel_path": "core/desktop/mission.py",
+    "imports": [
+      "inspect",
+      "time",
+      "uuid"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable",
+          "Iterable"
+        ]
+      },
+      {
+        "module": "core.desktop.actions",
+        "level": 0,
+        "names": [
+          "DesktopActionExecutor"
+        ]
+      },
+      {
+        "module": "core.desktop.contracts",
+        "level": 0,
+        "names": [
+          "ApprovalDecision",
+          "DesktopAction",
+          "DesktopActionResult",
+          "DesktopActionStatus",
+          "DesktopChange",
+          "DesktopObservation"
+        ]
+      },
+      {
+        "module": "core.desktop.observation",
+        "level": 0,
+        "names": [
+          "DesktopObserver"
+        ]
+      },
+      {
+        "module": "core.logging.logger",
+        "level": 0,
+        "names": [
+          "audit"
+        ]
+      }
+    ]
+  },
+  "core/desktop/observation.py": {
+    "rel_path": "core/desktop/observation.py",
+    "imports": [
+      "hashlib",
+      "inspect"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable"
+        ]
+      },
+      {
+        "module": "core.desktop.contracts",
+        "level": 0,
+        "names": [
+          "DesktopChange",
+          "DesktopObservation",
+          "ScreenTarget"
+        ]
+      },
+      {
+        "module": "core.tools.screen",
+        "level": 0,
+        "names": [
+          "capture_screen"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "get_active_window"
+        ]
+      },
+      {
+        "module": "core.tools.screen",
+        "level": 0,
+        "names": [
+          "read_screen_text"
+        ]
+      }
+    ]
+  },
+  "core/desktop/shortcuts.py": {
+    "rel_path": "core/desktop/shortcuts.py",
+    "imports": [
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "urllib.parse",
+        "level": 0,
+        "names": [
+          "quote_plus"
+        ]
+      },
+      {
+        "module": "core.desktop.actions",
+        "level": 0,
+        "names": [
+          "DesktopActionExecutor"
+        ]
+      },
+      {
+        "module": "core.desktop.contracts",
+        "level": 0,
+        "names": [
+          "DesktopAction",
+          "DesktopActionType"
+        ]
+      },
+      {
+        "module": "core.desktop.mission",
+        "level": 0,
+        "names": [
+          "DesktopMissionExecutor",
+          "DesktopMissionStatus"
+        ]
+      },
+      {
+        "module": "core.desktop.observation",
+        "level": 0,
+        "names": [
+          "DesktopObserver"
+        ]
+      },
+      {
+        "module": "core.tools.system_automation",
+        "level": 0,
+        "names": [
+          "async_launch_application"
+        ]
+      }
+    ]
+  },
+  "core/desktop/__init__.py": {
+    "rel_path": "core/desktop/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.desktop.actions",
+        "level": 0,
+        "names": [
+          "DesktopActionExecutor"
+        ]
+      },
+      {
+        "module": "core.desktop.contracts",
+        "level": 0,
+        "names": [
+          "ApprovalDecision",
+          "DesktopAction",
+          "DesktopActionResult",
+          "DesktopActionStatus",
+          "DesktopActionType",
+          "DesktopChange",
+          "DesktopObservation",
+          "DesktopRiskTier",
+          "ScreenTarget"
+        ]
+      },
+      {
+        "module": "core.desktop.mission",
+        "level": 0,
+        "names": [
+          "DesktopMissionExecutor",
+          "DesktopMissionStatus",
+          "MissionExecutionRecord",
+          "MissionStepRecord",
+          "RecoveryDecision"
+        ]
+      },
+      {
+        "module": "core.desktop.observation",
+        "level": 0,
+        "names": [
+          "DesktopObserver"
+        ]
+      }
+    ]
+  },
+  "core/execution/dispatcher.py": {
+    "rel_path": "core/execution/dispatcher.py",
+    "imports": [
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Dict"
+        ]
+      },
+      {
+        "module": "core.executor.engine",
+        "level": 0,
+        "names": [
+          "DAGExecutor"
+        ]
+      }
+    ]
+  },
+  "core/execution/__init__.py": {
+    "rel_path": "core/execution/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "dispatcher",
+        "level": 1,
+        "names": [
+          "DispatchPipeline"
+        ]
+      }
+    ]
+  },
+  "core/executor/dag.py": {
+    "rel_path": "core/executor/dag.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Dict",
+          "List",
+          "Set"
+        ]
+      }
+    ]
+  },
+  "core/executor/engine.py": {
+    "rel_path": "core/executor/engine.py",
+    "imports": [
+      "asyncio",
+      "inspect",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable",
+          "Dict",
+          "Set"
+        ]
+      },
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      },
+      {
+        "module": "core.executor.dag",
+        "level": 0,
+        "names": [
+          "PlanDAG"
+        ]
+      }
+    ]
+  },
+  "core/executor/__init__.py": {
+    "rel_path": "core/executor/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/hardware/device_registry.py": {
+    "rel_path": "core/hardware/device_registry.py",
+    "imports": [
+      "logging",
+      "asyncio"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Dict",
+          "List",
+          "Any"
+        ]
+      },
+      {
+        "module": "core.hardware.serial_controller",
+        "level": 0,
+        "names": [
+          "SerialController"
+        ]
+      }
+    ]
+  },
+  "core/hardware/serial_controller.py": {
+    "rel_path": "core/hardware/serial_controller.py",
+    "imports": [
+      "serial"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      }
+    ]
+  },
+  "core/hardware/__init__.py": {
+    "rel_path": "core/hardware/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "serial_controller",
+        "level": 1,
+        "names": [
+          "SerialController"
+        ]
+      },
+      {
+        "module": "device_registry",
+        "level": 1,
+        "names": [
+          "DeviceRegistry",
+          "HardwareDevice"
+        ]
+      }
+    ]
+  },
+  "core/introspection/health.py": {
+    "rel_path": "core/introspection/health.py",
+    "imports": [
+      "importlib.util",
+      "os",
+      "sys",
+      "subprocess"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "urllib.request",
+        "level": 0,
+        "names": [
+          "urlopen"
+        ]
+      },
+      {
+        "module": "core.ops.production",
+        "level": 0,
+        "names": [
+          "is_production",
+          "validate_production_config"
+        ]
+      },
+      {
+        "module": "core.runtime.paths",
+        "level": 0,
+        "names": [
+          "_resolve_path"
+        ]
+      },
+      {
+        "module": "core.runtime.import_validator",
+        "level": 0,
+        "names": [
+          "StartupValidator"
+        ]
+      },
+      {
+        "module": "core.runtime.import_validator",
+        "level": 0,
+        "names": [
+          "StartupValidator"
+        ]
+      }
+    ]
+  },
+  "core/introspection/__init__.py": {
+    "rel_path": "core/introspection/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "health",
+        "level": 1,
+        "names": [
+          "HealthCheck",
+          "HealthReport",
+          "HealthStatus",
+          "run_lightweight_health_check",
+          "run_startup_health_check"
+        ]
+      }
+    ]
+  },
+  "core/llm/client.py": {
+    "rel_path": "core/llm/client.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "re",
+      "time",
+      "os",
+      "concurrent.futures"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.config.defaults",
+        "level": 0,
+        "names": [
+          "OLLAMA_BASE_URL"
+        ]
+      },
+      {
+        "module": "core.llm.ollama_client",
+        "level": 0,
+        "names": [
+          "OllamaClient"
+        ]
+      },
+      {
+        "module": "core.llm.model_router",
+        "level": 0,
+        "names": [
+          "ModelRouter"
+        ]
+      },
+      {
+        "module": "core.llm.defaults",
+        "level": 0,
+        "names": [
+          "DEFAULT_MODEL"
+        ]
+      },
+      {
+        "module": "core.llm.cloud_client",
+        "level": 0,
+        "names": [
+          "CloudLLMClient"
+        ]
+      }
+    ]
+  },
+  "core/llm/cloud_client.py": {
+    "rel_path": "core/llm/cloud_client.py",
+    "imports": [
+      "logging",
+      "os",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      }
+    ]
+  },
+  "core/llm/defaults.py": {
+    "rel_path": "core/llm/defaults.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/llm/model_router.py": {
+    "rel_path": "core/llm/model_router.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "os",
+      "threading",
+      "time"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Iterable",
+          "Any"
+        ]
+      },
+      {
+        "module": "core.config.defaults",
+        "level": 0,
+        "names": [
+          "OLLAMA_BASE_URL"
+        ]
+      },
+      {
+        "module": "core.llm.ollama_client",
+        "level": 0,
+        "names": [
+          "list_models_sync"
+        ]
+      },
+      {
+        "module": "core.llm.model_spec",
+        "level": 0,
+        "names": [
+          "ModelRegistry",
+          "RoutingDecision"
+        ]
+      }
+    ]
+  },
+  "core/llm/model_spec.py": {
+    "rel_path": "core/llm/model_spec.py",
+    "imports": [
+      "configparser",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/llm/ollama_client.py": {
+    "rel_path": "core/llm/ollama_client.py",
+    "imports": [
+      "asyncio",
+      "json",
+      "logging",
+      "re",
+      "aiohttp"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "urllib.request",
+        "level": 0,
+        "names": [
+          "urlopen"
+        ]
+      },
+      {
+        "module": "core.config.defaults",
+        "level": 0,
+        "names": [
+          "OLLAMA_BASE_URL"
+        ]
+      },
+      {
+        "module": "core.llm.defaults",
+        "level": 0,
+        "names": [
+          "DEFAULT_MODEL"
+        ]
+      }
+    ]
+  },
+  "core/llm/telemetry.py": {
+    "rel_path": "core/llm/telemetry.py",
+    "imports": [
+      "json",
+      "logging",
+      "math",
+      "threading"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "collections",
+        "level": 0,
+        "names": [
+          "deque"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "asdict",
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/llm/__init__.py": {
+    "rel_path": "core/llm/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.llm.client",
+        "level": 0,
+        "names": [
+          "LLMClientV2"
+        ]
+      },
+      {
+        "module": "core.llm.ollama_client",
+        "level": 0,
+        "names": [
+          "OllamaClient",
+          "OllamaTransientError"
+        ]
+      },
+      {
+        "module": "core.llm.cloud_client",
+        "level": 0,
+        "names": [
+          "CloudLLMClient"
+        ]
+      },
+      {
+        "module": "core.llm.model_router",
+        "level": 0,
+        "names": [
+          "ModelRouter"
+        ]
+      },
+      {
+        "module": "core.llm.model_spec",
+        "level": 0,
+        "names": [
+          "ModelSpec",
+          "ModelRegistry",
+          "RoutingDecision"
+        ]
+      },
+      {
+        "module": "core.llm.telemetry",
+        "level": 0,
+        "names": [
+          "RoutingTelemetry"
+        ]
+      }
+    ]
+  },
+  "core/logging/logger.py": {
+    "rel_path": "core/logging/logger.py",
+    "imports": [
+      "atexit",
+      "hashlib",
+      "json",
+      "logging",
+      "logging.handlers",
+      "queue",
+      "re",
+      "threading",
+      "contextvars",
+      "sys",
+      "os",
+      "copy",
+      "sys",
+      "sys",
+      "datetime",
+      "traceback"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.runtime.paths",
+        "level": 0,
+        "names": [
+          "_resolve_path"
+        ]
+      }
+    ]
+  },
+  "core/logging/__init__.py": {
+    "rel_path": "core/logging/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "",
+        "level": 1,
+        "names": [
+          "logger"
+        ]
+      }
+    ]
+  },
+  "core/memory/code_indexer.py": {
+    "rel_path": "core/memory/code_indexer.py",
+    "imports": [
+      "ast"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/memory/code_indexer_service.py": {
+    "rel_path": "core/memory/code_indexer_service.py",
+    "imports": [
+      "asyncio",
+      "hashlib",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Callable"
+        ]
+      },
+      {
+        "module": "core.memory.code_indexer",
+        "level": 0,
+        "names": [
+          "extract_code_chunks"
+        ]
+      }
+    ]
+  },
+  "core/memory/context_compressor.py": {
+    "rel_path": "core/memory/context_compressor.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "re",
+      "hashlib",
+      "math"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      }
+    ]
+  },
+  "core/memory/embeddings.py": {
+    "rel_path": "core/memory/embeddings.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "hashlib",
+      "threading",
+      "numpy",
+      "os"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Optional",
+          "TYPE_CHECKING"
+        ]
+      },
+      {
+        "module": "sentence_transformers",
+        "level": 0,
+        "names": [
+          "SentenceTransformer"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "cast"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "cast"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "cast"
+        ]
+      },
+      {
+        "module": "sentence_transformers",
+        "level": 0,
+        "names": [
+          "SentenceTransformer"
+        ]
+      }
+    ]
+  },
+  "core/memory/hybrid_memory.py": {
+    "rel_path": "core/memory/hybrid_memory.py",
+    "imports": [
+      "contextlib",
+      "asyncio",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.memory.semantic_memory",
+        "level": 0,
+        "names": [
+          "SemanticMemory"
+        ]
+      },
+      {
+        "module": "core.memory.sqlite_pool",
+        "level": 0,
+        "names": [
+          "SQLitePool"
+        ]
+      },
+      {
+        "module": "core.memory.sqlite_storage",
+        "level": 0,
+        "names": [
+          "SQLiteStorage"
+        ]
+      },
+      {
+        "module": "core.memory.retriever",
+        "level": 0,
+        "names": [
+          "MemoryRetriever"
+        ]
+      },
+      {
+        "module": "core.memory.code_indexer_service",
+        "level": 0,
+        "names": [
+          "CodeIndexerService"
+        ]
+      },
+      {
+        "module": "core.memory.code_indexer",
+        "level": 0,
+        "names": [
+          "extract_code_chunks"
+        ]
+      },
+      {
+        "module": "core.memory.context_compressor",
+        "level": 0,
+        "names": [
+          "ContextCompressor"
+        ]
+      }
+    ]
+  },
+  "core/memory/retriever.py": {
+    "rel_path": "core/memory/retriever.py",
+    "imports": [
+      "logging",
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable"
+        ]
+      }
+    ]
+  },
+  "core/memory/semantic_memory.py": {
+    "rel_path": "core/memory/semantic_memory.py",
+    "imports": [
+      "uuid",
+      "asyncio",
+      "logging",
+      "chromadb"
+    ],
+    "from_imports": [
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "List",
+          "Dict",
+          "Any"
+        ]
+      },
+      {
+        "module": "chromadb.config",
+        "level": 0,
+        "names": [
+          "Settings"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "cast"
+        ]
+      },
+      {
+        "module": "core.memory.embeddings",
+        "level": 0,
+        "names": [
+          "get_embedding_manager"
+        ]
+      }
+    ]
+  },
+  "core/memory/sqlite_pool.py": {
+    "rel_path": "core/memory/sqlite_pool.py",
+    "imports": [
+      "asyncio",
+      "contextlib",
+      "aiosqlite"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      }
+    ]
+  },
+  "core/memory/sqlite_storage.py": {
+    "rel_path": "core/memory/sqlite_storage.py",
+    "imports": [
+      "json",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/memory/__init__.py": {
+    "rel_path": "core/memory/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/metrics/confidence.py": {
+    "rel_path": "core/metrics/confidence.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      }
+    ]
+  },
+  "core/metrics/__init__.py": {
+    "rel_path": "core/metrics/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "confidence",
+        "level": 1,
+        "names": [
+          "ConfidenceModel"
+        ]
+      }
+    ]
+  },
+  "core/ops/production.py": {
+    "rel_path": "core/ops/production.py",
+    "imports": [
+      "os"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/ops/__init__.py": {
+    "rel_path": "core/ops/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/planner/planner.py": {
+    "rel_path": "core/planner/planner.py",
+    "imports": [
+      "json",
+      "logging",
+      "re",
+      "inspect",
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.autonomy.risk_evaluator",
+        "level": 0,
+        "names": [
+          "RiskLevel",
+          "RiskEvaluator"
+        ]
+      }
+    ]
+  },
+  "core/planner/__init__.py": {
+    "rel_path": "core/planner/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/plugins/__init__.py": {
+    "rel_path": "core/plugins/__init__.py",
+    "imports": [
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/proactive/background_monitor.py": {
+    "rel_path": "core/proactive/background_monitor.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "psutil"
+    ],
+    "from_imports": []
+  },
+  "core/proactive/notifier.py": {
+    "rel_path": "core/proactive/notifier.py",
+    "imports": [
+      "logging",
+      "time",
+      "asyncio",
+      "asyncio",
+      "asyncio",
+      "inspect"
+    ],
+    "from_imports": [
+      {
+        "module": "plyer",
+        "level": 0,
+        "names": [
+          "notification"
+        ]
+      }
+    ]
+  },
+  "core/proactive/__init__.py": {
+    "rel_path": "core/proactive/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/registry/base.py": {
+    "rel_path": "core/registry/base.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "abc",
+        "level": 0,
+        "names": [
+          "ABC",
+          "abstractmethod"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.capability.base",
+        "level": 0,
+        "names": [
+          "ToolObservation"
+        ]
+      },
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      }
+    ]
+  },
+  "core/registry/registry.py": {
+    "rel_path": "core/registry/registry.py",
+    "imports": [
+      "asyncio",
+      "importlib.util",
+      "inspect",
+      "logging",
+      "time"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable"
+        ]
+      },
+      {
+        "module": "core.autonomy.risk_evaluator",
+        "level": 0,
+        "names": [
+          "RiskLevel"
+        ]
+      },
+      {
+        "module": "core.capability.base",
+        "level": 0,
+        "names": [
+          "Capability",
+          "ToolObservation",
+          "_normalize_tool_result"
+        ]
+      },
+      {
+        "module": "core.context.context",
+        "level": 0,
+        "names": [
+          "TaskExecutionContext"
+        ]
+      },
+      {
+        "module": "core.desktop.contracts",
+        "level": 0,
+        "names": [
+          "DesktopAction",
+          "DesktopActionType"
+        ]
+      },
+      {
+        "module": "core.desktop.mission",
+        "level": 0,
+        "names": [
+          "DesktopMissionExecutor",
+          "MissionExecutionRecord"
+        ]
+      }
+    ]
+  },
+  "core/registry/__init__.py": {
+    "rel_path": "core/registry/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.registry.registry",
+        "level": 0,
+        "names": [
+          "CapabilityRegistry"
+        ]
+      }
+    ]
+  },
+  "core/runtime/bootstrap.py": {
+    "rel_path": "core/runtime/bootstrap.py",
+    "imports": [
+      "argparse",
+      "asyncio",
+      "configparser",
+      "contextlib",
+      "dataclasses",
+      "faulthandler",
+      "io",
+      "json",
+      "logging",
+      "math",
+      "os",
+      "signal",
+      "sys",
+      "threading"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.ops.production",
+        "level": 0,
+        "names": [
+          "validate_production_config"
+        ]
+      },
+      {
+        "module": "core.runtime.paths",
+        "level": 0,
+        "names": [
+          "PROJECT_ROOT",
+          "_resolve_path"
+        ]
+      },
+      {
+        "module": "core.config",
+        "level": 0,
+        "names": [
+          "load_config"
+        ]
+      },
+      {
+        "module": "core.llm.model_router",
+        "level": 0,
+        "names": [
+          "ModelRouter"
+        ]
+      },
+      {
+        "module": "core.introspection.health",
+        "level": 0,
+        "names": [
+          "HealthReport",
+          "HealthCheck",
+          "HealthStatus",
+          "run_startup_health_check"
+        ]
+      },
+      {
+        "module": "dotenv",
+        "level": 0,
+        "names": [
+          "load_dotenv"
+        ]
+      },
+      {
+        "module": "core.logging",
+        "level": 0,
+        "names": [
+          "logger"
+        ]
+      },
+      {
+        "module": "core.controller_v2",
+        "level": 0,
+        "names": [
+          "JarvisControllerV2"
+        ]
+      },
+      {
+        "module": "integrations.loader",
+        "level": 0,
+        "names": [
+          "IntegrationLoader"
+        ]
+      },
+      {
+        "module": "integrations.registry",
+        "level": 0,
+        "names": [
+          "integration_registry"
+        ]
+      }
+    ]
+  },
+  "core/runtime/container.py": {
+    "rel_path": "core/runtime/container.py",
+    "imports": [
+      "logging",
+      "inspect"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable",
+          "Dict",
+          "Tuple",
+          "Type",
+          "Union"
+        ]
+      }
+    ]
+  },
+  "core/runtime/dashboard_runtime.py": {
+    "rel_path": "core/runtime/dashboard_runtime.py",
+    "imports": [
+      "asyncio",
+      "contextlib",
+      "logging",
+      "threading",
+      "time",
+      "uvicorn",
+      "socket"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "dashboard.server",
+        "level": 0,
+        "names": [
+          "app"
+        ]
+      },
+      {
+        "module": "dashboard.server",
+        "level": 0,
+        "names": [
+          "set_controller",
+          "update_state"
+        ]
+      },
+      {
+        "module": "dashboard.server",
+        "level": 0,
+        "names": [
+          "update_state"
+        ]
+      }
+    ]
+  },
+  "core/runtime/entrypoint.py": {
+    "rel_path": "core/runtime/entrypoint.py",
+    "imports": [
+      "asyncio",
+      "contextlib",
+      "logging",
+      "os",
+      "sys"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.introspection.health",
+        "level": 0,
+        "names": [
+          "HealthStatus",
+          "run_lightweight_health_check"
+        ]
+      },
+      {
+        "module": "core.runtime.paths",
+        "level": 0,
+        "names": [
+          "_resolve_path"
+        ]
+      },
+      {
+        "module": "core.runtime.bootstrap",
+        "level": 0,
+        "names": [
+          "DEFAULT_CONFIG_PATH",
+          "DEFAULT_SHUTDOWN_TIMEOUT_S",
+          "ExitCode",
+          "_cancel_task",
+          "_install_loop_exception_handler",
+          "_install_process_exception_hooks",
+          "_load_controller_class",
+          "_load_integrations",
+          "_load_logger_module",
+          "_prepare_runtime_environment",
+          "_prepare_runtime_paths",
+          "_print_config_snapshot",
+          "_print_model_inventory",
+          "_resolve_dashboard_binding",
+          "_resolve_runtime_mode",
+          "_resolve_voice_enabled",
+          "_run_startup_health_check",
+          "_safe_audit",
+          "_should_exit_after_info",
+          "_uprint",
+          "_validate_startup_settings",
+          "apply_cli_overrides",
+          "load_config"
+        ]
+      },
+      {
+        "module": "core.runtime.bootstrap",
+        "level": 0,
+        "names": [
+          "_ShutdownCoordinator"
+        ]
+      },
+      {
+        "module": "core.runtime.dashboard_runtime",
+        "level": 0,
+        "names": [
+          "DashboardRuntime"
+        ]
+      },
+      {
+        "module": "core.runtime.bootstrap",
+        "level": 0,
+        "names": [
+          "_bootstrap"
+        ]
+      }
+    ]
+  },
+  "core/runtime/event_bus.py": {
+    "rel_path": "core/runtime/event_bus.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "threading",
+      "time",
+      "uuid"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "collections",
+        "level": 0,
+        "names": [
+          "deque"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Awaitable",
+          "Callable",
+          "Union"
+        ]
+      }
+    ]
+  },
+  "core/runtime/import_validator.py": {
+    "rel_path": "core/runtime/import_validator.py",
+    "imports": [
+      "ast",
+      "importlib",
+      "importlib.util",
+      "logging",
+      "os",
+      "sys",
+      "asyncio"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable",
+          "TypeVar",
+          "cast"
+        ]
+      }
+    ]
+  },
+  "core/runtime/paths.py": {
+    "rel_path": "core/runtime/paths.py",
+    "imports": [
+      "os"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "core/runtime/__init__.py": {
+    "rel_path": "core/runtime/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.runtime.bootstrap",
+        "level": 0,
+        "names": [
+          "DEFAULT_CONFIG_PATH",
+          "DEFAULT_DASHBOARD_HOST",
+          "DEFAULT_DASHBOARD_PORT",
+          "DEFAULT_SHUTDOWN_TIMEOUT_S",
+          "ExitCode",
+          "PROJECT_ROOT",
+          "_ShutdownCoordinator",
+          "_bootstrap",
+          "apply_cli_overrides",
+          "load_config",
+          "parse_args"
+        ]
+      },
+      {
+        "module": "core.runtime.entrypoint",
+        "level": 0,
+        "names": [
+          "async_run"
+        ]
+      }
+    ]
+  },
+  "core/security/auth.py": {
+    "rel_path": "core/security/auth.py",
+    "imports": [
+      "contextlib",
+      "base64",
+      "hashlib",
+      "hmac",
+      "os",
+      "secrets",
+      "sqlite3",
+      "time",
+      "bcrypt",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.runtime.bootstrap",
+        "level": 0,
+        "names": [
+          "PROJECT_ROOT"
+        ]
+      }
+    ]
+  },
+  "core/security/__init__.py": {
+    "rel_path": "core/security/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.security.auth",
+        "level": 0,
+        "names": [
+          "AuthManager"
+        ]
+      }
+    ]
+  },
+  "core/tools/auto_clicker.py": {
+    "rel_path": "core/tools/auto_clicker.py",
+    "imports": [
+      "argparse",
+      "asyncio",
+      "logging",
+      "sys"
+    ],
+    "from_imports": [
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "click_screen_target"
+        ]
+      }
+    ]
+  },
+  "core/tools/builtin_tools.py": {
+    "rel_path": "core/tools/builtin_tools.py",
+    "imports": [
+      "asyncio",
+      "json",
+      "logging",
+      "os",
+      "platform",
+      "datetime",
+      "datetime",
+      "psutil",
+      "shutil",
+      "shutil",
+      "fnmatch",
+      "shutil"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path",
+          "_PROJECT_ROOT"
+        ]
+      },
+      {
+        "module": "core.tools.fast_search_tool",
+        "level": 0,
+        "names": [
+          "run_fast_search"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path",
+          "ALLOWED_DIRECTORIES"
+        ]
+      },
+      {
+        "module": "core.tools.universal_converter",
+        "level": 0,
+        "names": [
+          "perform_conversion"
+        ]
+      },
+      {
+        "module": "core.tools.system_automation",
+        "level": 0,
+        "names": [
+          "async_delete_file",
+          "async_execute_shell",
+          "async_launch_application",
+          "async_write_file"
+        ]
+      },
+      {
+        "module": "core.tools.hardware_tools",
+        "level": 0,
+        "names": [
+          "send_hardware_command",
+          "read_sensor",
+          "list_hardware_devices",
+          "ping_device"
+        ]
+      },
+      {
+        "module": "core.tools.screen",
+        "level": 0,
+        "names": [
+          "capture_screen",
+          "capture_region",
+          "describe_screen",
+          "find_text_on_screen",
+          "read_screen_text",
+          "wait_for_text_on_screen"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "get_active_window"
+        ]
+      },
+      {
+        "module": "core.tools.web_tools",
+        "level": 0,
+        "names": [
+          "configure_web_tools",
+          "web_search",
+          "web_scrape"
+        ]
+      },
+      {
+        "module": "core.tools.gui_control",
+        "level": 0,
+        "names": [
+          "click",
+          "click_screen_target",
+          "click_text_on_screen",
+          "clipboard_get",
+          "clipboard_paste",
+          "clipboard_set",
+          "double_click",
+          "double_click_screen_target",
+          "drag",
+          "focus_window",
+          "move_mouse",
+          "press_key",
+          "right_click",
+          "right_click_screen_target",
+          "scroll",
+          "type_text",
+          "hotkey"
+        ]
+      }
+    ]
+  },
+  "core/tools/fast_search_tool.py": {
+    "rel_path": "core/tools/fast_search_tool.py",
+    "imports": [
+      "os",
+      "queue",
+      "threading",
+      "fnmatch",
+      "asyncio",
+      "ctypes",
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "core/tools/gui_control.py": {
+    "rel_path": "core/tools/gui_control.py",
+    "imports": [
+      "asyncio",
+      "configparser",
+      "json",
+      "logging",
+      "re",
+      "time",
+      "pyautogui",
+      "pyautogui",
+      "pyautogui",
+      "pygetwindow",
+      "pygetwindow",
+      "pyperclip",
+      "pyperclip"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "core.types.common",
+        "level": 0,
+        "names": [
+          "ToolResult"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.tools.screen",
+        "level": 0,
+        "names": [
+          "capture_screen"
+        ]
+      },
+      {
+        "module": "core.tools.vision",
+        "level": 0,
+        "names": [
+          "VisionTool"
+        ]
+      },
+      {
+        "module": "core.tools.screen",
+        "level": 0,
+        "names": [
+          "find_text_on_screen"
+        ]
+      },
+      {
+        "module": "core.tools.screen",
+        "level": 0,
+        "names": [
+          "find_text_on_screen"
+        ]
+      }
+    ]
+  },
+  "core/tools/hardware_tools.py": {
+    "rel_path": "core/tools/hardware_tools.py",
+    "imports": [
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "core.types.common",
+        "level": 0,
+        "names": [
+          "ToolResult"
+        ]
+      },
+      {
+        "module": "core.hardware.device_registry",
+        "level": 0,
+        "names": [
+          "DeviceRegistry"
+        ]
+      }
+    ]
+  },
+  "core/tools/path_utils.py": {
+    "rel_path": "core/tools/path_utils.py",
+    "imports": [
+      "os"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "core/tools/screen.py": {
+    "rel_path": "core/tools/screen.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "time",
+      "pyautogui",
+      "os",
+      "sys",
+      "pytesseract",
+      "base64",
+      "io"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "core.types.common",
+        "level": 0,
+        "names": [
+          "ToolResult"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "PIL",
+        "level": 0,
+        "names": [
+          "Image"
+        ]
+      }
+    ]
+  },
+  "core/tools/system_automation.py": {
+    "rel_path": "core/tools/system_automation.py",
+    "imports": [
+      "os",
+      "subprocess",
+      "asyncio",
+      "logging",
+      "shlex"
+    ],
+    "from_imports": [
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path"
+        ]
+      },
+      {
+        "module": "core.tools.path_utils",
+        "level": 0,
+        "names": [
+          "_assert_safe_path"
+        ]
+      }
+    ]
+  },
+  "core/tools/universal_converter.py": {
+    "rel_path": "core/tools/universal_converter.py",
+    "imports": [
+      "sys",
+      "subprocess",
+      "csv",
+      "json",
+      "yaml",
+      "yaml",
+      "markdown",
+      "html",
+      "pandas"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "PIL",
+        "level": 0,
+        "names": [
+          "Image"
+        ]
+      },
+      {
+        "module": "fpdf",
+        "level": 0,
+        "names": [
+          "FPDF"
+        ]
+      },
+      {
+        "module": "pypdf",
+        "level": 0,
+        "names": [
+          "PdfReader"
+        ]
+      }
+    ]
+  },
+  "core/tools/vision.py": {
+    "rel_path": "core/tools/vision.py",
+    "imports": [
+      "logging",
+      "requests",
+      "base64"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/tools/web_tools.py": {
+    "rel_path": "core/tools/web_tools.py",
+    "imports": [
+      "asyncio",
+      "configparser",
+      "json",
+      "logging",
+      "os",
+      "re",
+      "requests"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Protocol",
+          "Any",
+          "cast"
+        ]
+      },
+      {
+        "module": "duckduckgo_search",
+        "level": 0,
+        "names": [
+          "DDGS"
+        ]
+      },
+      {
+        "module": "bs4",
+        "level": 0,
+        "names": [
+          "BeautifulSoup"
+        ]
+      }
+    ]
+  },
+  "core/tools/__init__.py": {
+    "rel_path": "core/tools/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "core/types/common.py": {
+    "rel_path": "core/types/common.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass",
+          "field"
+        ]
+      },
+      {
+        "module": "enum",
+        "level": 0,
+        "names": [
+          "Enum"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/types/__init__.py": {
+    "rel_path": "core/types/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "core.types.common",
+        "level": 0,
+        "names": [
+          "IntegrationResult",
+          "ToolResult",
+          "IntegrationRiskLevel",
+          "RiskLevel"
+        ]
+      }
+    ]
+  },
+  "core/voice/audio.py": {
+    "rel_path": "core/voice/audio.py",
+    "imports": [
+      "os",
+      "numpy",
+      "torch",
+      "torch.nn.functional"
+    ],
+    "from_imports": [
+      {
+        "module": "functools",
+        "level": 0,
+        "names": [
+          "lru_cache"
+        ]
+      },
+      {
+        "module": "subprocess",
+        "level": 0,
+        "names": [
+          "CalledProcessError",
+          "run"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Optional",
+          "Union"
+        ]
+      }
+    ]
+  },
+  "core/voice/audio_input.py": {
+    "rel_path": "core/voice/audio_input.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "textwrap",
+        "level": 0,
+        "names": [
+          "dedent"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "TYPE_CHECKING",
+          "TypeAlias",
+          "cast"
+        ]
+      },
+      {
+        "module": "streamlit.elements.lib.file_uploader_utils",
+        "level": 0,
+        "names": [
+          "enforce_filename_restriction"
+        ]
+      },
+      {
+        "module": "streamlit.elements.lib.form_utils",
+        "level": 0,
+        "names": [
+          "current_form_id"
+        ]
+      },
+      {
+        "module": "streamlit.elements.lib.layout_utils",
+        "level": 0,
+        "names": [
+          "LayoutConfig",
+          "validate_width"
+        ]
+      },
+      {
+        "module": "streamlit.elements.lib.policies",
+        "level": 0,
+        "names": [
+          "check_widget_policies",
+          "maybe_raise_label_warnings"
+        ]
+      },
+      {
+        "module": "streamlit.elements.lib.utils",
+        "level": 0,
+        "names": [
+          "Key",
+          "LabelVisibility",
+          "compute_and_register_element_id",
+          "get_label_visibility_proto_value",
+          "to_key"
+        ]
+      },
+      {
+        "module": "streamlit.elements.widgets.file_uploader",
+        "level": 0,
+        "names": [
+          "_get_upload_files"
+        ]
+      },
+      {
+        "module": "streamlit.errors",
+        "level": 0,
+        "names": [
+          "StreamlitAPIException"
+        ]
+      },
+      {
+        "module": "streamlit.proto.AudioInput_pb2",
+        "level": 0,
+        "names": [
+          "AudioInput"
+        ]
+      },
+      {
+        "module": "streamlit.proto.Common_pb2",
+        "level": 0,
+        "names": [
+          "FileUploaderState"
+        ]
+      },
+      {
+        "module": "streamlit.proto.Common_pb2",
+        "level": 0,
+        "names": [
+          "UploadedFileInfo"
+        ]
+      },
+      {
+        "module": "streamlit.runtime.metrics_util",
+        "level": 0,
+        "names": [
+          "gather_metrics"
+        ]
+      },
+      {
+        "module": "streamlit.runtime.scriptrunner",
+        "level": 0,
+        "names": [
+          "ScriptRunContext",
+          "get_script_run_ctx"
+        ]
+      },
+      {
+        "module": "streamlit.runtime.state",
+        "level": 0,
+        "names": [
+          "WidgetArgs",
+          "WidgetCallback",
+          "WidgetKwargs",
+          "register_widget"
+        ]
+      },
+      {
+        "module": "streamlit.runtime.uploaded_file_manager",
+        "level": 0,
+        "names": [
+          "DeletedFile",
+          "UploadedFile"
+        ]
+      },
+      {
+        "module": "streamlit.delta_generator",
+        "level": 0,
+        "names": [
+          "DeltaGenerator"
+        ]
+      },
+      {
+        "module": "streamlit.elements.lib.layout_utils",
+        "level": 0,
+        "names": [
+          "WidthWithoutContent"
+        ]
+      }
+    ]
+  },
+  "core/voice/audio_playback.py": {
+    "rel_path": "core/voice/audio_playback.py",
+    "imports": [
+      "shutil",
+      "subprocess"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Optional"
+        ]
+      }
+    ]
+  },
+  "core/voice/audio_utils.py": {
+    "rel_path": "core/voice/audio_utils.py",
+    "imports": [
+      "datetime",
+      "platform",
+      "subprocess",
+      "numpy"
+    ],
+    "from_imports": [
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      }
+    ]
+  },
+  "core/voice/stt.py": {
+    "rel_path": "core/voice/stt.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "struct",
+      "numpy",
+      "sounddevice",
+      "speech_recognition",
+      "speech_recognition"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "dataclasses",
+        "level": 0,
+        "names": [
+          "dataclass"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Optional"
+        ]
+      },
+      {
+        "module": "faster_whisper",
+        "level": 0,
+        "names": [
+          "WhisperModel"
+        ]
+      }
+    ]
+  },
+  "core/voice/tts.py": {
+    "rel_path": "core/voice/tts.py",
+    "imports": [
+      "logging",
+      "re",
+      "threading",
+      "pyttsx3",
+      "asyncio",
+      "os",
+      "tempfile",
+      "edge_tts"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "core/voice/voice_layer.py": {
+    "rel_path": "core/voice/voice_layer.py",
+    "imports": [
+      "asyncio"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.voice.voice_loop",
+        "level": 0,
+        "names": [
+          "VoiceLoop"
+        ]
+      }
+    ]
+  },
+  "core/voice/voice_loop.py": {
+    "rel_path": "core/voice/voice_loop.py",
+    "imports": [
+      "asyncio",
+      "inspect",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.voice.stt",
+        "level": 0,
+        "names": [
+          "SpeechToText"
+        ]
+      },
+      {
+        "module": "core.voice.tts",
+        "level": 0,
+        "names": [
+          "TextToSpeech"
+        ]
+      },
+      {
+        "module": "core.voice.wake_word",
+        "level": 0,
+        "names": [
+          "WakeWordDetector"
+        ]
+      }
+    ]
+  },
+  "core/voice/wake_word.py": {
+    "rel_path": "core/voice/wake_word.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "os",
+      "threading",
+      "pvporcupine"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Callable",
+          "Optional"
+        ]
+      },
+      {
+        "module": "pvrecorder",
+        "level": 0,
+        "names": [
+          "PvRecorder"
+        ]
+      }
+    ]
+  },
+  "core/voice/__init__.py": {
+    "rel_path": "core/voice/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "DesignChange/investigate_domain.py": {
+    "rel_path": "DesignChange/investigate_domain.py",
+    "imports": [
+      "re",
+      "ast"
+    ],
+    "from_imports": [
+      {
+        "module": "collections",
+        "level": 0,
+        "names": [
+          "defaultdict"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "DesignChange/orchestrate_recovery.py": {
+    "rel_path": "DesignChange/orchestrate_recovery.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "integrations/base.py": {
+    "rel_path": "integrations/base.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "abc",
+        "level": 0,
+        "names": [
+          "ABC",
+          "abstractmethod"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "core.types.common",
+        "level": 0,
+        "names": [
+          "IntegrationResult",
+          "ToolResult",
+          "IntegrationRiskLevel",
+          "RiskLevel"
+        ]
+      }
+    ]
+  },
+  "integrations/loader.py": {
+    "rel_path": "integrations/loader.py",
+    "imports": [
+      "importlib",
+      "inspect",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/registry.py": {
+    "rel_path": "integrations/registry.py",
+    "imports": [
+      "inspect",
+      "logging"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/script.py": {
+    "rel_path": "integrations/script.py",
+    "imports": [
+      "os",
+      "glob",
+      "re"
+    ],
+    "from_imports": []
+  },
+  "integrations/script_ast.py": {
+    "rel_path": "integrations/script_ast.py",
+    "imports": [
+      "os",
+      "ast",
+      "json",
+      "re"
+    ],
+    "from_imports": []
+  },
+  "integrations/__init__.py": {
+    "rel_path": "integrations/__init__.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "integrations.registry",
+        "level": 0,
+        "names": [
+          "api_registry",
+          "integration_registry"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/calendar.py": {
+    "rel_path": "integrations/clients/calendar.py",
+    "imports": [
+      "asyncio",
+      "threading",
+      "importlib.util",
+      "datetime"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime",
+          "timedelta"
+        ]
+      },
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      },
+      {
+        "module": "icalendar",
+        "level": 0,
+        "names": [
+          "Calendar"
+        ]
+      },
+      {
+        "module": "dateutil.tz",
+        "level": 0,
+        "names": [
+          "tzlocal"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/computer_control.py": {
+    "rel_path": "integrations/clients/computer_control.py",
+    "imports": [
+      "asyncio",
+      "logging",
+      "os",
+      "pyautogui",
+      "pyautogui"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/email.py": {
+    "rel_path": "integrations/clients/email.py",
+    "imports": [
+      "asyncio",
+      "email",
+      "imaplib",
+      "os",
+      "smtplib",
+      "smtplib",
+      "imaplib"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "email.mime.text",
+        "level": 0,
+        "names": [
+          "MIMEText"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/github.py": {
+    "rel_path": "integrations/clients/github.py",
+    "imports": [
+      "asyncio",
+      "os",
+      "github"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any",
+          "Iterable"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      },
+      {
+        "module": "github",
+        "level": 0,
+        "names": [
+          "Github"
+        ]
+      },
+      {
+        "module": "github",
+        "level": 0,
+        "names": [
+          "InputFileContent"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/gmail.py": {
+    "rel_path": "integrations/clients/gmail.py",
+    "imports": [
+      "aiohttp",
+      "base64",
+      "os",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "email.mime.text",
+        "level": 0,
+        "names": [
+          "MIMEText"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/google_calendar.py": {
+    "rel_path": "integrations/clients/google_calendar.py",
+    "imports": [
+      "os",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "datetime",
+        "level": 0,
+        "names": [
+          "datetime",
+          "timezone",
+          "timedelta"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/home_assistant.py": {
+    "rel_path": "integrations/clients/home_assistant.py",
+    "imports": [
+      "os",
+      "time",
+      "aiohttp",
+      "aiohttp"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "urllib.parse",
+        "level": 0,
+        "names": [
+          "quote"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/notion.py": {
+    "rel_path": "integrations/clients/notion.py",
+    "imports": [
+      "os",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/spotify.py": {
+    "rel_path": "integrations/clients/spotify.py",
+    "imports": [
+      "os",
+      "aiohttp",
+      "base64",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp",
+      "aiohttp"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/telegram.py": {
+    "rel_path": "integrations/clients/telegram.py",
+    "imports": [
+      "os",
+      "telegram"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      },
+      {
+        "module": "telegram",
+        "level": 0,
+        "names": [
+          "Bot"
+        ]
+      },
+      {
+        "module": "telegram",
+        "level": 0,
+        "names": [
+          "Bot"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/template.py": {
+    "rel_path": "integrations/clients/template.py",
+    "imports": [],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/weather.py": {
+    "rel_path": "integrations/clients/weather.py",
+    "imports": [
+      "asyncio",
+      "json",
+      "logging",
+      "urllib.parse",
+      "urllib.request"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/whatsapp.py": {
+    "rel_path": "integrations/clients/whatsapp.py",
+    "imports": [
+      "asyncio",
+      "os",
+      "twilio"
+    ],
+    "from_imports": [
+      {
+        "module": "__future__",
+        "level": 0,
+        "names": [
+          "annotations"
+        ]
+      },
+      {
+        "module": "typing",
+        "level": 0,
+        "names": [
+          "Any"
+        ]
+      },
+      {
+        "module": "integrations.base",
+        "level": 0,
+        "names": [
+          "BaseIntegration"
+        ]
+      },
+      {
+        "module": "twilio.rest",
+        "level": 0,
+        "names": [
+          "Client"
+        ]
+      }
+    ]
+  },
+  "integrations/clients/__init__.py": {
+    "rel_path": "integrations/clients/__init__.py",
+    "imports": [],
+    "from_imports": []
+  },
+  "LoopDesign/analyze.py": {
+    "rel_path": "LoopDesign/analyze.py",
+    "imports": [
+      "os",
+      "ast",
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "LoopDesign/analyze_docs.py": {
+    "rel_path": "LoopDesign/analyze_docs.py",
+    "imports": [
+      "ast",
+      "os",
+      "glob",
+      "re"
+    ],
+    "from_imports": [
+      {
+        "module": "pathlib",
+        "level": 0,
+        "names": [
+          "Path"
+        ]
+      }
+    ]
+  },
+  "LoopDesign/generate_reports.py": {
+    "rel_path": "LoopDesign/generate_reports.py",
+    "imports": [
+      "os",
+      "ast"
+    ],
+    "from_imports": []
+  },
+  "memory/script.py": {
+    "rel_path": "memory/script.py",
+    "imports": [
+      "sqlite3"
+    ],
+    "from_imports": []
+  },
+  "memory/script2.py": {
+    "rel_path": "memory/script2.py",
+    "imports": [
+      "sqlite3"
+    ],
+    "from_imports": []
+  }
+}

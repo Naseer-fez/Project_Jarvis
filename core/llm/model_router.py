@@ -28,7 +28,7 @@ from typing import Iterable, Any
 
 from core.config.defaults import OLLAMA_BASE_URL
 from core.llm.ollama_client import list_models_sync
-from core.llm.model_spec import ModelSpec, ModelRegistry, RoutingDecision
+from core.llm.model_spec import ModelRegistry, RoutingDecision
 
 logger = logging.getLogger(__name__)
 

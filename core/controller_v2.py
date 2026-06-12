@@ -132,7 +132,6 @@ class JarvisControllerV2(BaseController):
             goal_check_interval_seconds=settings.goal_check_interval_seconds,
             dashboard_update_cb=self._dashboard_update
         )
-        self.goal_runner.load_goal_state()
         self._goal_check_task: asyncio.Task | None = None
 
         # Initialize Subsystems
@@ -176,7 +175,7 @@ class JarvisControllerV2(BaseController):
         if result is None:
             return None
         if result.mutated:
-            self.goal_runner.persist_goal_state()
+            await self.goal_runner.persist_goal_state()
             self._dashboard_update(active_goals=len(self.goal_manager.active_goals()))
         return result.response
 
@@ -191,8 +190,7 @@ class JarvisControllerV2(BaseController):
             memory=self.memory,
         )
 
-    async def _dispatch_llm(self, text: str, trace_id: str) -> str:
-        classification = getattr(self, "current_classification", {})
+    async def _dispatch_llm(self, text: str, classification: dict, trace_id: str) -> str:
         return await self.llm_orchestrator.dispatch(text, classification, self.session_id, trace_id)
 
     def _looks_like_desktop_control_request(self, lowered: str) -> bool:
@@ -232,9 +230,9 @@ class JarvisControllerV2(BaseController):
         
         try:
             from core.controller.complexity_scorer import classify_request
-            self.current_classification = classify_request(text)
+            classification = classify_request(text)
         except ImportError:
-            self.current_classification = {"class": "Chat", "complexity": 0.4, "skip_planner": False, "route": "chat"}
+            classification = {"class": "Chat", "complexity": 0.4, "skip_planner": False, "route": "chat"}
 
         async def _respond(response: str) -> str:
             async with self._state_lock:
@@ -251,7 +249,7 @@ class JarvisControllerV2(BaseController):
         if routed_response is not None:
             return await _respond(routed_response)
 
-        response = await self._dispatch_llm(text, trace_id=trace_id)
+        response = await self._dispatch_llm(text, classification, trace_id=trace_id)
         return await _respond(response)
 
     def session_summary(self) -> dict[str, Any]:
@@ -264,6 +262,7 @@ class JarvisControllerV2(BaseController):
         self._runtime_loop = asyncio.get_running_loop()
         await super().startup()
         await self.monitor.start()
+        await self.goal_runner.load_goal_state()
         if self._goal_check_task is None or self._goal_check_task.done():
             self._goal_check_task = asyncio.create_task(
                 self.goal_runner.check_due_goals(),
@@ -301,8 +300,13 @@ class JarvisControllerV2(BaseController):
             if text.lower() in {"exit", "quit"}:
                 break
 
-            response = await self.process(text)
-            print(f"Jarvis: {response}")
+            print(f"DEBUG: Before process(text='{text}')", flush=True)
+            try:
+                response = await self.process(text)
+                print(f"DEBUG: After process, response='{response}'", flush=True)
+                print(f"Jarvis: {response}", flush=True)
+            except Exception as e:
+                print(f"Error processing command: {e}")
 
     async def shutdown(self) -> None:
         await self.monitor.stop()
@@ -313,6 +317,8 @@ class JarvisControllerV2(BaseController):
                 await self._goal_check_task
             except asyncio.CancelledError:
                 pass
+
+        await self.goal_runner.persist_goal_state()
 
         if self._voice_layer is not None:
             try:

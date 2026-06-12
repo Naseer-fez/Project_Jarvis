@@ -103,10 +103,11 @@ def plan_desktop_command(user_input: str) -> DesktopCommandPlan | None:
             )
 
     if any(alias in lowered for alias in ("edge", "microst edge", "microsoft edge")) and (
-        lowered.startswith("open ")
-        or lowered.startswith("go to ")
-        or lowered.startswith("access ")
-        or lowered.startswith("acces ")
+        "open" in lowered
+        or "go to" in lowered
+        or "access" in lowered
+        or "acces" in lowered
+        or "launch" in lowered
     ):
         return DesktopCommandPlan(
             app_label="Microsoft Edge",
@@ -115,7 +116,7 @@ def plan_desktop_command(user_input: str) -> DesktopCommandPlan | None:
             response_text="Opened Microsoft Edge.",
         )
 
-    if lowered.startswith("open notepad") or lowered.startswith("open note pad"):
+    if ("notepad" in lowered or "note pad" in lowered) and ("open" in lowered or "launch" in lowered):
         return DesktopCommandPlan(
             app_label="Notepad",
             primary_target="notepad.exe",
@@ -123,7 +124,7 @@ def plan_desktop_command(user_input: str) -> DesktopCommandPlan | None:
             response_text="Opened Notepad.",
         )
 
-    if lowered.startswith("open vscode") or lowered.startswith("open vs code") or lowered.startswith("open visual studio code"):
+    if any(alias in lowered for alias in ("vscode", "vs code", "visual studio code")) and ("open" in lowered or "launch" in lowered):
         return DesktopCommandPlan(
             app_label="Visual Studio Code",
             primary_target="code",
@@ -131,7 +132,7 @@ def plan_desktop_command(user_input: str) -> DesktopCommandPlan | None:
             response_text="Opened Visual Studio Code.",
         )
 
-    if lowered.startswith("open calculator") or lowered.startswith("open calc"):
+    if ("calculator" in lowered or "calc" in lowered) and ("open" in lowered or "launch" in lowered):
         return DesktopCommandPlan(
             app_label="Calculator",
             primary_target="calc.exe",
@@ -139,7 +140,7 @@ def plan_desktop_command(user_input: str) -> DesktopCommandPlan | None:
             response_text="Opened Calculator.",
         )
 
-    if lowered.startswith(("open ", "go to ", "access ", "acces ")):
+    if "open " in lowered or "go to " in lowered or "access " in lowered or "acces " in lowered or "launch " in lowered:
         return DesktopCommandPlan(
             app_label="Unsupported app",
             primary_target="",

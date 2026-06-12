@@ -106,7 +106,11 @@ class ComputerControlIntegration(BaseIntegration):
                 return {"success": True, "data": "Typed text", "error": None}
 
             if tool_name == "take_screenshot":
-                path = os.path.abspath(str(args.get("path", "outputs/screenshot.png") or "outputs/screenshot.png"))
+                raw_path = str(args.get("path", "outputs/screenshot.png") or "outputs/screenshot.png")
+                safe_dir = os.path.abspath("outputs")
+                path = os.path.abspath(raw_path)
+                if os.path.commonpath([safe_dir, path]) != safe_dir:
+                    return {"success": False, "data": None, "error": "Invalid path: must be within outputs directory"}
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 await loop.run_in_executor(None, lambda: pyautogui.screenshot(path))
                 return {"success": True, "data": f"Screenshot saved to {path}", "error": None}

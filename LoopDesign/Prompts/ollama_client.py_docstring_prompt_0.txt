@@ -1,0 +1,5 @@
+Send a prompt to Ollama and return the response text.
+
+        Retries up to 3 times on transient connection errors.
+        Raises on timeout, connection refused, or empty response.
+        

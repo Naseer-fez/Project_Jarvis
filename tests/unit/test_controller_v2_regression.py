@@ -1,7 +1,4 @@
-import asyncio
 import configparser
-import uuid
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -64,8 +61,7 @@ def controller(mock_config, mock_services, mock_settings):
             settings=mock_settings,
         )
         # Mock internal facades to prevent actual initialization issues
-        ctrl.goal_runner = MagicMock()
-        ctrl.goal_runner.check_due_goals = AsyncMock()
+        ctrl.goal_runner = AsyncMock()
         ctrl.intent_router = AsyncMock()
         ctrl.intent_router.route.return_value = None  # Force LLM dispatch by default
         ctrl.llm_orchestrator = AsyncMock()

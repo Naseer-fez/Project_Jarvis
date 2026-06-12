@@ -18,7 +18,7 @@ import logging
 import math
 import threading
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 

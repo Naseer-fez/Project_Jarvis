@@ -21,7 +21,8 @@ def register_intent_routes(ctx: "JarvisControllerV2") -> None:
     ctx.intent_router.register(lambda _l, _u, c: _l == "help", handle_help)
 
     async def handle_automation(lowered: str, user_input: str, ctx: "JarvisControllerV2") -> str | None:
-        la = getattr(ctx, "live_automation", None)
+        am = getattr(ctx, "automation_manager", None)
+        la = getattr(am, "live_automation", None) if am else None
         if la is None:
             return None
         if lowered == "automation status":
@@ -35,7 +36,7 @@ def register_intent_routes(ctx: "JarvisControllerV2") -> None:
             res = await la.search_rag(query)
             return str(res) if res is not None else None
         return None
-    ctx.intent_router.register(lambda _l, _u, c: getattr(c, "live_automation", None) is not None and (_l in ("automation status", "automation scan") or _l.startswith("rag search ")), handle_automation)
+    ctx.intent_router.register(lambda _l, _u, c: (getattr(getattr(c, "automation_manager", None), "live_automation", None) is not None) and (_l in ("automation status", "automation scan") or _l.startswith("rag search ")), handle_automation)
 
     async def handle_goal(lowered: str, user_input: str, ctx: "JarvisControllerV2") -> str | None:
         return await ctx._handle_goal_intent(lowered, user_input)

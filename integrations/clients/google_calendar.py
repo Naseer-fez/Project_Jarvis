@@ -154,9 +154,7 @@ class GoogleCalendarIntegration(BaseIntegration):
         for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
             try:
                 dt = datetime.strptime(dt_str.strip(), fmt)
-                if dt.tzinfo is None:
-                    # Attach UTC; caller should pass correct tz string but we default safely
-                    dt = dt.replace(tzinfo=timezone.utc)
+                # If naive, we don't attach UTC, allowing Google Calendar to use the timeZone field
                 return dt.isoformat()
             except ValueError:
                 continue

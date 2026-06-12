@@ -1,0 +1,14 @@
+Hello Bob! As your local personal AI assistant, I can help you with a variety of tasks. Here are some examples:
+
+1. Schedule management: Create, modify, and delete appointments in your calendar.
+2. Email management: Compose, send, and respond to emails on your behalf.
+3. Reminders: Set reminders for important tasks or events.
+4. Weather updates: Provide you with the latest weather forecasts.
+5. News updates: Keep you updated on the latest news from various sources.
+6. Internet search: Perform web searches and provide you with relevant results.
+7. Music control: Control your music player, like playing, pausing, or skipping songs.
+8. Smart home control: Manage smart home devices such as lights, thermostats, and security systems.
+9. Note-taking: Take notes for you and even transcribe voice messages.
+10. Task automation: Automate repetitive tasks to save you time and effort.
+
+Just let me know what you need help with, and I'll do my best to assist you!

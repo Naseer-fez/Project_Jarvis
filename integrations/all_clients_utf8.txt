@@ -1,0 +1,3012 @@
+﻿"""Local calendar integration backed by a simple .ics file."""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timedelta
+import threading
+from pathlib import Path
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+CALENDAR_PATH = Path("memory/calendar.ics")
+_calendar_lock = threading.Lock()
+
+
+class CalendarIntegration(BaseIntegration):
+    name = "calendar"
+    description = "Manage a local calendar (.ics file)"
+    required_config: list[str] = []
+
+    def is_available(self) -> bool:
+        import importlib.util
+        if importlib.util.find_spec("icalendar") is None or importlib.util.find_spec("dateutil") is None:
+            self.unavailable_reason = "icalendar and dateutil are required"
+            return False
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "add_event",
+                "description": "Add an event to calendar",
+                "risk": "confirm",
+                "args": {
+                    "title": {"type": "string", "description": "Event title"},
+                    "date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "time": {"type": "string", "description": "HH:MM", "default": "09:00"},
+                    "duration_minutes": {"type": "integer", "default": 60},
+                },
+                "required_args": ["title", "date"],
+            },
+            {
+                "name": "list_events",
+                "description": "List upcoming events",
+                "risk": "low",
+                "args": {
+                    "days_ahead": {"type": "integer", "default": 7},
+                },
+                "required_args": [],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        CALENDAR_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+        loop = asyncio.get_running_loop()
+        try:
+            if tool_name == "add_event":
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self._add_event(
+                        title=str(args.get("title") or ""),
+                        date=str(args.get("date") or ""),
+                        time=str(args.get("time", "09:00") or "09:00"),
+                        duration_minutes=int(args.get("duration_minutes", 60) or 60),
+                    ),
+                )
+                return {"success": True, "data": data, "error": None}
+
+            if tool_name == "list_events":
+                days_ahead = int(args.get("days_ahead", 7) or 7)
+                data = await loop.run_in_executor(None, lambda: self._list_events(days_ahead=days_ahead))
+                return {"success": True, "data": data, "error": None}
+
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    def _add_event(
+        self,
+        title: str,
+        date: str,
+        time: str = "09:00",
+        duration_minutes: int = 60,
+    ) -> dict[str, Any]:
+        if not title.strip():
+            raise ValueError("title is required")
+        if not date.strip():
+            raise ValueError("date is required")
+
+        dt_start = datetime.strptime(f"{date} {time}", "%Y-%m-%d %H:%M")
+        dt_end = dt_start + timedelta(minutes=duration_minutes)
+        uid = f"{dt_start.strftime('%Y%m%dT%H%M%S')}-jarvis"
+
+        block = (
+            "BEGIN:VEVENT\n"
+            f"DTSTART:{dt_start.strftime('%Y%m%dT%H%M%S')}\n"
+            f"DTEND:{dt_end.strftime('%Y%m%dT%H%M%S')}\n"
+            f"SUMMARY:{title}\n"
+            f"UID:{uid}\n"
+            "END:VEVENT\n"
+        )
+
+        with _calendar_lock:
+            if not CALENDAR_PATH.exists():
+                CALENDAR_PATH.parent.mkdir(parents=True, exist_ok=True)
+                CALENDAR_PATH.write_text("BEGIN:VCALENDAR\nVERSION:2.0\nEND:VCALENDAR\n", encoding="utf-8")
+
+            content = CALENDAR_PATH.read_text(encoding="utf-8")
+            parts = content.rsplit("END:VCALENDAR", 1)
+            if len(parts) == 2:
+                updated = parts[0] + block + "END:VCALENDAR" + parts[1]
+            else:
+                updated = content + "\n" + block + "END:VCALENDAR\n"
+            CALENDAR_PATH.write_text(updated, encoding="utf-8")
+
+        return {"event": title, "date": date, "time": time}
+
+    def _list_events(self, days_ahead: int = 7) -> dict[str, Any]:
+        if not CALENDAR_PATH.exists():
+            return {"events": []}
+        
+        from icalendar import Calendar
+        from dateutil.tz import tzlocal
+        import datetime as dt
+        
+        cal = Calendar.from_ical(CALENDAR_PATH.read_bytes())
+        now = dt.datetime.now(tz=tzlocal())
+        cutoff = now + dt.timedelta(days=days_ahead)
+        events = []
+        
+        for component in cal.walk():
+            if component.name != "VEVENT":
+                continue
+            dtstart = component.get("DTSTART")
+            if dtstart is None:
+                continue
+            start = dtstart.dt
+            # Handle date-only events
+            if isinstance(start, dt.date) and not isinstance(start, dt.datetime):
+                start = dt.datetime(start.year, start.month, start.day, tzinfo=tzlocal())
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=tzlocal())
+            if now <= start <= cutoff:
+                events.append({
+                    "title": str(component.get("SUMMARY", "Untitled")),
+                    "datetime": str(start),
+                })
+        
+        return {"events": sorted(events, key=lambda e: e["datetime"])}
+
+
+__all__ = ["CalendarIntegration"]
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+logger = logging.getLogger(__name__)
+
+
+class ComputerControlIntegration(BaseIntegration):
+    name = "computer_control"
+    description = "Control the mouse, keyboard, and screen for UI automation."
+    required_config = []
+
+    def is_available(self) -> bool:
+        try:
+            import pyautogui
+            _ = pyautogui.FAILSAFE  # Use it to avoid F401
+            return True
+        except ImportError:
+            return False
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "move_mouse",
+                "description": "Move the mouse to absolute screen coordinates (x, y).",
+                "risk": "confirm",
+                "args": {
+                    "x": {"type": "integer"},
+                    "y": {"type": "integer"},
+                },
+                "required_args": ["x", "y"],
+            },
+            {
+                "name": "mouse_click",
+                "description": "Click the mouse at the current position or optional absolute screen coordinates.",
+                "risk": "confirm",
+                "args": {
+                    "x": {"type": "integer"},
+                    "y": {"type": "integer"},
+                    "button": {"type": "string", "default": "left"},
+                    "double": {"type": "boolean", "default": False},
+                },
+                "required_args": [],
+            },
+            {
+                "name": "keyboard_type",
+                "description": "Type text rapidly using the keyboard.",
+                "risk": "confirm",
+                "args": {
+                    "text": {"type": "string"},
+                    "press_enter": {"type": "boolean", "default": False},
+                    "interval": {"type": "number", "default": 0.02},
+                },
+                "required_args": ["text"],
+            },
+            {
+                "name": "take_screenshot",
+                "description": "Take a screenshot of the main display.",
+                "risk": "medium",
+                "args": {
+                    "path": {"type": "string", "description": "Optional output path.", "default": "outputs/screenshot.png"},
+                },
+                "required_args": [],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        import pyautogui
+
+        # PyAutoGUI has a built-in failsafe (moving mouse to corner of screen aborts)
+        pyautogui.FAILSAFE = True
+
+        args = args or {}
+        loop = asyncio.get_running_loop()
+        try:
+            if tool_name == "move_mouse":
+                await loop.run_in_executor(None, pyautogui.moveTo, args["x"], args["y"], 0.5)
+                return {"success": True, "data": f"Moved to {args['x']}, {args['y']}", "error": None}
+
+            if tool_name == "mouse_click":
+                x = args.get("x")
+                y = args.get("y")
+                clicks = 2 if args.get("double") else 1
+                button = str(args.get("button", "left") or "left")
+
+                def _click() -> None:
+                    if x is not None and y is not None:
+                        pyautogui.click(int(x), int(y), button=button, clicks=clicks)
+                    else:
+                        pyautogui.click(button=button, clicks=clicks)
+
+                await loop.run_in_executor(None, _click)
+                location = f" at {int(x)}, {int(y)}" if x is not None and y is not None else ""
+                return {"success": True, "data": f"Clicked{location}", "error": None}
+
+            if tool_name == "keyboard_type":
+                interval = float(args.get("interval", 0.02) or 0.02)
+                await loop.run_in_executor(None, lambda: pyautogui.write(args["text"], interval=interval))
+                if args.get("press_enter"):
+                    await loop.run_in_executor(None, lambda: pyautogui.press("enter"))
+                return {"success": True, "data": "Typed text", "error": None}
+
+            if tool_name == "take_screenshot":
+                raw_path = str(args.get("path", "outputs/screenshot.png") or "outputs/screenshot.png")
+                safe_dir = os.path.abspath("outputs")
+                path = os.path.abspath(raw_path)
+                if os.path.commonpath([safe_dir, path]) != safe_dir:
+                    return {"success": False, "data": None, "error": "Invalid path: must be within outputs directory"}
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                await loop.run_in_executor(None, lambda: pyautogui.screenshot(path))
+                return {"success": True, "data": f"Screenshot saved to {path}", "error": None}
+
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:
+            return {"success": False, "data": None, "error": str(exc)}
+"""Email integration using stdlib smtplib + imaplib."""
+
+from __future__ import annotations
+
+import asyncio
+import email as email_lib
+import imaplib
+import os
+import smtplib
+from email.mime.text import MIMEText
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+
+class EmailIntegration(BaseIntegration):
+    name = "email"
+    description = "Send and read emails via SMTP/IMAP"
+    required_config: list[str] = ["EMAIL_ADDRESS", "EMAIL_PASSWORD", "SMTP_HOST", "IMAP_HOST"]
+
+    def is_available(self) -> bool:
+        try:
+            import smtplib as _smtplib  # noqa: F401
+            import imaplib as _imaplib  # noqa: F401
+            return all(bool(os.environ.get(key)) for key in self.required_config)
+        except ImportError:
+            return False
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "send_email",
+                "description": "Send an email",
+                "risk": "confirm",
+                "args": {
+                    "to": {"type": "string", "description": "Recipient email"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body": {"type": "string", "description": "Email body"},
+                },
+                "required_args": ["to", "subject", "body"],
+            },
+            {
+                "name": "read_emails",
+                "description": "Read recent emails from inbox",
+                "risk": "low",
+                "args": {
+                    "folder": {"type": "string", "default": "INBOX"},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required_args": [],
+            },
+            {
+                "name": "search_emails",
+                "description": "Search emails by keyword",
+                "risk": "low",
+                "args": {
+                    "query": {"type": "string", "description": "Subject keyword"},
+                },
+                "required_args": ["query"],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        loop = asyncio.get_running_loop()
+        try:
+            if tool_name == "send_email":
+                data = await loop.run_in_executor(
+                    None,
+                    lambda: self._send_email(
+                        to=str(args.get("to") or ""),
+                        subject=str(args.get("subject") or ""),
+                        body=str(args.get("body") or ""),
+                    ),
+                )
+                return {"success": True, "data": data, "error": None}
+
+            if tool_name == "read_emails":
+                folder = str(args.get("folder", "INBOX") or "INBOX")
+                limit = max(1, int(args.get("limit", 10) or 10))
+                emails_data = await loop.run_in_executor(None, lambda: self._read_emails(folder=folder, limit=limit))
+                return {"success": True, "data": {"emails": emails_data}, "error": None}
+
+            if tool_name == "search_emails":
+                query = str(args.get("query", "")).strip()
+                if not query:
+                    return {"success": False, "data": None, "error": "query is required"}
+                data = await loop.run_in_executor(None, lambda: self._search_emails(query=query))
+                return {"success": True, "data": data, "error": None}
+
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    def _send_email(self, to: str, subject: str, body: str) -> dict[str, Any]:
+        if not to.strip():
+            raise ValueError("to is required")
+
+        addr = os.environ["EMAIL_ADDRESS"]
+        pwd = os.environ["EMAIL_PASSWORD"]
+        host = os.environ["SMTP_HOST"]
+        port = int(os.environ.get("SMTP_PORT", "587"))
+
+        msg = MIMEText(body)
+        msg["Subject"] = subject
+        msg["From"] = addr
+        msg["To"] = to
+
+        with smtplib.SMTP(host, port, timeout=10) as client:
+            client.starttls()
+            client.login(addr, pwd)
+            client.send_message(msg)
+
+        return {"sent_to": to}
+
+    def _read_emails(self, folder: str = "INBOX", limit: int = 10) -> list[dict[str, Any]]:
+        addr = os.environ["EMAIL_ADDRESS"]
+        pwd = os.environ["EMAIL_PASSWORD"]
+        host = os.environ["IMAP_HOST"]
+
+        with imaplib.IMAP4_SSL(host, timeout=10) as client:
+            client.login(addr, pwd)
+            client.select(folder)
+            _, data = client.search(None, "ALL")
+            ids = (data[0] if data else b"").split()[-limit:]
+
+            results: list[dict[str, Any]] = []
+            for email_id in reversed(ids):
+                _, fetched = client.fetch(email_id, "(RFC822)")
+                if not fetched or not fetched[0] or not isinstance(fetched[0], tuple):
+                    continue
+                msg = email_lib.message_from_bytes(fetched[0][1])
+                results.append(
+                    {
+                        "from": msg.get("From"),
+                        "subject": msg.get("Subject"),
+                        "date": msg.get("Date"),
+                    }
+                )
+
+        return results
+
+    def _search_emails(self, query: str) -> dict[str, Any]:
+        addr = os.environ["EMAIL_ADDRESS"]
+        pwd = os.environ["EMAIL_PASSWORD"]
+        host = os.environ["IMAP_HOST"]
+        safe_query = query.replace('"', "")
+
+        with imaplib.IMAP4_SSL(host, timeout=10) as client:
+            client.login(addr, pwd)
+            client.select("INBOX")
+            _, data = client.search(None, f'SUBJECT "{safe_query}"')
+            ids = (data[0] if data else b"").split()
+            return {
+                "matches": len(ids),
+                "ids": [item.decode("utf-8", errors="ignore") for item in ids[-10:]],
+            }
+
+
+__all__ = ["EmailIntegration"]
+"""GitHub integration via PyGithub.
+
+Required env vars:
+    GITHUB_TOKEN
+
+Optional env vars:
+    GITHUB_DEFAULT_REPO
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any, Iterable
+
+from integrations.base import BaseIntegration
+
+_DEFAULT_LIMIT = 20
+_MAX_LIMIT = 100
+
+
+class GitHubIntegration(BaseIntegration):
+    """Read repository state and perform confirm-gated write actions on GitHub."""
+
+    name = "github"
+    description = "Inspect GitHub repositories, pull requests, issues, gists, and code search"
+    required_config: list[str] = ["GITHUB_TOKEN"]
+
+    def is_available(self) -> bool:
+        try:
+            import github  # noqa: F401
+        except ImportError:
+            self.unavailable_reason = "PyGithub not installed"
+            return False
+
+        if not os.environ.get("GITHUB_TOKEN"):
+            self.unavailable_reason = "Missing env var: GITHUB_TOKEN"
+            return False
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "list_open_issues",
+                "description": "List open GitHub issues, optionally filtered by label, assignee, or milestone",
+                "risk": "low",
+                "args": {
+                    "repo": {"type": "string", "description": "Repository like owner/name", "default": ""},
+                    "label": {"type": "string", "description": "Optional label filter", "default": ""},
+                    "assignee": {"type": "string", "description": "Optional assignee login filter", "default": ""},
+                    "milestone": {
+                        "type": "string",
+                        "description": "Optional milestone title or number",
+                        "default": "",
+                    },
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required_args": [],
+            },
+            {
+                "name": "create_issue",
+                "description": "Create a GitHub issue in the target repository",
+                "risk": "confirm",
+                "args": {
+                    "repo": {"type": "string", "description": "Repository like owner/name", "default": ""},
+                    "title": {"type": "string", "description": "Issue title"},
+                    "body": {"type": "string", "description": "Issue body", "default": ""},
+                    "labels": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional label names",
+                        "default": [],
+                    },
+                },
+                "required_args": ["title"],
+            },
+            {
+                "name": "close_issue",
+                "description": "Close a GitHub issue by number",
+                "risk": "confirm",
+                "args": {
+                    "repo": {"type": "string", "description": "Repository like owner/name", "default": ""},
+                    "issue_number": {"type": "integer", "description": "GitHub issue number"},
+                },
+                "required_args": ["issue_number"],
+            },
+            {
+                "name": "list_open_prs",
+                "description": "List open pull requests in the target repository",
+                "risk": "low",
+                "args": {
+                    "repo": {"type": "string", "description": "Repository like owner/name", "default": ""},
+                    "limit": {"type": "integer", "default": 20},
+                },
+                "required_args": [],
+            },
+            {
+                "name": "get_pr_diff",
+                "description": "Return a summarized view of changed files and patch excerpts for a pull request",
+                "risk": "low",
+                "args": {
+                    "repo": {"type": "string", "description": "Repository like owner/name", "default": ""},
+                    "pr_number": {"type": "integer", "description": "Pull request number"},
+                    "max_files": {"type": "integer", "default": 20},
+                    "max_patch_chars": {"type": "integer", "default": 6000},
+                },
+                "required_args": ["pr_number"],
+            },
+            {
+                "name": "create_gist",
+                "description": "Create a GitHub gist from a code snippet or text file",
+                "risk": "confirm",
+                "args": {
+                    "filename": {"type": "string", "description": "Gist filename"},
+                    "content": {"type": "string", "description": "Full gist file content"},
+                    "description": {"type": "string", "description": "Optional gist description", "default": ""},
+                    "public": {"type": "boolean", "description": "Whether the gist is public", "default": False},
+                },
+                "required_args": ["filename", "content"],
+            },
+            {
+                "name": "search_code",
+                "description": "Search GitHub code, optionally scoped to a repository",
+                "risk": "low",
+                "args": {
+                    "query": {"type": "string", "description": "Code search query"},
+                    "repo": {"type": "string", "description": "Optional repository like owner/name", "default": ""},
+                    "limit": {"type": "integer", "default": 10},
+                },
+                "required_args": ["query"],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+
+        operations = {
+            "list_open_issues": self._list_open_issues,
+            "create_issue": self._create_issue,
+            "close_issue": self._close_issue,
+            "list_open_prs": self._list_open_prs,
+            "get_pr_diff": self._get_pr_diff,
+            "create_gist": self._create_gist,
+            "search_code": self._search_code,
+        }
+
+        operation = operations.get(tool_name)
+        if operation is None:
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+
+        try:
+            loop = asyncio.get_running_loop()
+            data = await loop.run_in_executor(None, lambda: operation(args))
+            return {"success": True, "data": data, "error": None}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    def _get_client(self):
+        from github import Github
+
+        return Github(os.environ["GITHUB_TOKEN"], per_page=_MAX_LIMIT)
+
+    def _make_input_file_content(self, content: str):
+        from github import InputFileContent
+
+        return InputFileContent(content)
+
+    def _resolve_repo_name(self, args: dict[str, Any]) -> str:
+        repo_name = str(args.get("repo", "") or "").strip()
+        if repo_name:
+            return repo_name
+
+        repo_name = str(os.environ.get("GITHUB_DEFAULT_REPO", "") or "").strip()
+        if repo_name:
+            return repo_name
+
+        raise ValueError("repo is required when GITHUB_DEFAULT_REPO is not configured")
+
+    def _get_repo(self, client, args: dict[str, Any]):
+        return client.get_repo(self._resolve_repo_name(args))
+
+    def _coerce_limit(self, raw_value: Any, *, default: int, max_value: int = _MAX_LIMIT) -> int:
+        try:
+            value = int(raw_value)
+        except (ValueError, TypeError):
+            value = default
+        return max(1, min(max_value, value))
+
+    def _take(self, items: Iterable[Any], limit: int) -> list[Any]:
+        result: list[Any] = []
+        for item in items:
+            result.append(item)
+            if len(result) >= limit:
+                break
+        return result
+
+    def _matches_issue_filters(self, issue: Any, args: dict[str, Any]) -> bool:
+        label = str(args.get("label", "") or "").strip().lower()
+        assignee = str(args.get("assignee", "") or "").strip().lower()
+        milestone = str(args.get("milestone", "") or "").strip()
+
+        if label:
+            labels = {str(getattr(item, "name", "")).strip().lower() for item in getattr(issue, "labels", [])}
+            if label not in labels:
+                return False
+
+        if assignee:
+            assignees = {
+                str(getattr(item, "login", "")).strip().lower()
+                for item in getattr(issue, "assignees", [])
+                if getattr(item, "login", None)
+            }
+            if assignee not in assignees:
+                return False
+
+        if milestone:
+            issue_milestone = getattr(issue, "milestone", None)
+            if issue_milestone is None:
+                return False
+
+            milestone_title = str(getattr(issue_milestone, "title", "") or "")
+            milestone_number = str(getattr(issue_milestone, "number", "") or "")
+            if milestone not in {milestone_title, milestone_number}:
+                return False
+
+        return True
+
+    def _list_open_issues(self, args: dict[str, Any]) -> dict[str, Any]:
+        client = self._get_client()
+        repo = self._get_repo(client, args)
+        limit = self._coerce_limit(args.get("limit", _DEFAULT_LIMIT), default=_DEFAULT_LIMIT)
+
+        issues = self._take(repo.get_issues(state="open"), max(limit * 3, limit))
+        filtered = [issue for issue in issues if self._matches_issue_filters(issue, args)][:limit]
+
+        return {
+            "repo": repo.full_name,
+            "issues": [
+                {
+                    "number": issue.number,
+                    "title": issue.title,
+                    "url": issue.html_url,
+                    "state": issue.state,
+                    "author": getattr(getattr(issue, "user", None), "login", None),
+                    "labels": [getattr(label, "name", "") for label in getattr(issue, "labels", [])],
+                    "assignees": [getattr(user, "login", "") for user in getattr(issue, "assignees", [])],
+                    "milestone": getattr(getattr(issue, "milestone", None), "title", None),
+                }
+                for issue in filtered
+            ],
+            "count": len(filtered),
+        }
+
+    def _create_issue(self, args: dict[str, Any]) -> dict[str, Any]:
+        title = str(args.get("title", "") or "").strip()
+        if not title:
+            raise ValueError("title is required")
+
+        client = self._get_client()
+        repo = self._get_repo(client, args)
+        
+        raw_labels = args.get("labels")
+        if raw_labels is None:
+            raw_labels = []
+        labels = [str(item).strip() for item in raw_labels if str(item).strip()]
+
+        create_kwargs: dict[str, Any] = {
+            "title": title,
+            "body": str(args.get("body", "") or ""),
+        }
+        if labels:
+            create_kwargs["labels"] = labels
+
+        issue = repo.create_issue(**create_kwargs)
+
+        return {
+            "repo": repo.full_name,
+            "number": issue.number,
+            "title": issue.title,
+            "url": issue.html_url,
+            "state": issue.state,
+        }
+
+    def _close_issue(self, args: dict[str, Any]) -> dict[str, Any]:
+        if "issue_number" not in args:
+            raise ValueError("issue_number is required")
+
+        issue_number = int(args["issue_number"])
+        client = self._get_client()
+        repo = self._get_repo(client, args)
+        issue = repo.get_issue(number=issue_number)
+        issue.edit(state="closed")
+
+        return {
+            "repo": repo.full_name,
+            "number": issue.number,
+            "title": issue.title,
+            "state": issue.state,
+            "url": issue.html_url,
+        }
+
+    def _list_open_prs(self, args: dict[str, Any]) -> dict[str, Any]:
+        client = self._get_client()
+        repo = self._get_repo(client, args)
+        limit = self._coerce_limit(args.get("limit", _DEFAULT_LIMIT), default=_DEFAULT_LIMIT)
+        pulls = self._take(repo.get_pulls(state="open", sort="created", direction="desc"), limit)
+
+        return {
+            "repo": repo.full_name,
+            "pull_requests": [
+                {
+                    "number": pull.number,
+                    "title": pull.title,
+                    "url": pull.html_url,
+                    "state": pull.state,
+                    "draft": bool(getattr(pull, "draft", False)),
+                    "author": getattr(getattr(pull, "user", None), "login", None),
+                    "head": getattr(getattr(pull, "head", None), "ref", None),
+                    "base": getattr(getattr(pull, "base", None), "ref", None),
+                }
+                for pull in pulls
+            ],
+            "count": len(pulls),
+        }
+
+    def _truncate_patch(self, patch: str, remaining_chars: int) -> tuple[str, int]:
+        if remaining_chars <= 0:
+            return "", 0
+
+        if len(patch) <= remaining_chars:
+            return patch, remaining_chars - len(patch)
+
+        marker = "\n... [truncated]"
+        allowed = max(0, remaining_chars - len(marker))
+        excerpt = patch[:allowed] + marker
+        return excerpt, 0
+
+    def _get_pr_diff(self, args: dict[str, Any]) -> dict[str, Any]:
+        if "pr_number" not in args:
+            raise ValueError("pr_number is required")
+
+        client = self._get_client()
+        repo = self._get_repo(client, args)
+        pull = repo.get_pull(number=int(args["pr_number"]))
+
+        max_files = self._coerce_limit(args.get("max_files", 20), default=20, max_value=100)
+        remaining_patch_chars = self._coerce_limit(
+            args.get("max_patch_chars", 6000),
+            default=6000,
+            max_value=20000,
+        )
+
+        files = []
+        truncated = False
+        for changed_file in self._take(pull.get_files(), max_files):
+            patch = str(getattr(changed_file, "patch", "") or "")
+            excerpt, remaining_patch_chars = self._truncate_patch(patch, remaining_patch_chars)
+            if patch and excerpt != patch:
+                truncated = True
+            elif patch and remaining_patch_chars == 0 and excerpt:
+                truncated = True
+            elif patch and not excerpt:
+                truncated = True
+
+            files.append(
+                {
+                    "filename": changed_file.filename,
+                    "status": changed_file.status,
+                    "additions": changed_file.additions,
+                    "deletions": changed_file.deletions,
+                    "changes": changed_file.changes,
+                    "patch_excerpt": excerpt,
+                }
+            )
+            if remaining_patch_chars <= 0:
+                break
+
+        if getattr(pull, "changed_files", 0) > len(files):
+            truncated = True
+
+        return {
+            "repo": repo.full_name,
+            "number": pull.number,
+            "title": pull.title,
+            "url": pull.html_url,
+            "state": pull.state,
+            "author": getattr(getattr(pull, "user", None), "login", None),
+            "merged": bool(getattr(pull, "merged", False)),
+            "mergeable": getattr(pull, "mergeable", None),
+            "commits": getattr(pull, "commits", None),
+            "changed_files": getattr(pull, "changed_files", len(files)),
+            "additions": getattr(pull, "additions", None),
+            "deletions": getattr(pull, "deletions", None),
+            "files": files,
+            "truncated": truncated,
+        }
+
+    def _create_gist(self, args: dict[str, Any]) -> dict[str, Any]:
+        filename = str(args.get("filename", "") or "").strip()
+        if not filename:
+            raise ValueError("filename is required")
+
+        if "content" not in args or not str(args.get("content", "")).strip():
+            raise ValueError("content is required")
+
+        client = self._get_client()
+        user = client.get_user()
+        gist = user.create_gist(
+            public=bool(args.get("public", False)),
+            files={filename: self._make_input_file_content(str(args.get("content", "")))},
+            description=str(args.get("description", "") or ""),
+        )
+
+        return {
+            "id": gist.id,
+            "url": gist.html_url,
+            "public": gist.public,
+            "description": gist.description,
+        }
+
+    def _search_code(self, args: dict[str, Any]) -> dict[str, Any]:
+        query = str(args.get("query", "") or "").strip()
+        if not query:
+            raise ValueError("query is required")
+
+        limit = self._coerce_limit(args.get("limit", 10), default=10, max_value=50)
+        repo_name = str(args.get("repo", "") or "").strip() or str(os.environ.get("GITHUB_DEFAULT_REPO", "") or "").strip()
+        effective_query = f"{query} repo:{repo_name}" if repo_name else query
+
+        client = self._get_client()
+        results = self._take(client.search_code(effective_query), limit)
+
+        return {
+            "query": effective_query,
+            "results": [
+                {
+                    "name": getattr(result, "name", None),
+                    "path": getattr(result, "path", None),
+                    "repository": getattr(getattr(result, "repository", None), "full_name", None),
+                    "url": getattr(result, "html_url", None),
+                    "sha": getattr(result, "sha", None),
+                }
+                for result in results
+            ],
+            "count": len(results),
+        }
+
+
+__all__ = ["GitHubIntegration"]
+"""Gmail integration via Gmail API v1 (async aiohttp).
+
+Uses the same Google OAuth credentials as google_calendar.py.
+
+Required env vars:
+    GOOGLE_CLIENT_ID
+    GOOGLE_CLIENT_SECRET
+    GOOGLE_REFRESH_TOKEN
+
+Rules:
+- Email content is ALWAYS truncated to 2 000 chars before any LLM injection
+- summarize_unread uses task_type="synthesis"
+- No raw email headers injected blindly into context
+"""
+
+from __future__ import annotations
+
+import aiohttp
+import base64
+import os
+from email.mime.text import MIMEText
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
+_MAX_BODY_CHARS = 2000  # Truncation guard before any LLM injection
+
+
+class GmailIntegration(BaseIntegration):
+    """Gmail API v1 integration â€” async, token-refreshing, truncation-safe."""
+
+    name = "gmail"
+    description = "Read, send, and manage Gmail messages"
+    required_config: list[str] = [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REFRESH_TOKEN",
+    ]
+
+    def is_available(self) -> bool:
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            self.unavailable_reason = "aiohttp not installed"
+            return False
+        if not all(bool(os.environ.get(k)) for k in self.required_config):
+            missing = [k for k in self.required_config if not os.environ.get(k)]
+            self.unavailable_reason = f"Missing env vars: {missing}"
+            return False
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "list_unread",
+                "description": "List unread emails from Gmail inbox",
+                "risk": "low",
+                "args": {
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Max emails to return",
+                        "default": 10,
+                    },
+                },
+                "required_args": [],
+            },
+            {
+                "name": "send_gmail",
+                "description": "Send an email via Gmail",
+                "risk": "confirm",
+                "args": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string", "description": "Email subject"},
+                    "body": {"type": "string", "description": "Plain-text email body"},
+                },
+                "required_args": ["to", "subject", "body"],
+            },
+            {
+                "name": "summarize_unread",
+                "description": "Fetch unread emails and return truncated content for LLM summarization",
+                "risk": "low",
+                "args": {
+                    "max_results": {"type": "integer", "default": 5},
+                },
+                "required_args": [],
+            },
+            {
+                "name": "mark_as_read",
+                "description": "Mark a Gmail message as read by its message ID",
+                "risk": "confirm",
+                "args": {
+                    "message_id": {
+                        "type": "string",
+                        "description": "Gmail message ID",
+                    },
+                },
+                "required_args": ["message_id"],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        try:
+            token = await self._refresh_access_token()
+            if tool_name == "list_unread":
+                return await self._list_unread(token, int(args.get("max_results", 10) or 10))
+            if tool_name == "send_gmail":
+                return await self._send_gmail(
+                    token,
+                    to=str(args.get("to") or ""),
+                    subject=str(args.get("subject") or ""),
+                    body=str(args.get("body") or ""),
+                )
+            if tool_name == "summarize_unread":
+                return await self._summarize_unread(token, int(args.get("max_results", 5) or 5))
+            if tool_name == "mark_as_read":
+                return await self._mark_as_read(token, str(args.get("message_id") or ""))
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    # â”€â”€ OAuth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    async def _refresh_access_token(self) -> str:
+        import aiohttp
+
+        payload = {
+            "client_id": os.environ["GOOGLE_CLIENT_ID"],
+            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+            "refresh_token": os.environ["GOOGLE_REFRESH_TOKEN"],
+            "grant_type": "refresh_token",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(_TOKEN_URL, data=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                data = await resp.json()
+                if "access_token" not in data:
+                    raise RuntimeError(f"Token refresh failed: {data.get('error', 'unknown')}")
+                return str(data["access_token"])
+
+    # â”€â”€ Tool implementations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    async def _list_unread(self, token: str, max_results: int) -> dict[str, Any]:
+        import aiohttp
+
+        headers = {"Authorization": f"Bearer {token}"}
+        params: dict[str, str | int] = {"q": "is:unread", "maxResults": min(max_results, 50)}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{_GMAIL_BASE}/messages",
+                headers=headers,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("error", {}).get("message", str(resp.status)),
+                    }
+
+            messages = data.get("messages", [])
+            summaries = []
+            for m in messages[:max_results]:
+                meta = await self._get_message_meta(session, headers, m["id"])
+                summaries.append(meta)
+
+        return {"success": True, "data": {"unread": summaries, "total": data.get("resultSizeEstimate", 0)}, "error": None}
+
+    async def _get_message_meta(self, session: Any, headers: dict, message_id: str) -> dict[str, Any]:
+        async with session.get(
+            f"{_GMAIL_BASE}/messages/{message_id}",
+            headers=headers,
+            params={"format": "metadata", "metadataHeaders": ["From", "Subject", "Date"]},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            data = await resp.json()
+            if resp.status != 200:
+                return {
+                    "id": message_id,
+                    "from": "",
+                    "subject": "Error fetching message",
+                    "date": "",
+                    "snippet": data.get("error", {}).get("message", f"HTTP {resp.status}"),
+                }
+
+        header_map: dict[str, str] = {}
+        for h in data.get("payload", {}).get("headers", []):
+            header_map[h["name"]] = h["value"]
+
+        return {
+            "id": message_id,
+            "from": header_map.get("From", ""),
+            "subject": header_map.get("Subject", "")[:200],  # truncate subject
+            "date": header_map.get("Date", ""),
+            "snippet": data.get("snippet", "")[:_MAX_BODY_CHARS],
+        }
+
+    async def _summarize_unread(self, token: str, max_results: int) -> dict[str, Any]:
+        """Return truncated email content safe for LLM summarization."""
+        result = await self._list_unread(token, max_results)
+        if not result["success"]:
+            return result
+        # Content is already truncated in _get_message_meta; add metadata
+        emails = result["data"]["unread"]
+        safe_content = [
+            {
+                "from": e["from"],
+                "subject": e["subject"],
+                "snippet": e["snippet"][:_MAX_BODY_CHARS],
+                "id": e["id"],
+            }
+            for e in emails
+        ]
+        return {
+            "success": True,
+            "data": {
+                "emails_for_summary": safe_content,
+                "count": len(safe_content),
+                "task_type": "synthesis",  # hint for LLM router
+            },
+            "error": None,
+        }
+
+    async def _send_gmail(self, token: str, to: str, subject: str, body: str) -> dict[str, Any]:
+        import aiohttp
+
+        if not to.strip():
+            return {"success": False, "data": None, "error": "to is required"}
+
+        msg = MIMEText(body, "plain")
+        msg["To"] = to
+        msg["Subject"] = subject
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {"raw": raw}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{_GMAIL_BASE}/messages/send",
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if resp.status not in (200, 201):
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("error", {}).get("message", str(resp.status)),
+                    }
+                return {"success": True, "data": {"message_id": data.get("id")}, "error": None}
+
+    async def _mark_as_read(self, token: str, message_id: str) -> dict[str, Any]:
+        import aiohttp
+
+        if not message_id.strip():
+            return {"success": False, "data": None, "error": "message_id is required"}
+
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {"removeLabelIds": ["UNREAD"]}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{_GMAIL_BASE}/messages/{message_id}/modify",
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 200:
+                    return {"success": True, "data": {"marked_read": message_id}, "error": None}
+                data = await resp.json()
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": data.get("error", {}).get("message", str(resp.status)),
+                }
+
+
+__all__ = ["GmailIntegration"]
+"""Google Calendar integration via Google Calendar API v3.
+
+Uses fully async aiohttp for all HTTP calls. OAuth is handled via
+refresh token â€” no browser popup at runtime.
+
+Required env vars:
+    GOOGLE_CLIENT_ID
+    GOOGLE_CLIENT_SECRET
+    GOOGLE_REFRESH_TOKEN
+"""
+
+from __future__ import annotations
+
+import os
+from datetime import datetime, timezone, timedelta
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+_TOKEN_URL = "https://oauth2.googleapis.com/token"
+_CALENDAR_BASE = "https://www.googleapis.com/calendar/v3"
+
+
+class GoogleCalendarIntegration(BaseIntegration):
+    """Google Calendar v3 integration (async, RFC3339, OAuth refresh)."""
+
+    name = "google_calendar"
+    description = "Create, list, and delete Google Calendar events"
+    required_config: list[str] = [
+        "GOOGLE_CLIENT_ID",
+        "GOOGLE_CLIENT_SECRET",
+        "GOOGLE_REFRESH_TOKEN",
+    ]
+
+    def is_available(self) -> bool:
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            self.unavailable_reason = "aiohttp not installed"
+            return False
+        if not all(bool(os.environ.get(k)) for k in self.required_config):
+            missing = [k for k in self.required_config if not os.environ.get(k)]
+            self.unavailable_reason = f"Missing env vars: {missing}"
+            return False
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "create_event",
+                "description": "Create a new event in Google Calendar",
+                "risk": "confirm",
+                "args": {
+                    "summary": {"type": "string", "description": "Event title"},
+                    "start": {
+                        "type": "string",
+                        "description": "Start datetime in ISO-8601 (e.g. 2026-03-15T10:00:00)",
+                    },
+                    "end": {
+                        "type": "string",
+                        "description": "End datetime in ISO-8601",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Event description",
+                        "default": "",
+                    },
+                    "timezone": {
+                        "type": "string",
+                        "description": "IANA timezone (e.g. Asia/Kolkata)",
+                        "default": "UTC",
+                    },
+                    "calendar_id": {
+                        "type": "string",
+                        "description": "Calendar ID (default: primary)",
+                        "default": "primary",
+                    },
+                },
+                "required_args": ["summary", "start", "end"],
+            },
+            {
+                "name": "list_events",
+                "description": "List upcoming Google Calendar events",
+                "risk": "low",
+                "args": {
+                    "days_ahead": {"type": "integer", "description": "Look ahead N days", "default": 7},
+                    "max_results": {"type": "integer", "description": "Max events to return", "default": 10},
+                    "calendar_id": {"type": "string", "default": "primary"},
+                },
+                "required_args": [],
+            },
+            {
+                "name": "delete_event",
+                "description": "Delete a Google Calendar event by its event ID",
+                "risk": "confirm",
+                "args": {
+                    "event_id": {"type": "string", "description": "Google Calendar event ID"},
+                    "calendar_id": {"type": "string", "default": "primary"},
+                },
+                "required_args": ["event_id"],
+            },
+            {
+                "name": "find_free_slot",
+                "description": "Find the next free time slot of a given duration",
+                "risk": "low",
+                "args": {
+                    "duration_minutes": {
+                        "type": "integer",
+                        "description": "Required free slot duration in minutes",
+                        "default": 60,
+                    },
+                    "days_ahead": {"type": "integer", "default": 7},
+                    "calendar_id": {"type": "string", "default": "primary"},
+                },
+                "required_args": [],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        try:
+            token = await self._refresh_access_token()
+            if tool_name == "create_event":
+                return await self._create_event(token, args)
+            if tool_name == "list_events":
+                return await self._list_events(token, args)
+            if tool_name == "delete_event":
+                return await self._delete_event(token, args)
+            if tool_name == "find_free_slot":
+                return await self._find_free_slot(token, args)
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    async def _refresh_access_token(self) -> str:
+        import aiohttp
+
+        payload = {
+            "client_id": os.environ["GOOGLE_CLIENT_ID"],
+            "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
+            "refresh_token": os.environ["GOOGLE_REFRESH_TOKEN"],
+            "grant_type": "refresh_token",
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(_TOKEN_URL, data=payload, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                data = await resp.json()
+                if "access_token" not in data:
+                    raise RuntimeError(f"Token refresh failed: {data.get('error', 'unknown')}")
+                return str(data["access_token"])
+
+    def _to_rfc3339(self, dt_str: str, tz: str = "UTC") -> str:
+        """Parse ISO-8601 string and return RFC3339 with timezone offset."""
+        # Try with offset first, then naive
+        for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                dt = datetime.strptime(dt_str.strip(), fmt)
+                # If naive, we don't attach UTC, allowing Google Calendar to use the timeZone field
+                return dt.isoformat()
+            except ValueError:
+                continue
+        raise ValueError(f"Cannot parse datetime: {dt_str!r}")
+
+    async def _create_event(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        summary = str(args.get("summary") or "").strip()
+        if not summary:
+            return {"success": False, "data": None, "error": "summary is required"}
+
+        tz = str(args.get("timezone", "UTC") or "UTC")
+        start_str = str(args.get("start") or "")
+        end_str = str(args.get("end") or "")
+        cal_id = str(args.get("calendar_id", "primary") or "primary")
+
+        event_body = {
+            "summary": summary,
+            "description": str(args.get("description", "") or ""),
+            "start": {"dateTime": self._to_rfc3339(start_str), "timeZone": tz},
+            "end": {"dateTime": self._to_rfc3339(end_str), "timeZone": tz},
+        }
+
+        url = f"{_CALENDAR_BASE}/calendars/{cal_id}/events"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                url, json=event_body, headers=headers, timeout=aiohttp.ClientTimeout(total=15)
+            ) as resp:
+                data = await resp.json()
+                if resp.status not in (200, 201):
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("error", {}).get("message", str(resp.status)),
+                    }
+                return {"success": True, "data": {"event_id": data["id"], "link": data.get("htmlLink")}, "error": None}
+
+    async def _list_events(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        days_ahead = int(args.get("days_ahead", 7) or 7)
+        max_results = min(50, int(args.get("max_results", 10) or 10))
+        cal_id = str(args.get("calendar_id", "primary") or "primary")
+
+        now = datetime.now(tz=timezone.utc)
+        time_min = now.isoformat()
+        time_max = (now + timedelta(days=days_ahead)).isoformat()
+
+        url = f"{_CALENDAR_BASE}/calendars/{cal_id}/events"
+        headers = {"Authorization": f"Bearer {token}"}
+        params: dict[str, str | int] = {
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "maxResults": max_results,
+            "singleEvents": "true",
+            "orderBy": "startTime",
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=15)
+            ) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("error", {}).get("message", str(resp.status)),
+                    }
+                events = [
+                    {
+                        "id": item["id"],
+                        "summary": item.get("summary", "Untitled"),
+                        "start": item.get("start", {}).get("dateTime") or item.get("start", {}).get("date"),
+                        "end": item.get("end", {}).get("dateTime") or item.get("end", {}).get("date"),
+                    }
+                    for item in data.get("items", [])
+                ]
+                return {"success": True, "data": {"events": events}, "error": None}
+
+    async def _delete_event(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        event_id = str(args.get("event_id") or "").strip()
+        if not event_id:
+            return {"success": False, "data": None, "error": "event_id is required"}
+        cal_id = str(args.get("calendar_id", "primary") or "primary")
+
+        url = f"{_CALENDAR_BASE}/calendars/{cal_id}/events/{event_id}"
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.delete(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 204:
+                    return {"success": True, "data": {"deleted": event_id}, "error": None}
+                body = await resp.json()
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": body.get("error", {}).get("message", str(resp.status)),
+                }
+
+    async def _find_free_slot(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
+        """Find the earliest free slot of the requested duration using freebusy query."""
+        import aiohttp
+
+        duration_min = int(args.get("duration_minutes", 60) or 60)
+        days_ahead = int(args.get("days_ahead", 7) or 7)
+        cal_id = str(args.get("calendar_id", "primary") or "primary")
+
+        now = datetime.now(tz=timezone.utc)
+        time_max = (now + timedelta(days=days_ahead)).isoformat()
+
+        url = f"{_CALENDAR_BASE}/freeBusy"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        body = {
+            "timeMin": now.isoformat(),
+            "timeMax": time_max,
+            "items": [{"id": cal_id}],
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("error", {}).get("message", str(resp.status)),
+                    }
+
+        busy_slots = data.get("calendars", {}).get(cal_id, {}).get("busy", [])
+        # Find first gap of >= duration_min minutes
+        cursor = now
+        for slot in busy_slots:
+            busy_start = datetime.fromisoformat(slot["start"].replace("Z", "+00:00"))
+            gap = (busy_start - cursor).total_seconds() / 60
+            if gap >= duration_min:
+                return {
+                    "success": True,
+                    "data": {
+                        "free_start": cursor.isoformat(),
+                        "free_end": (cursor + timedelta(minutes=duration_min)).isoformat(),
+                    },
+                    "error": None,
+                }
+            busy_end = datetime.fromisoformat(slot["end"].replace("Z", "+00:00"))
+            if busy_end > cursor:
+                cursor = busy_end
+
+        # Gap after all busy slots
+        return {
+            "success": True,
+            "data": {
+                "free_start": cursor.isoformat(),
+                "free_end": (cursor + timedelta(minutes=duration_min)).isoformat(),
+            },
+            "error": None,
+        }
+
+
+__all__ = ["GoogleCalendarIntegration"]
+"""Home Assistant integration via the REST API.
+
+Required env vars:
+    HOME_ASSISTANT_URL
+    HOME_ASSISTANT_TOKEN
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from typing import Any
+from urllib.parse import quote
+
+from integrations.base import BaseIntegration
+
+_ENTITY_CACHE_TTL_SECONDS = 60
+_SENSITIVE_DOMAINS = {"lock", "alarm_control_panel"}
+
+
+class HomeAssistantIntegration(BaseIntegration):
+    """Read entity state and call Home Assistant services."""
+
+    name = "home_assistant"
+    description = "Inspect entities and control smart-home devices through Home Assistant"
+    required_config: list[str] = ["HOME_ASSISTANT_URL", "HOME_ASSISTANT_TOKEN"]
+
+    def __init__(self, config: Any | None = None) -> None:
+        super().__init__(config=config)
+        self._entity_cache: list[dict[str, Any]] = []
+        self._entity_cache_at: float = 0.0
+
+    def is_available(self) -> bool:
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            self.unavailable_reason = "aiohttp not installed"
+            return False
+
+        if not all(bool(os.environ.get(key)) for key in self.required_config):
+            missing = [key for key in self.required_config if not os.environ.get(key)]
+            self.unavailable_reason = f"Missing env vars: {missing}"
+            return False
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "get_entity_state",
+                "description": "Get the current state and friendly name for a Home Assistant entity",
+                "risk": "low",
+                "args": {
+                    "entity_id": {"type": "string", "description": "Entity ID like light.kitchen"},
+                },
+                "required_args": ["entity_id"],
+            },
+            {
+                "name": "turn_on_entity",
+                "description": "Turn on a Home Assistant light, switch, fan, or similar entity",
+                "risk": "confirm",
+                "args": {
+                    "entity_id": {"type": "string", "description": "Single entity ID", "default": ""},
+                    "entity_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of entity IDs",
+                        "default": [],
+                    },
+                    "area_id": {"type": "string", "description": "Optional Home Assistant area ID", "default": ""},
+                    "device_id": {"type": "string", "description": "Optional Home Assistant device ID", "default": ""},
+                    "domain": {"type": "string", "description": "Required when targeting an area or device", "default": ""},
+                    "service_data": {
+                        "type": "object",
+                        "description": "Optional extra service data like brightness_pct",
+                        "default": {},
+                    },
+                },
+                "required_args": [],
+            },
+            {
+                "name": "turn_off_entity",
+                "description": "Turn off a Home Assistant light, switch, fan, or similar entity",
+                "risk": "confirm",
+                "args": {
+                    "entity_id": {"type": "string", "description": "Single entity ID", "default": ""},
+                    "entity_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of entity IDs",
+                        "default": [],
+                    },
+                    "area_id": {"type": "string", "description": "Optional Home Assistant area ID", "default": ""},
+                    "device_id": {"type": "string", "description": "Optional Home Assistant device ID", "default": ""},
+                    "domain": {"type": "string", "description": "Required when targeting an area or device", "default": ""},
+                    "service_data": {
+                        "type": "object",
+                        "description": "Optional extra service data",
+                        "default": {},
+                    },
+                },
+                "required_args": [],
+            },
+            {
+                "name": "toggle_entity",
+                "description": "Toggle a Home Assistant light, switch, fan, or similar entity",
+                "risk": "confirm",
+                "args": {
+                    "entity_id": {"type": "string", "description": "Single entity ID", "default": ""},
+                    "entity_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of entity IDs",
+                        "default": [],
+                    },
+                    "area_id": {"type": "string", "description": "Optional Home Assistant area ID", "default": ""},
+                    "device_id": {"type": "string", "description": "Optional Home Assistant device ID", "default": ""},
+                    "domain": {"type": "string", "description": "Required when targeting an area or device", "default": ""},
+                    "service_data": {
+                        "type": "object",
+                        "description": "Optional extra service data",
+                        "default": {},
+                    },
+                },
+                "required_args": [],
+            },
+            {
+                "name": "set_thermostat",
+                "description": "Set a climate entity target temperature",
+                "risk": "confirm",
+                "args": {
+                    "entity_id": {"type": "string", "description": "Climate entity ID like climate.living_room"},
+                    "temperature": {"type": "number", "description": "Target temperature"},
+                    "hvac_mode": {
+                        "type": "string",
+                        "description": "Optional HVAC mode like heat, cool, or auto",
+                        "default": "",
+                    },
+                },
+                "required_args": ["entity_id", "temperature"],
+            },
+            {
+                "name": "call_service",
+                "description": "Call a specific Home Assistant service for a targeted entity, area, or device",
+                "risk": "confirm",
+                "args": {
+                    "domain": {"type": "string", "description": "Service domain like light or media_player"},
+                    "service": {"type": "string", "description": "Service name like turn_on or volume_set"},
+                    "entity_id": {"type": "string", "description": "Optional single entity ID", "default": ""},
+                    "entity_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of entity IDs",
+                        "default": [],
+                    },
+                    "area_id": {"type": "string", "description": "Optional area ID", "default": ""},
+                    "device_id": {"type": "string", "description": "Optional device ID", "default": ""},
+                    "service_data": {
+                        "type": "object",
+                        "description": "Optional extra Home Assistant service fields",
+                        "default": {},
+                    },
+                },
+                "required_args": ["domain", "service"],
+            },
+            {
+                "name": "list_entities",
+                "description": "List Home Assistant entities, optionally filtered by domain",
+                "risk": "low",
+                "args": {
+                    "domain": {"type": "string", "description": "Optional domain filter like light", "default": ""},
+                    "include_attributes": {
+                        "type": "boolean",
+                        "description": "Include raw Home Assistant attributes in the response",
+                        "default": False,
+                    },
+                },
+                "required_args": [],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        try:
+            if tool_name == "get_entity_state":
+                return await self._get_entity_state(args)
+            if tool_name == "turn_on_entity":
+                return await self._entity_service("turn_on", args)
+            if tool_name == "turn_off_entity":
+                return await self._entity_service("turn_off", args)
+            if tool_name == "toggle_entity":
+                return await self._entity_service("toggle", args)
+            if tool_name == "set_thermostat":
+                return await self._set_thermostat(args)
+            if tool_name == "call_service":
+                return await self._call_service(args)
+            if tool_name == "list_entities":
+                return await self._list_entities(args)
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    def _base_url(self) -> str:
+        value = str(os.environ["HOME_ASSISTANT_URL"]).strip().rstrip("/")
+        if value.endswith("/api"):
+            value = value[:-4]
+        return value
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {os.environ['HOME_ASSISTANT_TOKEN']}",
+            "Content-Type": "application/json",
+        }
+
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_payload: dict[str, Any] | None = None,
+    ) -> Any:
+        import aiohttp
+
+        url = f"{self._base_url()}{path}"
+        timeout = aiohttp.ClientTimeout(total=15)
+        async with aiohttp.ClientSession() as session:
+            request_fn = getattr(session, method.lower())
+            async with request_fn(
+                url,
+                headers=self._headers(),
+                json=json_payload,
+                timeout=timeout,
+            ) as resp:
+                data = await self._read_response(resp)
+                if resp.status >= 400:
+                    raise RuntimeError(self._extract_error_message(resp.status, data))
+                return data
+
+    async def _read_response(self, resp: Any) -> Any:
+        if getattr(resp, "status", None) == 204:
+            return {}
+        return await resp.json(content_type=None)
+
+    def _extract_error_message(self, status: int, data: Any) -> str:
+        if isinstance(data, dict):
+            for key in ("message", "error", "detail"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value
+        if isinstance(data, str) and data.strip():
+            return data
+        return f"Home Assistant API request failed with HTTP {status}"
+
+    def _invalidate_entity_cache(self) -> None:
+        self._entity_cache = []
+        self._entity_cache_at = 0.0
+
+    async def _get_states(self, *, force_refresh: bool = False) -> list[dict[str, Any]]:
+        is_fresh = (time.monotonic() - self._entity_cache_at) < _ENTITY_CACHE_TTL_SECONDS
+        if not force_refresh and self._entity_cache and is_fresh:
+            return self._entity_cache
+
+        data = await self._request("get", "/api/states")
+        if not isinstance(data, list):
+            raise RuntimeError("Unexpected Home Assistant states response")
+
+        self._entity_cache = [item for item in data if isinstance(item, dict)]
+        self._entity_cache_at = time.monotonic()
+        return self._entity_cache
+
+    def _extract_entity_ids(self, args: dict[str, Any]) -> list[str]:
+        ids: list[str] = []
+
+        raw_entity_id = args.get("entity_id", "")
+        if isinstance(raw_entity_id, list):
+            ids.extend(str(item).strip() for item in raw_entity_id if str(item).strip())
+        else:
+            value = str(raw_entity_id or "").strip()
+            if value:
+                ids.append(value)
+
+        raw_entity_ids = args.get("entity_ids", [])
+        if isinstance(raw_entity_ids, list):
+            ids.extend(str(item).strip() for item in raw_entity_ids if str(item).strip())
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for entity_id in ids:
+            if entity_id not in seen:
+                deduped.append(entity_id)
+                seen.add(entity_id)
+        return deduped
+
+    def _build_target(self, args: dict[str, Any]) -> dict[str, Any]:
+        target: dict[str, Any] = {}
+        entity_ids = self._extract_entity_ids(args)
+
+        if entity_ids:
+            target["entity_id"] = entity_ids[0] if len(entity_ids) == 1 else entity_ids
+
+        area_id = str(args.get("area_id", "") or "").strip()
+        if area_id:
+            target["area_id"] = area_id
+
+        device_id = str(args.get("device_id", "") or "").strip()
+        if device_id:
+            target["device_id"] = device_id
+
+        return target
+
+    def _infer_domain(self, args: dict[str, Any]) -> str:
+        explicit = str(args.get("domain", "") or "").strip().lower()
+        if explicit:
+            return explicit
+
+        entity_ids = self._extract_entity_ids(args)
+        if not entity_ids:
+            return ""
+        entity_id = entity_ids[0]
+        return entity_id.split(".", 1)[0].strip().lower() if "." in entity_id else ""
+
+    def _contains_sensitive_domain(self, args: dict[str, Any], *, explicit_domain: str = "") -> bool:
+        domains: set[str] = set()
+        if explicit_domain:
+            domains.add(explicit_domain.strip().lower())
+
+        for entity_id in self._extract_entity_ids(args):
+            if "." in entity_id:
+                domains.add(entity_id.split(".", 1)[0].strip().lower())
+
+        return any(domain in _SENSITIVE_DOMAINS for domain in domains)
+
+    def _normalize_service_data(self, args: dict[str, Any]) -> dict[str, Any]:
+        service_data = args.get("service_data", {})
+        if isinstance(service_data, dict):
+            return dict(service_data)
+        return {}
+
+    def _format_entity(self, item: dict[str, Any], *, include_attributes: bool = False) -> dict[str, Any]:
+        entity_id = str(item.get("entity_id", ""))
+        attributes = item.get("attributes") or {}
+        payload = {
+            "entity_id": entity_id,
+            "domain": entity_id.split(".", 1)[0] if "." in entity_id else "",
+            "state": item.get("state"),
+            "friendly_name": attributes.get("friendly_name") or entity_id,
+            "last_changed": item.get("last_changed"),
+            "last_updated": item.get("last_updated"),
+        }
+        if include_attributes:
+            payload["attributes"] = attributes
+        return payload
+
+    async def _get_entity_state(self, args: dict[str, Any]) -> dict[str, Any]:
+        entity_id = str(args.get("entity_id", "") or "").strip()
+        if not entity_id:
+            return {"success": False, "data": None, "error": "entity_id is required"}
+
+        states = await self._get_states()
+        for item in states:
+            if str(item.get("entity_id", "")) == entity_id:
+                return {"success": True, "data": self._format_entity(item, include_attributes=True), "error": None}
+
+        encoded_entity_id = quote(entity_id, safe="")
+        data = await self._request("get", f"/api/states/{encoded_entity_id}")
+        if not isinstance(data, dict):
+            raise RuntimeError("Unexpected Home Assistant entity response")
+        return {"success": True, "data": self._format_entity(data, include_attributes=True), "error": None}
+
+    async def _entity_service(self, service: str, args: dict[str, Any]) -> dict[str, Any]:
+        domain = self._infer_domain(args)
+        target = self._build_target(args)
+        if not target:
+            return {
+                "success": False,
+                "data": None,
+                "error": "Provide entity_id, entity_ids, area_id, or device_id",
+            }
+        if not domain:
+            return {
+                "success": False,
+                "data": None,
+                "error": "domain is required when the target is an area or device",
+            }
+        if self._contains_sensitive_domain(args, explicit_domain=domain):
+            return {
+                "success": False,
+                "data": None,
+                "error": "Sensitive domains must use explicit confirm-gated services instead of the convenience helpers",
+            }
+
+        payload = self._normalize_service_data(args)
+        payload.update(target)
+        data = await self._request("post", f"/api/services/{domain}/{service}", json_payload=payload)
+        self._invalidate_entity_cache()
+        return {
+            "success": True,
+            "data": {
+                "service": f"{domain}.{service}",
+                "result": self._format_service_result(data),
+            },
+            "error": None,
+        }
+
+    async def _set_thermostat(self, args: dict[str, Any]) -> dict[str, Any]:
+        entity_id = str(args.get("entity_id", "") or "").strip()
+        if not entity_id:
+            return {"success": False, "data": None, "error": "entity_id is required"}
+        if "temperature" not in args:
+            return {"success": False, "data": None, "error": "temperature is required"}
+
+        payload: dict[str, Any] = {
+            "entity_id": entity_id,
+            "temperature": args["temperature"],
+        }
+        hvac_mode = str(args.get("hvac_mode", "") or "").strip()
+        if hvac_mode:
+            payload["hvac_mode"] = hvac_mode
+
+        data = await self._request("post", "/api/services/climate/set_temperature", json_payload=payload)
+        self._invalidate_entity_cache()
+        return {
+            "success": True,
+            "data": {
+                "service": "climate.set_temperature",
+                "result": self._format_service_result(data),
+            },
+            "error": None,
+        }
+
+    async def _call_service(self, args: dict[str, Any]) -> dict[str, Any]:
+        domain = str(args.get("domain", "") or "").strip().lower()
+        service = str(args.get("service", "") or "").strip()
+        if not domain:
+            return {"success": False, "data": None, "error": "domain is required"}
+        if not service:
+            return {"success": False, "data": None, "error": "service is required"}
+
+        target = self._build_target(args)
+        if not target:
+            return {
+                "success": False,
+                "data": None,
+                "error": "Targeted service calls require entity_id, entity_ids, area_id, or device_id",
+            }
+
+        payload = self._normalize_service_data(args)
+        payload.update(target)
+        data = await self._request("post", f"/api/services/{domain}/{service}", json_payload=payload)
+        self._invalidate_entity_cache()
+        return {
+            "success": True,
+            "data": {
+                "service": f"{domain}.{service}",
+                "result": self._format_service_result(data),
+            },
+            "error": None,
+        }
+
+    async def _list_entities(self, args: dict[str, Any]) -> dict[str, Any]:
+        domain = str(args.get("domain", "") or "").strip().lower()
+        include_attributes = bool(args.get("include_attributes", False))
+        states = await self._get_states()
+
+        if domain:
+            states = [item for item in states if str(item.get("entity_id", "")).startswith(f"{domain}.")]
+
+        entities = [self._format_entity(item, include_attributes=include_attributes) for item in states]
+        return {
+            "success": True,
+            "data": {
+                "entities": entities,
+                "count": len(entities),
+                "cached": True,
+            },
+            "error": None,
+        }
+
+    def _format_service_result(self, data: Any) -> Any:
+        if not isinstance(data, list):
+            return data
+
+        formatted: list[dict[str, Any]] = []
+        for item in data:
+            if isinstance(item, dict) and item.get("entity_id"):
+                formatted.append(self._format_entity(item, include_attributes=False))
+            elif isinstance(item, dict):
+                formatted.append(dict(item))
+        return formatted
+
+
+__all__ = ["HomeAssistantIntegration"]
+"""Notion integration via official Notion API v1 (async aiohttp).
+
+Required env vars:
+    NOTION_API_KEY  â€” Notion internal integration token
+
+Rules:
+- Schema validation before writing anything
+- No raw LLM JSON written without validation
+- All reads are low-risk; all writes are confirm-risk
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+_NOTION_BASE = "https://api.notion.com/v1"
+_NOTION_VERSION = "2022-06-28"
+
+
+class NotionIntegration(BaseIntegration):
+    """Notion API integration â€” pages, databases, blocks (async aiohttp)."""
+
+    name = "notion"
+    description = "Create and query Notion pages, databases, and blocks"
+    required_config: list[str] = ["NOTION_API_KEY"]
+
+    def is_available(self) -> bool:
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            self.unavailable_reason = "aiohttp not installed"
+            return False
+        if not os.environ.get("NOTION_API_KEY"):
+            self.unavailable_reason = "Missing env var: NOTION_API_KEY"
+            return False
+        return True
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {os.environ['NOTION_API_KEY']}",
+            "Notion-Version": _NOTION_VERSION,
+            "Content-Type": "application/json",
+        }
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "create_page",
+                "description": "Create a new Notion page under a parent page or database",
+                "risk": "confirm",
+                "args": {
+                    "parent_id": {
+                        "type": "string",
+                        "description": "Parent page or database ID",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Page title",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Optional plain-text content for page body",
+                        "default": "",
+                    },
+                    "parent_type": {
+                        "type": "string",
+                        "description": "'page_id' or 'database_id'",
+                        "default": "page_id",
+                    },
+                },
+                "required_args": ["parent_id", "title"],
+            },
+            {
+                "name": "query_database",
+                "description": "Query a Notion database and return matching pages",
+                "risk": "low",
+                "args": {
+                    "database_id": {
+                        "type": "string",
+                        "description": "Notion database ID",
+                    },
+                    "filter_property": {
+                        "type": "string",
+                        "description": "Optional property name to filter on",
+                        "default": "",
+                    },
+                    "filter_value": {
+                        "type": "string",
+                        "description": "Optional filter value (text contains)",
+                        "default": "",
+                    },
+                    "page_size": {"type": "integer", "default": 10},
+                },
+                "required_args": ["database_id"],
+            },
+            {
+                "name": "append_block",
+                "description": "Append a text block to an existing Notion page",
+                "risk": "confirm",
+                "args": {
+                    "page_id": {
+                        "type": "string",
+                        "description": "Notion page ID to append to",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text content to append",
+                    },
+                    "block_type": {
+                        "type": "string",
+                        "description": "Block type: paragraph, bulleted_list_item, heading_2",
+                        "default": "paragraph",
+                    },
+                },
+                "required_args": ["page_id", "text"],
+            },
+            {
+                "name": "get_page",
+                "description": "Retrieve metadata and top-level blocks from a Notion page",
+                "risk": "low",
+                "args": {
+                    "page_id": {
+                        "type": "string",
+                        "description": "Notion page ID",
+                    },
+                },
+                "required_args": ["page_id"],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        try:
+            if tool_name == "create_page":
+                return await self._create_page(args)
+            if tool_name == "query_database":
+                return await self._query_database(args)
+            if tool_name == "append_block":
+                return await self._append_block(args)
+            if tool_name == "get_page":
+                return await self._get_page(args)
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    # â”€â”€ Validation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @staticmethod
+    def _validate_block_type(block_type: str) -> str:
+        allowed = {"paragraph", "bulleted_list_item", "numbered_list_item", "heading_1", "heading_2", "heading_3", "to_do", "quote"}
+        return block_type if block_type in allowed else "paragraph"
+
+    @staticmethod
+    def _validate_parent_type(parent_type: str) -> str:
+        allowed = {"page_id", "database_id"}
+        return parent_type if parent_type in allowed else "page_id"
+
+    # â”€â”€ Tool implementations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    async def _create_page(self, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        parent_id = str(args.get("parent_id") or "").strip()
+        title = str(args.get("title") or "").strip()
+        content = str(args.get("content", "") or "")
+        parent_type = self._validate_parent_type(str(args.get("parent_type", "page_id") or "page_id"))
+
+        if not parent_id:
+            return {"success": False, "data": None, "error": "parent_id is required"}
+        if not title:
+            return {"success": False, "data": None, "error": "title is required"}
+
+        children = []
+        if content:
+            children.append(
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"type": "text", "text": {"content": content[:2000]}}]
+                    },
+                }
+            )
+
+        payload: dict[str, Any] = {
+            "parent": {parent_type: parent_id},
+            "properties": {
+                "title": {
+                    "title": [{"type": "text", "text": {"content": title[:255]}}]
+                }
+            },
+        }
+        if children:
+            payload["children"] = children
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{_NOTION_BASE}/pages",
+                json=payload,
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if resp.status not in (200, 201):
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("message", str(resp.status)),
+                    }
+                return {
+                    "success": True,
+                    "data": {
+                        "page_id": data["id"],
+                        "url": data.get("url"),
+                    },
+                    "error": None,
+                }
+
+    async def _query_database(self, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        database_id = str(args.get("database_id") or "").strip()
+        if not database_id:
+            return {"success": False, "data": None, "error": "database_id is required"}
+
+        page_size = min(50, int(args.get("page_size", 10) or 10))
+        filter_prop = str(args.get("filter_property", "") or "")
+        filter_val = str(args.get("filter_value", "") or "")
+
+        payload: dict[str, Any] = {"page_size": page_size}
+        if filter_prop and filter_val:
+            payload["filter"] = {
+                "property": filter_prop,
+                "rich_text": {"contains": filter_val},
+            }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{_NOTION_BASE}/databases/{database_id}/query",
+                json=payload,
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("message", str(resp.status)),
+                    }
+
+        results = [
+            {
+                "id": page["id"],
+                "url": page.get("url"),
+                "created_time": page.get("created_time"),
+            }
+            for page in data.get("results", [])
+        ]
+        return {"success": True, "data": {"results": results, "has_more": data.get("has_more", False)}, "error": None}
+
+    async def _append_block(self, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        page_id = str(args.get("page_id") or "").strip()
+        text = str(args.get("text") or "").strip()
+        block_type = self._validate_block_type(str(args.get("block_type", "paragraph") or "paragraph"))
+
+        if not page_id:
+            return {"success": False, "data": None, "error": "page_id is required"}
+        if not text:
+            return {"success": False, "data": None, "error": "text is required"}
+
+        block = {
+            "object": "block",
+            "type": block_type,
+            block_type: {
+                "rich_text": [{"type": "text", "text": {"content": text[:2000]}}]
+            },
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(
+                f"{_NOTION_BASE}/blocks/{page_id}/children",
+                json={"children": [block]},
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if resp.status not in (200, 201):
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("message", str(resp.status)),
+                    }
+                return {
+                    "success": True,
+                    "data": {"block_id": data.get("results", [{}])[0].get("id", "")},
+                    "error": None,
+                }
+
+    async def _get_page(self, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        page_id = str(args.get("page_id") or "").strip()
+        if not page_id:
+            return {"success": False, "data": None, "error": "page_id is required"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{_NOTION_BASE}/pages/{page_id}",
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("message", str(resp.status)),
+                    }
+            # Fetch children blocks
+            async with session.get(
+                f"{_NOTION_BASE}/blocks/{page_id}/children",
+                headers=self._headers(),
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp2:
+                blocks_data = await resp2.json()
+
+        blocks = [
+            {
+                "type": b.get("type"),
+                "id": b.get("id"),
+            }
+            for b in blocks_data.get("results", [])[:20]
+        ]
+        return {
+            "success": True,
+            "data": {
+                "id": data["id"],
+                "url": data.get("url"),
+                "created_time": data.get("created_time"),
+                "last_edited_time": data.get("last_edited_time"),
+                "blocks": blocks,
+            },
+            "error": None,
+        }
+
+
+__all__ = ["NotionIntegration"]
+"""Spotify integration via Spotify Web API (async aiohttp, OAuth PKCE refresh).
+
+Required env vars:
+    SPOTIFY_CLIENT_ID
+    SPOTIFY_CLIENT_SECRET
+    SPOTIFY_REFRESH_TOKEN  â€” From OAuth Authorization Code flow
+
+Rules:
+- Token refreshed on every call (no in-memory caching to avoid stale state)
+- Fail gracefully if no active playback device
+- Irreversible actions (play, create_playlist) gated as confirm-risk
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+_TOKEN_URL = "https://accounts.spotify.com/api/token"
+_SPOTIFY_BASE = "https://api.spotify.com/v1"
+
+
+class SpotifyIntegration(BaseIntegration):
+    """Spotify Web API integration â€” playback control, search, playlists."""
+
+    name = "spotify"
+    description = "Control Spotify playback, search music, and manage playlists"
+    required_config: list[str] = [
+        "SPOTIFY_CLIENT_ID",
+        "SPOTIFY_CLIENT_SECRET",
+        "SPOTIFY_REFRESH_TOKEN",
+    ]
+
+    def is_available(self) -> bool:
+        try:
+            import aiohttp  # noqa: F401
+        except ImportError:
+            self.unavailable_reason = "aiohttp not installed"
+            return False
+        if not all(bool(os.environ.get(k)) for k in self.required_config):
+            missing = [k for k in self.required_config if not os.environ.get(k)]
+            self.unavailable_reason = f"Missing env vars: {missing}"
+            return False
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "play_track",
+                "description": "Play a Spotify track by URI or search query on the active device",
+                "risk": "confirm",
+                "args": {
+                    "track_uri": {
+                        "type": "string",
+                        "description": "Spotify track URI (spotify:track:...) â€” preferred",
+                        "default": "",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "If track_uri is empty, search by this query and play first result",
+                        "default": "",
+                    },
+                    "device_id": {
+                        "type": "string",
+                        "description": "Optional Spotify device ID; uses active device if omitted",
+                        "default": "",
+                    },
+                },
+                "required_args": [],
+            },
+            {
+                "name": "pause",
+                "description": "Pause the current Spotify playback",
+                "risk": "low",
+                "args": {
+                    "device_id": {"type": "string", "default": ""},
+                },
+                "required_args": [],
+            },
+            {
+                "name": "search_track",
+                "description": "Search Spotify for tracks matching a query",
+                "risk": "low",
+                "args": {
+                    "query": {"type": "string", "description": "Search query (artist, track, album)"},
+                    "limit": {"type": "integer", "default": 5},
+                },
+                "required_args": ["query"],
+            },
+            {
+                "name": "get_current_track",
+                "description": "Get the currently playing track on Spotify",
+                "risk": "low",
+                "args": {},
+                "required_args": [],
+            },
+            {
+                "name": "create_playlist",
+                "description": "Create a new Spotify playlist for the current user",
+                "risk": "confirm",
+                "args": {
+                    "name": {"type": "string", "description": "Playlist name"},
+                    "description": {"type": "string", "default": ""},
+                    "public": {"type": "boolean", "default": False},
+                },
+                "required_args": ["name"],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        try:
+            token = await self._refresh_access_token()
+            if tool_name == "play_track":
+                return await self._play_track(token, args)
+            if tool_name == "pause":
+                return await self._pause(token, str(args.get("device_id", "") or ""))
+            if tool_name == "search_track":
+                return await self._search_track(
+                    token,
+                    query=str(args.get("query") or ""),
+                    limit=min(50, int(args.get("limit", 5) or 5)),
+                )
+            if tool_name == "get_current_track":
+                return await self._get_current_track(token)
+            if tool_name == "create_playlist":
+                return await self._create_playlist(token, args)
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    # â”€â”€ OAuth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    async def _refresh_access_token(self) -> str:
+        import aiohttp
+        import base64
+
+        creds = base64.b64encode(
+            f"{os.environ['SPOTIFY_CLIENT_ID']}:{os.environ['SPOTIFY_CLIENT_SECRET']}".encode()
+        ).decode()
+        headers = {"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"}
+        payload = {
+            "grant_type": "refresh_token",
+            "refresh_token": os.environ["SPOTIFY_REFRESH_TOKEN"],
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                _TOKEN_URL, data=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                data = await resp.json()
+                if "access_token" not in data:
+                    raise RuntimeError(f"Token refresh failed: {data.get('error', 'unknown')}")
+                return str(data["access_token"])
+
+    # â”€â”€ Tool implementations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    async def _search_track(self, token: str, query: str, limit: int = 5) -> dict[str, Any]:
+        import aiohttp
+
+        if not query.strip():
+            return {"success": False, "data": None, "error": "query is required"}
+
+        headers = {"Authorization": f"Bearer {token}"}
+        params: dict[str, str | int] = {"q": query, "type": "track", "limit": limit}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{_SPOTIFY_BASE}/search", headers=headers, params=params, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                data = await resp.json()
+                if resp.status != 200:
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("error", {}).get("message", str(resp.status)),
+                    }
+
+        tracks = [
+            {
+                "uri": t["uri"],
+                "name": t["name"],
+                "artist": ", ".join(a["name"] for a in t.get("artists", [])),
+                "album": t.get("album", {}).get("name", ""),
+                "duration_ms": t.get("duration_ms", 0),
+            }
+            for t in data.get("tracks", {}).get("items", [])
+        ]
+        return {"success": True, "data": {"tracks": tracks}, "error": None}
+
+    async def _play_track(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        track_uri = str(args.get("track_uri", "") or "").strip()
+        query = str(args.get("query", "") or "").strip()
+        device_id = str(args.get("device_id", "") or "").strip()
+
+        # If no URI provided, search first
+        if not track_uri and query:
+            search_result = await self._search_track(token, query, limit=1)
+            if not search_result["success"] or not search_result["data"]["tracks"]:
+                return {"success": False, "data": None, "error": f"No tracks found for: {query!r}"}
+            track_uri = search_result["data"]["tracks"][0]["uri"]
+
+        if not track_uri:
+            return {"success": False, "data": None, "error": "Either track_uri or query is required"}
+
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        payload = {"uris": [track_uri]}
+        params = {}
+        if device_id:
+            params["device_id"] = device_id
+
+        async with aiohttp.ClientSession() as session:
+            async with session.put(
+                f"{_SPOTIFY_BASE}/me/player/play",
+                json=payload,
+                headers=headers,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 204:
+                    return {"success": True, "data": {"playing": track_uri}, "error": None}
+                if resp.status == 404:
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": "No active Spotify device found. Open Spotify on a device first.",
+                    }
+                body = await resp.json()
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": body.get("error", {}).get("message", str(resp.status)),
+                }
+
+    async def _pause(self, token: str, device_id: str = "") -> dict[str, Any]:
+        import aiohttp
+
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {}
+        if device_id:
+            params["device_id"] = device_id
+
+        async with aiohttp.ClientSession() as session:
+            async with session.put(
+                f"{_SPOTIFY_BASE}/me/player/pause",
+                headers=headers,
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 204:
+                    return {"success": True, "data": {"paused": True}, "error": None}
+                if resp.status == 404:
+                    return {"success": False, "data": None, "error": "No active device to pause."}
+                body = await resp.json()
+                return {
+                    "success": False,
+                    "data": None,
+                    "error": body.get("error", {}).get("message", str(resp.status)),
+                }
+
+    async def _get_current_track(self, token: str) -> dict[str, Any]:
+        import aiohttp
+
+        headers = {"Authorization": f"Bearer {token}"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{_SPOTIFY_BASE}/me/player/currently-playing",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                if resp.status == 204:
+                    return {"success": True, "data": {"playing": False, "track": None}, "error": None}
+                if resp.status != 200:
+                    return {"success": False, "data": None, "error": f"HTTP {resp.status}"}
+                data = await resp.json()
+
+        item = data.get("item") or {}
+        return {
+            "success": True,
+            "data": {
+                "playing": data.get("is_playing", False),
+                "track": {
+                    "uri": item.get("uri"),
+                    "name": item.get("name"),
+                    "artist": ", ".join(a["name"] for a in item.get("artists", [])),
+                    "album": item.get("album", {}).get("name"),
+                    "progress_ms": data.get("progress_ms"),
+                    "duration_ms": item.get("duration_ms"),
+                }
+                if item
+                else None,
+            },
+            "error": None,
+        }
+
+    async def _create_playlist(self, token: str, args: dict[str, Any]) -> dict[str, Any]:
+        import aiohttp
+
+        name = str(args.get("name") or "").strip()
+        if not name:
+            return {"success": False, "data": None, "error": "name is required"}
+
+        description = str(args.get("description", "") or "")
+        public = bool(args.get("public", False))
+
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        # Get current user ID first
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                f"{_SPOTIFY_BASE}/me", headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+            ) as resp:
+                if resp.status != 200:
+                    return {"success": False, "data": None, "error": "Could not retrieve Spotify user ID"}
+                user_data = await resp.json()
+                user_id = user_data["id"]
+
+            payload = {"name": name[:100], "description": description[:300], "public": public}
+            async with session.post(
+                f"{_SPOTIFY_BASE}/users/{user_id}/playlists",
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                data = await resp.json()
+                if resp.status not in (200, 201):
+                    return {
+                        "success": False,
+                        "data": None,
+                        "error": data.get("error", {}).get("message", str(resp.status)),
+                    }
+                return {
+                    "success": True,
+                    "data": {
+                        "playlist_id": data["id"],
+                        "name": data["name"],
+                        "url": data.get("external_urls", {}).get("spotify"),
+                    },
+                    "error": None,
+                }
+
+
+__all__ = ["SpotifyIntegration"]
+"""Telegram integration via python-telegram-bot async Bot API.
+
+Required env vars:
+    TELEGRAM_BOT_TOKEN  â€” Bot token from @BotFather
+    TELEGRAM_CHAT_ID    â€” Target chat ID (your personal or group chat)
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+
+class TelegramIntegration(BaseIntegration):
+    """Send messages and receive updates via a Telegram bot."""
+
+    name = "telegram"
+    description = "Send and receive Telegram messages via a bot"
+    required_config: list[str] = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"]
+
+    def is_available(self) -> bool:
+        try:
+            import telegram  # noqa: F401
+        except ImportError:
+            self.unavailable_reason = "python-telegram-bot not installed"
+            return False
+        if not all(bool(os.environ.get(k)) for k in self.required_config):
+            missing = [k for k in self.required_config if not os.environ.get(k)]
+            self.unavailable_reason = f"Missing env vars: {missing}"
+            return False
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "send_telegram",
+                "description": "Send a Telegram message to the configured chat",
+                "risk": "confirm",
+                "args": {
+                    "message": {
+                        "type": "string",
+                        "description": "The text message to send",
+                    },
+                    "parse_mode": {
+                        "type": "string",
+                        "description": "Optional: HTML or Markdown",
+                        "default": "HTML",
+                    },
+                },
+                "required_args": ["message"],
+            },
+            {
+                "name": "get_updates",
+                "description": "Retrieve the latest incoming messages for the bot",
+                "risk": "low",
+                "args": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of updates to fetch (max 100)",
+                        "default": 10,
+                    },
+                },
+                "required_args": [],
+            },
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = args or {}
+        try:
+            if tool_name == "send_telegram":
+                return await self._send_telegram(
+                    message=str(args.get("message") or ""),
+                    parse_mode=str(args.get("parse_mode", "HTML") or "HTML"),
+                )
+            if tool_name == "get_updates":
+                limit = max(1, min(100, int(args.get("limit", 10) or 10)))
+                return await self._get_updates(limit=limit)
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    async def _send_telegram(self, message: str, parse_mode: str = "HTML") -> dict[str, Any]:
+        if not message.strip():
+            return {"success": False, "data": None, "error": "message is required"}
+
+        from telegram import Bot
+
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+        bot = Bot(token=token)
+        async with bot:
+            sent = await bot.send_message(
+                chat_id=chat_id,
+                text=message,
+                parse_mode=parse_mode,
+            )
+        return {
+            "success": True,
+            "data": {"message_id": sent.message_id, "chat_id": str(chat_id)},
+            "error": None,
+        }
+
+    async def _get_updates(self, limit: int = 10) -> dict[str, Any]:
+        from telegram import Bot
+
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        bot = Bot(token=token)
+        async with bot:
+            updates = await bot.get_updates(limit=limit)
+
+        messages = []
+        for update in updates:
+            if update.message:
+                messages.append(
+                    {
+                        "update_id": update.update_id,
+                        "from": update.message.from_user.username if update.message.from_user else None,
+                        "text": update.message.text or "",
+                        "date": str(update.message.date),
+                    }
+                )
+        return {"success": True, "data": {"updates": messages}, "error": None}
+
+
+__all__ = ["TelegramIntegration"]
+"""Template integration showing the new plugin contract."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+
+class TemplateIntegration(BaseIntegration):
+    name = "template"
+    description = "Reference template for future integrations"
+    required_config: list[str] = []
+
+    def is_available(self) -> bool:
+        # Keep template disabled by default so it never registers as a real plugin.
+        return False
+
+    def get_tools(self) -> list[dict]:
+        return []
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        del tool_name, args
+        return {"success": False, "data": None, "error": "Template integration is not executable"}
+
+
+__all__ = ["TemplateIntegration"]
+"""Weather integration backed by Open-Meteo public APIs."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import urllib.parse
+import urllib.request
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+logger = logging.getLogger(__name__)
+
+
+class WeatherIntegration(BaseIntegration):
+    name = "weather"
+    description = "Fetch current weather by city"
+
+    def __init__(self, config: Any = None) -> None:
+        super().__init__(config=config)
+
+    def is_available(self) -> bool:
+        # No API key required for Open-Meteo.
+        self.unavailable_reason = ""
+        return True
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "get_current_weather",
+                "description": "Get current weather data for a city.",
+                "risk": "LOW",
+                "args": {
+                    "city": {
+                        "type": "string",
+                        "description": "City name, for example Delhi or New York.",
+                    }
+                },
+                "required_args": ["city"],
+            }
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if tool_name != "get_current_weather":
+            return {"success": False, "data": None, "error": f"Unknown tool '{tool_name}'"}
+
+        city = str((args or {}).get("city") or "").strip()
+        if not city:
+            return {"success": False, "data": None, "error": "city is required"}
+
+        loop = asyncio.get_running_loop()
+        try:
+            data = await loop.run_in_executor(None, self._fetch_weather, city)
+            return {"success": True, "data": data, "error": None}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Weather request failed for city '%s': %s", city, exc)
+            return {"success": False, "data": None, "error": str(exc)}
+
+    def _fetch_weather(self, city: str) -> dict[str, Any]:
+        geo_url = (
+            "https://geocoding-api.open-meteo.com/v1/search?"
+            + urllib.parse.urlencode({"name": city, "count": 1})
+        )
+        with urllib.request.urlopen(geo_url, timeout=10) as response:
+            geo_data = json.loads(response.read().decode("utf-8"))
+        results = geo_data.get("results") or []
+        if not results:
+            raise ValueError(f"No geocode result for city '{city}'")
+
+        first = results[0]
+        lat = first["latitude"]
+        lon = first["longitude"]
+
+        weather_url = (
+            "https://api.open-meteo.com/v1/forecast?"
+            + urllib.parse.urlencode(
+                {
+                    "latitude": lat,
+                    "longitude": lon,
+                    "current": "temperature_2m,relative_humidity_2m,wind_speed_10m",
+                }
+            )
+        )
+        with urllib.request.urlopen(weather_url, timeout=10) as response:
+            weather_data = json.loads(response.read().decode("utf-8"))
+        current = weather_data.get("current", {})
+
+        return {
+            "city": first.get("name", city),
+            "country": first.get("country", ""),
+            "temperature_c": current.get("temperature_2m"),
+            "humidity": current.get("relative_humidity_2m"),
+            "wind_speed_kmh": current.get("wind_speed_10m"),
+        }
+
+
+__all__ = ["WeatherIntegration"]
+"""WhatsApp integration via Twilio."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+from typing import Any
+
+from integrations.base import BaseIntegration
+
+
+class WhatsAppIntegration(BaseIntegration):
+    name = "whatsapp"
+    description = "Send WhatsApp messages via Twilio"
+    required_config: list[str] = ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_WHATSAPP_FROM"]
+
+    def is_available(self) -> bool:
+        try:
+            import twilio  # noqa: F401
+            return all(bool(os.environ.get(key)) for key in self.required_config)
+        except ImportError:
+            return False
+
+    def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "send_whatsapp",
+                "description": "Send a WhatsApp message",
+                "risk": "confirm",
+                "args": {
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient phone number with country code",
+                    },
+                    "message": {"type": "string", "description": "Message body"},
+                },
+                "required_args": ["to", "message"],
+            }
+        ]
+
+    async def execute(self, tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+        if tool_name != "send_whatsapp":
+            return {"success": False, "data": None, "error": f"Unknown tool: {tool_name}"}
+
+        args = args or {}
+        loop = asyncio.get_running_loop()
+        try:
+            data = await loop.run_in_executor(
+                None,
+                lambda: self._send_whatsapp(
+                    to=str(args.get("to") or ""),
+                    message=str(args.get("message") or ""),
+                ),
+            )
+            return {"success": True, "data": data, "error": None}
+        except Exception as exc:  # noqa: BLE001
+            return {"success": False, "data": None, "error": str(exc)}
+
+    def _send_whatsapp(self, to: str, message: str) -> dict[str, Any]:
+        if not to.strip():
+            raise ValueError("to is required")
+        if not message:
+            raise ValueError("message is required")
+
+        from twilio.rest import Client
+
+        client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
+        msg = client.messages.create(
+            from_=os.environ["TWILIO_WHATSAPP_FROM"],
+            to=f"whatsapp:{to}",
+            body=message,
+        )
+        return {"sid": str(msg.sid)}
+
+
+__all__ = ["WhatsAppIntegration"]
+

@@ -302,7 +302,7 @@ async def async_run(
             exit_code = ExitCode.GENERIC_ERROR
     finally:
         if dashboard is not None:
-            dashboard.stop(timeout=min(5.0, shutdown_timeout))
+            await dashboard.stop(timeout=min(5.0, shutdown_timeout))
 
         if controller is not None:
             try:

@@ -1,0 +1,618 @@
+﻿[
+    {
+        "Path":  "agent",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "agentic",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "automation",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "autonomy",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "capability",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "config",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "context",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "controller",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "desktop",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "execution",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "executor",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "hardware",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "introspection",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "llm",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "logging",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "memory",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "metrics",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "ops",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "planner",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "plugins",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "proactive",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "registry",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "runtime",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "security",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "tools",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "types",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "voice",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "base_controller.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller_v2.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "permission_matrix.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "profile.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "state_machine.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "synthesis.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "agent\\agent_loop.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "agent\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "agentic\\goal_manager.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "agentic\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "automation\\live_automation.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "automation\\payload_extractor.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "automation\\rag_ingester.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "automation\\scan_pipeline.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "automation\\scan_rules.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "automation\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "autonomy\\autonomy_governor.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "autonomy\\goal_manager.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "autonomy\\risk_evaluator.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "autonomy\\scheduler.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "autonomy\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "capability\\base.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "capability\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "config\\defaults.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "config\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "context\\context.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "context\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\automation_manager.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\complexity_scorer.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\goal_runner.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\intents.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\intent_handlers.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\intent_router.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\llm_dispatcher.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\llm_orchestrator.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\memory_subsystem.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\request_rules.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\services.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\web_search.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "controller\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "desktop\\actions.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "desktop\\contracts.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "desktop\\mission.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "desktop\\observation.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "desktop\\shortcuts.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "desktop\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "execution\\dispatcher.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "execution\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "executor\\dag.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "executor\\engine.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "executor\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "hardware\\device_registry.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "hardware\\serial_controller.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "hardware\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "introspection\\health.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "introspection\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\client.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\cloud_client.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\defaults.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\model_router.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\model_spec.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\ollama_client.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\telemetry.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "llm\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "logging\\logger.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "logging\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\code_indexer.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\code_indexer_service.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\context_compressor.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\embeddings.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\hybrid_memory.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\retriever.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\semantic_memory.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\sqlite_pool.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\sqlite_storage.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "memory\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "metrics\\confidence.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "metrics\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "ops\\production.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "ops\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "planner\\planner.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "planner\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "plugins\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "proactive\\background_monitor.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "proactive\\notifier.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "proactive\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "registry\\base.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "registry\\registry.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "registry\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\bootstrap.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\container.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\dashboard_runtime.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\entrypoint.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\event_bus.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\import_validator.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\paths.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "runtime\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "security\\auth.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "security\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\fast_search",
+        "Type":  "Folder"
+    },
+    {
+        "Path":  "tools\\auto_clicker.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\builtin_tools.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\fast_search_tool.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\gui_control.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\hardware_tools.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\path_utils.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\screen.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\system_automation.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\universal_converter.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\vision.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\web_tools.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\fast_search\\fast_search.cpp",
+        "Type":  "File"
+    },
+    {
+        "Path":  "tools\\fast_search\\fast_search.exe",
+        "Type":  "File"
+    },
+    {
+        "Path":  "types\\common.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "types\\__init__.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\audio.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\audio_input.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\audio_playback.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\audio_utils.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\stt.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\tts.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\voice_layer.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\voice_loop.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\wake_word.py",
+        "Type":  "File"
+    },
+    {
+        "Path":  "voice\\__init__.py",
+        "Type":  "File"
+    }
+]

@@ -89,7 +89,10 @@ async def test_agent_loop_user_interrupt(mock_planner, mock_risk_evaluator, mock
         container=mock_container,
     )
     # Simulate user rejecting the prompt
-    trace = await engine.run("test goal", context, confirm_callback=lambda prompt: False)
+    async def mock_confirm(prompt):
+        return False
+        
+    trace = await engine.run("test goal", context, confirm_callback=mock_confirm)
     assert trace.success is False
     assert trace.stop_reason == "user_interrupt"
     assert context.state_machine.state == State.IDLE

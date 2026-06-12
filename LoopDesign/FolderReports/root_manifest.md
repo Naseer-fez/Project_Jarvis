@@ -1,0 +1,119 @@
+# Root Directory Manifest (`d:\AI\Jarvis`)
+
+## High-Level Purpose
+The root directory serves as the main application repository for the Jarvis project. It contains the complete source code, configuration and environment definitions, system test suites, architecture documentation, runtime artifacts, and pipeline execution scripts necessary to operate, build, and deploy the AI-driven assistant system.
+
+## Subdirectories
+- **`.git`** -> Configuration Analyst, Dependency Analyst
+- **`.github`** -> Configuration Analyst, CI/CD Analyst
+- **`.mypy_cache`** -> Dependency Analyst, Runtime Investigator
+- **`.pytest_cache`** -> Testing Specialist
+- **`.ruff_cache`** -> Dependency Analyst, Configuration Analyst
+- **`Cartography_Outputs`** -> Data Model Analyst
+- **`DesignChange`** -> Architecture Analyst
+- **`DesignDoc`** -> Architecture Analyst
+- **`Final`** -> Runtime Investigator
+- **`LoopDesign`** -> Architecture Analyst, Configuration Analyst
+- **`Report`** -> Data Model Analyst, Runtime Investigator
+- **`audit`** -> Dependency Analyst, Runtime Investigator
+- **`bin`** -> Runtime Investigator, Configuration Analyst
+- **`build`** -> Dependency Analyst, Runtime Investigator
+- **`chroma_db`** -> Data Model Analyst, Prompt Recovery Specialist
+- **`config`** -> Configuration Analyst
+- **`core`** -> Runtime Investigator, API Analyst, Data Model Analyst
+- **`dashboard`** -> UI/UX Analyst, API Analyst
+- **`data`** -> Data Model Analyst
+- **`dist`** -> Runtime Investigator, Configuration Analyst
+- **`docs`** -> Architecture Analyst
+- **`htmlcov`** -> Testing Specialist
+- **`integrations`** -> API Analyst, Runtime Investigator
+- **`jarvis_env`** -> Dependency Analyst, Runtime Investigator
+- **`logs`** -> Runtime Investigator
+- **`memory`** -> Data Model Analyst, Prompt Recovery Specialist
+- **`min_venv`** -> Dependency Analyst
+- **`outputs`** -> Data Model Analyst, Runtime Investigator
+- **`plugins`** -> API Analyst, Runtime Investigator
+- **`requirements`** -> Dependency Analyst
+- **`runtime`** -> Runtime Investigator, Configuration Analyst
+- **`tests`** -> Testing Specialist
+- **`workflows`** -> API Analyst, Prompt Recovery Specialist
+- **`workspace`** -> Runtime Investigator, Data Model Analyst
+
+## Files
+- **`.antigravitignore`** -> Configuration Analyst
+- **`.coverage`** -> Testing Specialist
+- **`.dockerignore`** -> Configuration Analyst, Dependency Analyst
+- **`.env`** -> Configuration Analyst, Security Analyst
+- **`.env.example`** -> Configuration Analyst
+- **`.gitattributes`** -> Configuration Analyst
+- **`.gitignore`** -> Configuration Analyst
+- **`APis List`** -> API Analyst
+- **`ARCHITECTURE_STATE.json`** -> Architecture Analyst, Data Model Analyst
+- **`ARCHITECTURE_STATE.json.utf8`** -> Architecture Analyst
+- **`Dockerfile`** -> Dependency Analyst, Configuration Analyst
+- **`FILE_LOCKS.md`** -> Runtime Investigator
+- **`Future.md`** -> Architecture Analyst
+- **`Howto.md`** -> Architecture Analyst, Configuration Analyst
+- **`ISSUE_REGISTRY.corrupted_utf8.md`** -> Runtime Investigator
+- **`ISSUE_REGISTRY.decoded.md`** -> Runtime Investigator
+- **`ISSUE_REGISTRY.md`** -> Runtime Investigator
+- **`ISSUE_REGISTRY.recovered.md`** -> Runtime Investigator
+- **`ISSUE_REGISTRY.recovered.txt`** -> Runtime Investigator
+- **`ISSUE_REGISTRY.recovered2.md`** -> Runtime Investigator
+- **`LICENSE`** -> Configuration Analyst
+- **`README.MD`** -> Architecture Analyst
+- **`RECOVERY_LOG.md`** -> Runtime Investigator
+- **`RECOVERY_LOG.md.utf8`** -> Runtime Investigator
+- **`RECOVERY_LOG.recovered.md`** -> Runtime Investigator
+- **`RECOVERY_LOG.recovered2.md`** -> Runtime Investigator
+- **`Start.ps1`** -> Runtime Investigator, Configuration Analyst
+- **`The Future.md`** -> Architecture Analyst
+- **`automated_test.py`** -> Testing Specialist, Runtime Investigator
+- **`core_tree.txt`** -> Architecture Analyst
+- **`dummy.txt`** -> Runtime Investigator
+- **`dump.txt`** -> Runtime Investigator
+- **`dump_2.txt`** -> Runtime Investigator
+- **`fix_cursor_leaks.py`** -> Runtime Investigator
+- **`generate_cartography.py`** -> Data Model Analyst, Runtime Investigator
+- **`help_output.txt`** -> API Analyst, Runtime Investigator
+- **`how_to_run.md`** -> Configuration Analyst
+- **`install.ps1`** -> Dependency Analyst, Configuration Analyst
+- **`installed_packages_list.txt`** -> Dependency Analyst
+- **`jarvis.spec`** -> Dependency Analyst, Configuration Analyst
+- **`jarvis_voice_section.ini`** -> Configuration Analyst, Runtime Investigator
+- **`main.py`** -> Runtime Investigator, API Analyst
+- **`mypy.ini`** -> Configuration Analyst
+- **`mypy_errors.txt`** -> Testing Specialist, Dependency Analyst
+- **`mypy_errors_utf8.txt`** -> Testing Specialist
+- **`mypy_final.txt`** -> Testing Specialist
+- **`mypy_final2.txt`** -> Testing Specialist
+- **`mypy_final2_utf8.txt`** -> Testing Specialist
+- **`mypy_final_check.txt`** -> Testing Specialist
+- **`mypy_final_check_utf8.txt`** -> Testing Specialist
+- **`mypy_final_utf8.txt`** -> Testing Specialist
+- **`mypy_report.txt`** -> Testing Specialist
+- **`new_mypy_report.txt`** -> Testing Specialist
+- **`new_ruff_report.txt`** -> Testing Specialist
+- **`new_vulture_report.txt`** -> Testing Specialist
+- **`pytest.ini`** -> Configuration Analyst, Testing Specialist
+- **`qa_test.py`** -> Testing Specialist
+- **`requirements.lock`** -> Dependency Analyst
+- **`requirements.lock.utf8`** -> Dependency Analyst
+- **`requirements.txt`** -> Dependency Analyst
+- **`run-all-checks.ps1`** -> Testing Specialist, Configuration Analyst
+- **`run-autoclicker.ps1`** -> Runtime Investigator, UI/UX Analyst
+- **`run-fast-tests.ps1`** -> Testing Specialist
+- **`run-tests.ps1`** -> Testing Specialist
+- **`run_tests.py`** -> Testing Specialist, Runtime Investigator
+- **`runner_output.txt`** -> Testing Specialist, Runtime Investigator
+- **`stress_test_report.txt`** -> Testing Specialist
+- **`test.py`** -> Testing Specialist, Runtime Investigator
+- **`test_agentic_flow.py`** -> Prompt Recovery Specialist, Testing Specialist
+- **`test_controller.py`** -> API Analyst, Testing Specialist
+- **`test_desktop_web.py`** -> UI/UX Analyst, Testing Specialist
+- **`test_edge_youtube.py`** -> UI/UX Analyst, Testing Specialist
+- **`test_logger.py`** -> Testing Specialist
+- **`test_mouse_move.py`** -> UI/UX Analyst, Testing Specialist
+- **`test_out.txt`** -> Testing Specialist
+- **`test_results.json`** -> Testing Specialist, Data Model Analyst
+- **`vulture_report.txt`** -> Testing Specialist

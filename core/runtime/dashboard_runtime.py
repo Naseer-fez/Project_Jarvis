@@ -86,7 +86,7 @@ class DashboardRuntime:
         )
         self.log.info("Dashboard listening on http://%s:%s", self.host, self.port)
 
-    def stop(self, timeout: float = 5.0) -> None:
+    async def stop(self, timeout: float = 5.0) -> None:
         if self._server is not None:
             try:
                 self._server.should_exit = True
@@ -104,7 +104,7 @@ class DashboardRuntime:
                 pass
 
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
+            await asyncio.to_thread(self._thread.join, timeout)
             if self._thread.is_alive():
                 self.log.warning(
                     "Dashboard thread did not stop within %.1f seconds",

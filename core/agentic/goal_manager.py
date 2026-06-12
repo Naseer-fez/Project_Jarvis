@@ -1,3 +1,4 @@
+from core.autonomy.goal_manager import *  # noqa: F403
 import warnings
 
 warnings.warn(
@@ -6,5 +7,3 @@ warnings.warn(
     DeprecationWarning,
     stacklevel=2
 )
-
-from core.autonomy.goal_manager import *

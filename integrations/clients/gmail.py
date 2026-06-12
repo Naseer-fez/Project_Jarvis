@@ -178,6 +178,14 @@ class GmailIntegration(BaseIntegration):
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             data = await resp.json()
+            if resp.status != 200:
+                return {
+                    "id": message_id,
+                    "from": "",
+                    "subject": "Error fetching message",
+                    "date": "",
+                    "snippet": data.get("error", {}).get("message", f"HTTP {resp.status}"),
+                }
 
         header_map: dict[str, str] = {}
         for h in data.get("payload", {}).get("headers", []):

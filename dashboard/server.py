@@ -123,7 +123,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 GUI_AUDIT_DIR = PROJECT_ROOT / "outputs" / "gui_audit"
 GUI_AUDIT_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/gui-audit", StaticFiles(directory=str(GUI_AUDIT_DIR)), name="gui-audit")
+# Removed insecure static mount: app.mount("/gui-audit", StaticFiles(directory=str(GUI_AUDIT_DIR)), name="gui-audit")
 
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
@@ -501,8 +501,8 @@ async def goals_page(request: Request):
         message = "Goals available after controller start"
     else:
         try:
-            goals = _load_active_goals(manager)
-            _refresh_goal_count()
+            goals = await asyncio.to_thread(_load_active_goals, manager)
+            await asyncio.to_thread(_refresh_goal_count)
             if not goals:
                 message = "No active goals yet."
         except Exception:
@@ -716,32 +716,50 @@ async def api_clicker_screenshots(request: Request):
         return []
         
     try:
-        files = sorted(
-            gui_audit_dir.glob("*.png"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True
-        )
-        return [
-            {
-                "name": p.name,
-                "url": f"/gui-audit/{p.name}",
-                "time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(p.stat().st_mtime))
-            }
-            for p in files[:8]
-        ]
+        def _get_screenshots():
+            files = sorted(
+                gui_audit_dir.glob("*.png"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            return [
+                {
+                    "name": p.name,
+                    "url": f"/gui-audit/{p.name}",
+                    "time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(p.stat().st_mtime))
+                }
+                for p in files[:8]
+            ]
+        return await asyncio.to_thread(_get_screenshots)
     except Exception as e:
         logger.error("Error reading screenshots: %s", e)
         return []
+
+
+@app.get("/gui-audit/{filename}")
+async def serve_gui_audit_file(request: Request, filename: str):
+    if not await _is_authorized(request):
+        return RedirectResponse(url="/login", status_code=303)
+        
+    file_path = GUI_AUDIT_DIR / filename
+    if not file_path.resolve().is_relative_to(GUI_AUDIT_DIR.resolve()):
+        return JSONResponse(status_code=403, content={"error": "Access denied"})
+        
+    if not file_path.exists() or not file_path.is_file():
+        return JSONResponse(status_code=404, content={"error": "File not found"})
+        
+    return FileResponse(path=str(file_path))
 
 
 @app.get("/ai-os")
 async def ai_os_page(request: Request):
     if not await _is_authorized(request):
         return RedirectResponse(url="/login", status_code=303)
+    overview = await asyncio.to_thread(_load_ai_os_overview)
     return templates.TemplateResponse(
         request,
         "ai_os.html",
-        {"overview": _load_ai_os_overview()},
+        {"overview": overview},
     )
 
 
@@ -749,7 +767,7 @@ async def ai_os_page(request: Request):
 async def api_ai_os(request: Request):
     if not await _is_authorized(request):
         return _unauthorized()
-    return _load_ai_os_overview()
+    return await asyncio.to_thread(_load_ai_os_overview)
 
 
 # ---------------------------------------------------------------------------
@@ -808,12 +826,12 @@ async def goals_add(request: Request, body: GoalAddRequest):
 
     try:
         if hasattr(manager, "create") and callable(getattr(manager, "create")):
-            manager.create(description=description, priority=priority)
+            await asyncio.to_thread(manager.create, description=description, priority=priority)
         elif hasattr(manager, "create_goal") and callable(getattr(manager, "create_goal")):
-            manager.create_goal(description=description, priority=priority)
+            await asyncio.to_thread(manager.create_goal, description=description, priority=priority)
         else:
             return {"error": "Goal manager does not support creation"}
-        _refresh_goal_count()
+        await asyncio.to_thread(_refresh_goal_count)
         return {"ok": True}
     except Exception:
         logger.exception("goals_add: failed to create goal description=%r", description)
@@ -831,12 +849,12 @@ async def goals_complete(goal_id: str, request: Request):
 
     try:
         if hasattr(manager, "complete") and callable(getattr(manager, "complete")):
-            manager.complete(goal_id)
+            await asyncio.to_thread(manager.complete, goal_id)
         elif hasattr(manager, "complete_goal") and callable(getattr(manager, "complete_goal")):
-            manager.complete_goal(goal_id)
+            await asyncio.to_thread(manager.complete_goal, goal_id)
         else:
             return {"error": "Goal manager does not support completion"}
-        _refresh_goal_count()
+        await asyncio.to_thread(_refresh_goal_count)
         return {"ok": True}
     except Exception:
         logger.exception("goals_complete: failed to complete goal_id=%r", goal_id)
@@ -903,15 +921,20 @@ async def api_convert(
     import shutil
     
     suffix = Path(file.filename or "").suffix
+    
+    target_format_clean = target_format.strip().lower().lstrip('.')
+    import re
+    if not re.match(r"^[a-zA-Z0-9]+$", target_format_clean):
+        return JSONResponse(status_code=400, content={"error": "Invalid target format"})
+        
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_src:
-        shutil.copyfileobj(file.file, tmp_src)
+        await asyncio.to_thread(shutil.copyfileobj, file.file, tmp_src)
         tmp_src_path = tmp_src.name
         
-    target_format_clean = target_format.strip().lower()
     try:
-        output_path = perform_conversion(tmp_src_path, target_format_clean)
+        output_path = await asyncio.to_thread(perform_conversion, tmp_src_path, target_format_clean)
         base_name = Path(file.filename or "").stem
-        out_filename = f"{base_name}.{target_format_clean.lstrip('.')}"
+        out_filename = f"{base_name}.{target_format_clean}"
         
         from starlette.background import BackgroundTasks
         background_tasks = BackgroundTasks()

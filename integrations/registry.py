@@ -89,11 +89,13 @@ class IntegrationRegistry:
 
     def get_tools(self) -> list[dict[str, Any]]:
         merged: list[dict[str, Any]] = []
-        for integration in self._integrations.values():
+        for name, integration in self._integrations.items():
             tools = integration.get_tools() or []
             for tool in tools:
                 if isinstance(tool, dict):
-                    merged.append(dict(tool))
+                    tool_name = tool.get("name")
+                    if tool_name and self._tool_owner.get(tool_name) == name:
+                        merged.append(dict(tool))
         return merged
 
     def list_schemas(self) -> list[dict[str, Any]]:

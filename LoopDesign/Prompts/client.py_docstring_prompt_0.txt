@@ -1,0 +1,7 @@
+Async LLM client — single entry point for all Jarvis LLM calls.
+
+Architecture:
+    LLMClientV2.complete(prompt, task_type)
+        → ModelRouter.pick_model(task_type)   → model name
+        → OllamaClient.complete(prompt, model) → response (or raise)
+        → CloudLLMClient.complete(prompt)      → fallback response

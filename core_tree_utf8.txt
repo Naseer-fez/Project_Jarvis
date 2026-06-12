@@ -1,0 +1,459 @@
+﻿Folder PATH listing for volume DOWNLOADS
+Volume serial number is 28F5-E1EE
+D:\AI\JARVIS\CORE
+|   base_controller.py
+|   controller_v2.py
+|   permission_matrix.py
+|   profile.py
+|   state_machine.py
+|   synthesis.py
+|   __init__.py
+|   
++---agent
+|   |   agent_loop.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           agent_loop.cpython-312.pyc
+|           agent_loop.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---agentic
+|       goal_manager.py
+|       __init__.py
+|       
++---automation
+|   |   live_automation.py
+|   |   payload_extractor.py
+|   |   rag_ingester.py
+|   |   scan_pipeline.py
+|   |   scan_rules.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           live_automation.cpython-312.pyc
+|           live_automation.cpython-314.pyc
+|           payload_extractor.cpython-312.pyc
+|           payload_extractor.cpython-314.pyc
+|           rag_ingester.cpython-312.pyc
+|           rag_ingester.cpython-314.pyc
+|           scan_pipeline.cpython-312.pyc
+|           scan_pipeline.cpython-314.pyc
+|           scan_rules.cpython-312.pyc
+|           scan_rules.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---autonomy
+|   |   autonomy_governor.py
+|   |   goal_manager.py
+|   |   risk_evaluator.py
+|   |   scheduler.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           autonomy_governor.cpython-312.pyc
+|           autonomy_governor.cpython-314.pyc
+|           goal_manager.cpython-312.pyc
+|           goal_manager.cpython-314.pyc
+|           risk_evaluator.cpython-312.pyc
+|           risk_evaluator.cpython-314.pyc
+|           scheduler.cpython-312.pyc
+|           scheduler.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---capability
+|   |   base.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           base.cpython-312.pyc
+|           base.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---config
+|   |   defaults.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           defaults.cpython-312.pyc
+|           defaults.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---context
+|   |   context.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           context.cpython-312.pyc
+|           context.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---controller
+|   |   automation_manager.py
+|   |   complexity_scorer.py
+|   |   goal_runner.py
+|   |   intents.py
+|   |   intent_handlers.py
+|   |   intent_router.py
+|   |   llm_dispatcher.py
+|   |   llm_orchestrator.py
+|   |   memory_subsystem.py
+|   |   request_rules.py
+|   |   services.py
+|   |   web_search.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           automation_manager.cpython-312.pyc
+|           automation_manager.cpython-314.pyc
+|           complexity_scorer.cpython-312.pyc
+|           complexity_scorer.cpython-314.pyc
+|           goal_runner.cpython-312.pyc
+|           goal_runner.cpython-314.pyc
+|           intents.cpython-312.pyc
+|           intents.cpython-314.pyc
+|           intent_handlers.cpython-312.pyc
+|           intent_handlers.cpython-314.pyc
+|           intent_router.cpython-312.pyc
+|           intent_router.cpython-314.pyc
+|           llm_dispatcher.cpython-312.pyc
+|           llm_dispatcher.cpython-314.pyc
+|           llm_orchestrator.cpython-312.pyc
+|           llm_orchestrator.cpython-314.pyc
+|           memory_subsystem.cpython-312.pyc
+|           memory_subsystem.cpython-314.pyc
+|           request_rules.cpython-312.pyc
+|           request_rules.cpython-314.pyc
+|           services.cpython-312.pyc
+|           services.cpython-314.pyc
+|           web_search.cpython-312.pyc
+|           web_search.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---desktop
+|   |   actions.py
+|   |   contracts.py
+|   |   mission.py
+|   |   observation.py
+|   |   shortcuts.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           actions.cpython-312.pyc
+|           actions.cpython-314.pyc
+|           contracts.cpython-312.pyc
+|           contracts.cpython-314.pyc
+|           mission.cpython-312.pyc
+|           mission.cpython-314.pyc
+|           observation.cpython-312.pyc
+|           observation.cpython-314.pyc
+|           shortcuts.cpython-312.pyc
+|           shortcuts.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---execution
+|       dispatcher.py
+|       __init__.py
+|       
++---executor
+|   |   dag.py
+|   |   engine.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           dag.cpython-312.pyc
+|           dag.cpython-314.pyc
+|           engine.cpython-312.pyc
+|           engine.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---hardware
+|   |   device_registry.py
+|   |   serial_controller.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           device_registry.cpython-312.pyc
+|           device_registry.cpython-314.pyc
+|           serial_controller.cpython-312.pyc
+|           serial_controller.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---introspection
+|   |   health.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           health.cpython-312.pyc
+|           health.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---llm
+|   |   client.py
+|   |   cloud_client.py
+|   |   defaults.py
+|   |   model_router.py
+|   |   model_spec.py
+|   |   ollama_client.py
+|   |   telemetry.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           client.cpython-312.pyc
+|           client.cpython-314.pyc
+|           cloud_client.cpython-312.pyc
+|           cloud_client.cpython-314.pyc
+|           defaults.cpython-312.pyc
+|           defaults.cpython-314.pyc
+|           model_router.cpython-312.pyc
+|           model_router.cpython-314.pyc
+|           model_spec.cpython-312.pyc
+|           model_spec.cpython-314.pyc
+|           ollama_client.cpython-312.pyc
+|           ollama_client.cpython-314.pyc
+|           telemetry.cpython-312.pyc
+|           telemetry.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---logging
+|   |   logger.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           logger.cpython-312.pyc
+|           logger.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---memory
+|   |   code_indexer.py
+|   |   code_indexer_service.py
+|   |   context_compressor.py
+|   |   embeddings.py
+|   |   hybrid_memory.py
+|   |   retriever.py
+|   |   semantic_memory.py
+|   |   sqlite_pool.py
+|   |   sqlite_storage.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           code_indexer.cpython-312.pyc
+|           code_indexer.cpython-314.pyc
+|           code_indexer_service.cpython-312.pyc
+|           code_indexer_service.cpython-314.pyc
+|           context_compressor.cpython-312.pyc
+|           context_compressor.cpython-314.pyc
+|           embeddings.cpython-312.pyc
+|           embeddings.cpython-314.pyc
+|           hybrid_memory.cpython-312.pyc
+|           hybrid_memory.cpython-314.pyc
+|           retriever.cpython-312.pyc
+|           retriever.cpython-314.pyc
+|           semantic_memory.cpython-312.pyc
+|           semantic_memory.cpython-314.pyc
+|           sqlite_pool.cpython-312.pyc
+|           sqlite_pool.cpython-314.pyc
+|           sqlite_storage.cpython-312.pyc
+|           sqlite_storage.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---metrics
+|   |   confidence.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           confidence.cpython-312.pyc
+|           confidence.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---ops
+|   |   production.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           production.cpython-312.pyc
+|           production.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---planner
+|   |   planner.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           planner.cpython-312.pyc
+|           planner.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---plugins
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           __init__.cpython-314.pyc
+|           
++---proactive
+|   |   background_monitor.py
+|   |   notifier.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           background_monitor.cpython-312.pyc
+|           background_monitor.cpython-314.pyc
+|           notifier.cpython-312.pyc
+|           notifier.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---registry
+|   |   base.py
+|   |   registry.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           base.cpython-314.pyc
+|           registry.cpython-312.pyc
+|           registry.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---runtime
+|   |   bootstrap.py
+|   |   container.py
+|   |   dashboard_runtime.py
+|   |   entrypoint.py
+|   |   event_bus.py
+|   |   import_validator.py
+|   |   paths.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           bootstrap.cpython-312.pyc
+|           bootstrap.cpython-314.pyc
+|           container.cpython-312.pyc
+|           container.cpython-314.pyc
+|           dashboard_runtime.cpython-312.pyc
+|           dashboard_runtime.cpython-314.pyc
+|           entrypoint.cpython-312.pyc
+|           entrypoint.cpython-314.pyc
+|           event_bus.cpython-312.pyc
+|           event_bus.cpython-314.pyc
+|           import_validator.cpython-312.pyc
+|           import_validator.cpython-314.pyc
+|           paths.cpython-312.pyc
+|           paths.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---security
+|   |   auth.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           auth.cpython-312.pyc
+|           auth.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---tools
+|   |   auto_clicker.py
+|   |   builtin_tools.py
+|   |   fast_search_tool.py
+|   |   gui_control.py
+|   |   hardware_tools.py
+|   |   path_utils.py
+|   |   screen.py
+|   |   system_automation.py
+|   |   universal_converter.py
+|   |   vision.py
+|   |   web_tools.py
+|   |   __init__.py
+|   |   
+|   +---fast_search
+|   |       fast_search.cpp
+|   |       fast_search.exe
+|   |       
+|   \---__pycache__
+|           builtin_tools.cpython-312.pyc
+|           builtin_tools.cpython-314.pyc
+|           fast_search_tool.cpython-312.pyc
+|           fast_search_tool.cpython-314.pyc
+|           gui_control.cpython-312.pyc
+|           gui_control.cpython-314.pyc
+|           hardware_tools.cpython-312.pyc
+|           hardware_tools.cpython-314.pyc
+|           path_utils.cpython-312.pyc
+|           path_utils.cpython-314.pyc
+|           screen.cpython-312.pyc
+|           screen.cpython-314.pyc
+|           system_automation.cpython-312.pyc
+|           system_automation.cpython-314.pyc
+|           universal_converter.cpython-312.pyc
+|           universal_converter.cpython-314.pyc
+|           web_tools.cpython-312.pyc
+|           web_tools.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---types
+|   |   common.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           common.cpython-312.pyc
+|           common.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
++---voice
+|   |   audio.py
+|   |   audio_input.py
+|   |   audio_playback.py
+|   |   audio_utils.py
+|   |   stt.py
+|   |   tts.py
+|   |   voice_layer.py
+|   |   voice_loop.py
+|   |   wake_word.py
+|   |   __init__.py
+|   |   
+|   \---__pycache__
+|           stt.cpython-314.pyc
+|           tts.cpython-314.pyc
+|           voice_layer.cpython-314.pyc
+|           voice_loop.cpython-314.pyc
+|           wake_word.cpython-314.pyc
+|           __init__.cpython-312.pyc
+|           __init__.cpython-314.pyc
+|           
+\---__pycache__
+        base_controller.cpython-312.pyc
+        base_controller.cpython-314.pyc
+        controller_v2.cpython-312.pyc
+        controller_v2.cpython-314.pyc
+        permission_matrix.cpython-312.pyc
+        permission_matrix.cpython-314.pyc
+        profile.cpython-312.pyc
+        profile.cpython-314.pyc
+        state_machine.cpython-312.pyc
+        state_machine.cpython-314.pyc
+        synthesis.cpython-312.pyc
+        synthesis.cpython-314.pyc
+        __init__.cpython-312.pyc
+        __init__.cpython-314.pyc
+        

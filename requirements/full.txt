@@ -5,7 +5,7 @@
 
 # Additional plugins and data processing
 pandas>=3.0,<4.0
-fpdf>=1.7,<2.0
+fpdf2
 pypdf>=6.12,<7.0
 markdown>=3.10,<4.0
 streamlit>=1.58,<2.0

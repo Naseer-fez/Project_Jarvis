@@ -643,6 +643,18 @@ def _load_integrations(
         risk_eval = getattr(controller, "risk_evaluator", None)
         integration_registry.register_safety_rules(gov, risk_eval)
 
+        tool_router = getattr(controller, "tool_router", None)
+        if tool_router is not None:
+            for tool_dict in integration_registry.get_tools():
+                tool_name = tool_dict.get("name")
+                if tool_name and not tool_router.get(tool_name):
+                    def make_handler(t_name: str):
+                        async def _integration_handler(**kwargs):
+                            return await integration_registry.execute(t_name, kwargs)
+                        _integration_handler.__doc__ = f"Integration tool: {t_name}"
+                        return _integration_handler
+                    tool_router.register(tool_name, make_handler(tool_name))
+
         setattr(controller, "integration_loader", loader)
         setattr(controller, "integration_registry", integration_registry)
         setattr(controller, "_integration_result", result)

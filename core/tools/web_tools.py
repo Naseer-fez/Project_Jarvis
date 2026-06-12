@@ -17,7 +17,7 @@ from typing import Protocol, Any, cast
 try:
     from duckduckgo_search import DDGS
 except ImportError:  # pragma: no cover - optional dependency at runtime
-    DDGS = None  # type: ignore
+    DDGS = None
 
 try:
     import requests

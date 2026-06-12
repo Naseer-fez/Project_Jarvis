@@ -28,11 +28,14 @@ class GoalRunner:
         self.goal_check_interval_seconds = goal_check_interval_seconds
         self.dashboard_update = dashboard_update_cb
 
-    def load_goal_state(self) -> None:
+    async def load_goal_state(self) -> None:
         if not self.goals_file.exists():
             return
         try:
-            data = json.loads(self.goals_file.read_text(encoding="utf-8"))
+            def _read():
+                return self.goals_file.read_text(encoding="utf-8")
+            content = await asyncio.to_thread(_read)
+            data = json.loads(content)
             goals = data.get("goals", [])
             schedule = data.get("schedule", [])
             if isinstance(goals, list):
@@ -42,7 +45,7 @@ class GoalRunner:
         except Exception as exc:
             logger.warning("Failed to load goals: %s", exc, exc_info=True)
 
-    def persist_goal_state(self) -> None:
+    async def persist_goal_state(self) -> None:
         try:
             self.goals_file.parent.mkdir(parents=True, exist_ok=True)
             payload = {
@@ -50,10 +53,12 @@ class GoalRunner:
                 "goals": self.goal_manager.snapshot(),
                 "schedule": self.scheduler.snapshot(),
             }
-            self.goals_file.write_text(
-                json.dumps(payload, indent=2),
-                encoding="utf-8",
-            )
+            def _write():
+                self.goals_file.write_text(
+                    json.dumps(payload, indent=2),
+                    encoding="utf-8",
+                )
+            await asyncio.to_thread(_write)
         except Exception as exc:
             logger.warning("Failed to persist goals: %s", exc, exc_info=True)
 
@@ -84,7 +89,7 @@ class GoalRunner:
                     except Exception as e:
                         logger.warning("Failed to speak due goal via voice layer: %s", e, exc_info=True)
                 if due_items:
-                    self.persist_goal_state()
+                    await self.persist_goal_state()
                 self.dashboard_update(active_goals=len(self.goal_manager.active_goals()))
                 backoff = 1.0
             except asyncio.CancelledError:

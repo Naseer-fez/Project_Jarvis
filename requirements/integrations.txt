@@ -6,3 +6,4 @@ PyGithub>=2.3.0,<3.0.0
 icalendar>=7.1,<8.0
 twilio>=9.10,<10.0
 pyserial>=3.5,<4.0
+duckduckgo-search>=6.0,<9.0

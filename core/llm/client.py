@@ -281,6 +281,7 @@ class LLMClientV2:
         profile_summary: str = "",
         workspace_path: str = "",
         trace_id: str | None = None,
+        task_type: str = "chat",
     ) -> str:
         """Async version — use this inside any async context (agent loop, controller)."""
         if trace_id:
@@ -292,7 +293,7 @@ class LLMClientV2:
             workspace_path=workspace_path,
         )
         prompt = self._messages_to_prompt(messages)
-        return await self.complete(prompt, system=system) or ""
+        return await self.complete(prompt, system=system, task_type=task_type) or ""
 
     def chat(
         self,
@@ -301,13 +302,14 @@ class LLMClientV2:
         profile_summary: str = "",
         workspace_path: str = "",
         trace_id: str | None = None,
+        task_type: str = "chat",
     ) -> str:
         """Sync bridge — ONLY call from truly synchronous, non-async contexts."""
         import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(
                 asyncio.run,
-                self.chat_async(messages, query_for_memory, profile_summary, workspace_path, trace_id=trace_id)
+                self.chat_async(messages, query_for_memory, profile_summary, workspace_path, trace_id=trace_id, task_type=task_type)
             )
             return future.result()
 
