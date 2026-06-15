@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-06-14T11:29:15Z
-# Remaining files: 64
+# to_commit_pool manifest — updated 2026-06-15T14:28:41Z
+# Remaining files: 63
 
-to_commit_pool/Jarvis/core/logging/logger.py
 to_commit_pool/Jarvis/core/memory/embeddings.py
 to_commit_pool/Jarvis/core/memory/hybrid_memory.py
 to_commit_pool/Jarvis/core/memory/semantic_memory.py
