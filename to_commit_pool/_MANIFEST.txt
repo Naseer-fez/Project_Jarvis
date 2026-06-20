@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-06-19T12:44:47Z
-# Remaining files: 58
+# to_commit_pool manifest — updated 2026-06-20T11:17:10Z
+# Remaining files: 57
 
-to_commit_pool/Jarvis/core/tools/auto_clicker.py
 to_commit_pool/Jarvis/core/tools/builtin_tools.py
 to_commit_pool/Jarvis/core/tools/gui_control.py
 to_commit_pool/Jarvis/core/tools/screen.py
