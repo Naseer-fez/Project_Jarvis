@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-06-22T14:38:29Z
-# Remaining files: 55
+# to_commit_pool manifest — updated 2026-06-23T12:05:46Z
+# Remaining files: 54
 
-to_commit_pool/Jarvis/core/tools/screen.py
 to_commit_pool/Jarvis/core/tools/tool_router.py
 to_commit_pool/Jarvis/core/tools/web_tools.py
 to_commit_pool/Jarvis/dashboard/server.py
