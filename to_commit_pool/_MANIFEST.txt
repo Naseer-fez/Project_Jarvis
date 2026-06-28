@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-06-27T10:56:52Z
-# Remaining files: 50
+# to_commit_pool manifest — updated 2026-06-28T11:05:53Z
+# Remaining files: 49
 
-to_commit_pool/Jarvis/files.zip
 to_commit_pool/Jarvis/finder.py
 to_commit_pool/Jarvis/integrations/__init__.py
 to_commit_pool/Jarvis/integrations/base.py
