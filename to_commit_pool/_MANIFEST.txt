@@ -1,7 +1,6 @@
-# to_commit_pool manifest — updated 2026-06-30T11:44:02Z
-# Remaining files: 47
+# to_commit_pool manifest — updated 2026-07-01T12:06:06Z
+# Remaining files: 46
 
-to_commit_pool/Jarvis/integrations/base.py
 to_commit_pool/Jarvis/integrations/tests/test_weather_api.py
 to_commit_pool/Jarvis/integrations/weather_api/client.py
 to_commit_pool/Jarvis/memory/user_profile.json
